@@ -1,6 +1,7 @@
 package com.mobilerobot.app.camera
 
 import androidx.camera.core.CameraSelector
+import androidx.camera.core.ExperimentalGetImage
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
 import androidx.camera.lifecycle.ProcessCameraProvider
@@ -40,6 +41,7 @@ data class FaceDetectionResult(
  *   detector.start(lifecycleOwner)
  *   detector.faces.collect { result -> /* update robot eyes */ }
  */
+@OptIn(ExperimentalGetImage::class)
 class FaceDetector(private val appContext: android.content.Context) {
 
     /** Emits the most recent detection result, or null when no face is visible. */
