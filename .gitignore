@@ -1,0 +1,38 @@
+# ── Gradle ───────────────────────────────────────────
+.gradle/
+build/
+*.iml
+local.properties
+
+# ── IDE ──────────────────────────────────────────────
+.idea/
+*.swp
+*.swo
+*~
+
+# ─── OS ───────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ── Android ───────────────────────────────────────────
+*.apk
+*.aab
+*.dex
+*.class
+app/release/
+bin/
+
+# ── Native build artifacts ────────────────────────────
+.cxx/
+*.o
+*.obj
+
+# ── Models (large binary files, use download-models.sh) ──
+app/src/main/assets/models/
+.model_cache/
+
+# ── Secrets ───────────────────────────────────────────
+*.keystore
+*.jks
+*.p12
+secrets.properties
