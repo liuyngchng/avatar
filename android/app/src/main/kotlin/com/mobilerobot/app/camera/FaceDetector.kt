@@ -1,7 +1,5 @@
 package com.mobilerobot.app.camera
 
-import android.graphics.Bitmap
-import android.graphics.ImageFormat
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy

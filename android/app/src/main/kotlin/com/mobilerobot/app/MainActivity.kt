@@ -1,13 +1,17 @@
 package com.mobilerobot.app
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
+import android.os.PowerManager
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.*
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.mobilerobot.app.camera.FaceDetector
 import com.mobilerobot.app.robot.BehaviorEngine
 import com.mobilerobot.app.robot.Emotion
@@ -17,9 +21,24 @@ import com.mobilerobot.app.ui.RobotFaceScreen
 import com.rd.siri.asr.SherpaAsrEngine
 import com.rd.siri.audio.AudioPlayer
 import com.rd.siri.audio.AudioRecorder
+import com.rd.siri.audio.VoiceService
+import com.rd.siri.audio.WakeWordManager
+import com.rd.siri.config.ConfigViewModel
+import com.rd.siri.model.ModelManager
 import com.rd.siri.tts.SherpaTtsEngine
+import com.rd.siri.ui.ModelSetupScreen
+import com.rd.siri.ui.SettingsHubScreen
+import com.rd.siri.ui.SettingsScreen
 import kotlinx.coroutines.*
 import kotlin.random.Random
+
+/** Navigation destinations for the settings stack. */
+private sealed class Screen {
+    object RobotFace : Screen()
+    object SettingsHub : Screen()
+    object LlmConfig : Screen()
+    object ModelSetup : Screen()
+}
 
 class MainActivity : ComponentActivity() {
 
@@ -42,16 +61,30 @@ class MainActivity : ComponentActivity() {
 
         faceDetector = FaceDetector(this)
 
-        // Init ASR/TTS in background (models must be downloaded first)
-        Thread {
-            asrReady = asrEngine.initialize()
-            ttsReady = ttsEngine.initialize()
-        }.start()
-
         setContent {
             var robotState by remember { mutableStateOf(RobotState()) }
             var hasCameraPermission by remember { mutableStateOf(checkCameraPermission()) }
             var hasAudioPermission by remember { mutableStateOf(checkAudioPermission()) }
+
+            // Settings navigation
+            val modelsReady = ModelManager.checkAsrReady(this) &&
+                ModelManager.checkTtsReady(this)
+            var currentScreen by remember {
+                mutableStateOf<Screen>(if (modelsReady) Screen.RobotFace else Screen.ModelSetup)
+            }
+
+            // Wake word toggle state
+            val wakeWordEnabled by WakeWordManager.isRunning.collectAsState()
+
+            // Initialize ASR/TTS when models become ready
+            LaunchedEffect(modelsReady) {
+                if (modelsReady && !asrReady) {
+                    withContext(Dispatchers.IO) {
+                        asrReady = asrEngine.initialize()
+                        ttsReady = ttsEngine.initialize()
+                    }
+                }
+            }
 
             // Permission launchers
             val cameraPermissionLauncher = rememberLauncherForActivityResult(
@@ -72,7 +105,6 @@ class MainActivity : ComponentActivity() {
             // Collect face detection results
             LaunchedEffect(Unit) {
                 faceDetector.faces.collect { result ->
-                    val now = System.currentTimeMillis()
                     robotState = robotState.copy(
                         faceTargetX = result?.cx,
                         faceTargetY = result?.cy,
@@ -108,7 +140,6 @@ class MainActivity : ComponentActivity() {
                 val idleTooLong = robotState.msSinceLastFace > 10_000L
 
                 when {
-                    // Face appeared → WATCHING + greet
                     hasFace && robotState.mode == RobotMode.IDLE -> {
                         val greeting = behaviorEngine.onFaceAppear()
                         robotState = robotState.copy(
@@ -120,7 +151,6 @@ class MainActivity : ComponentActivity() {
                         speak(greeting)
                     }
 
-                    // Face lost too long → IDLE
                     !hasFace && idleTooLong && robotState.mode != RobotMode.IDLE
                         && robotState.mode != RobotMode.LISTENING
                         && robotState.mode != RobotMode.SPEAKING -> {
@@ -131,48 +161,102 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
-            // ── UI ──
-            RobotFaceScreen(
-                state = robotState,
-                onTap = {
-                    if (!hasAudioPermission) {
-                        audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-                        return@RobotFaceScreen
-                    }
-                    if (isRecording) {
-                        // Stop recording and process
-                        stopRecording { text ->
-                            if (text != null && text.isNotBlank()) {
-                                val (response, emotion) = behaviorEngine.respond(text)
-                                robotState = robotState.copy(
-                                    mode = RobotMode.SPEAKING,
-                                    lastUserText = text,
-                                    responseText = response,
-                                    emotion = emotion,
-                                    isSpeaking = true
-                                )
-                                speak(response) {
-                                    robotState = robotState.copy(
-                                        mode = if (robotState.faceTargetX != null)
-                                            RobotMode.WATCHING else RobotMode.IDLE,
-                                        isSpeaking = false
-                                    )
+            // ── Screen routing ──
+            when (currentScreen) {
+                is Screen.RobotFace -> {
+                    RobotFaceScreen(
+                        state = robotState,
+                        onTap = {
+                            if (!hasAudioPermission) {
+                                audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                                return@RobotFaceScreen
+                            }
+                            if (isRecording) {
+                                stopRecording { text ->
+                                    if (text != null && text.isNotBlank()) {
+                                        val (response, emotion) = behaviorEngine.respond(text)
+                                        robotState = robotState.copy(
+                                            mode = RobotMode.SPEAKING,
+                                            lastUserText = text,
+                                            responseText = response,
+                                            emotion = emotion,
+                                            isSpeaking = true
+                                        )
+                                        speak(response) {
+                                            robotState = robotState.copy(
+                                                mode = if (robotState.faceTargetX != null)
+                                                    RobotMode.WATCHING else RobotMode.IDLE,
+                                                isSpeaking = false
+                                            )
+                                        }
+                                    } else {
+                                        robotState = robotState.copy(
+                                            mode = if (robotState.faceTargetX != null)
+                                                RobotMode.WATCHING else RobotMode.IDLE
+                                        )
+                                    }
                                 }
                             } else {
-                                robotState = robotState.copy(
-                                    mode = if (robotState.faceTargetX != null)
-                                        RobotMode.WATCHING else RobotMode.IDLE
-                                )
+                                startRecording()
+                                robotState = robotState.copy(mode = RobotMode.LISTENING)
+                            }
+                        },
+                        onLongPress = {
+                            currentScreen = Screen.SettingsHub
+                        }
+                    )
+                }
+
+                is Screen.SettingsHub -> {
+                    SettingsHubScreen(
+                        onNavigateToLlmConfig = { currentScreen = Screen.LlmConfig },
+                        onNavigateToModelSetup = { currentScreen = Screen.ModelSetup },
+                        onDismiss = { currentScreen = Screen.RobotFace },
+                        wakeWordEnabled = wakeWordEnabled,
+                        onToggleWakeWord = { enabled ->
+                            if (enabled) {
+                                startWakeWordService()
+                            } else {
+                                stopWakeWordService()
                             }
                         }
-                    } else {
-                        // Start recording
-                        startRecording()
-                        robotState = robotState.copy(mode = RobotMode.LISTENING)
-                    }
+                    )
                 }
-            )
+
+                is Screen.LlmConfig -> {
+                    val configViewModel: ConfigViewModel = viewModel()
+                    SettingsScreen(
+                        viewModel = configViewModel,
+                        onBack = { currentScreen = Screen.SettingsHub }
+                    )
+                }
+
+                is Screen.ModelSetup -> {
+                    ModelSetupScreen(
+                        onBack = {
+                            currentScreen = Screen.SettingsHub
+                        }
+                    )
+                }
+            }
         }
+    }
+
+    // ── Wake word service ──────────────────────────────────────────────
+
+    private fun startWakeWordService() {
+        if (!ModelManager.checkKwsReady(this)) return
+        val intent = Intent(this, VoiceService::class.java).apply {
+            action = VoiceService.ACTION_START
+        }
+        ContextCompat.startForegroundService(this, intent)
+    }
+
+    private fun stopWakeWordService() {
+        val intent = Intent(this, VoiceService::class.java).apply {
+            action = VoiceService.ACTION_STOP
+        }
+        startService(intent)
     }
 
     // ── ASR recording ─────────────────────────────────────────────────
@@ -206,7 +290,7 @@ class MainActivity : ComponentActivity() {
             if (audio != null) {
                 runOnUiThread {
                     CoroutineScope(Dispatchers.IO).launch {
-                        audioPlayer.play(audio, ttsEngine.sampleRate)
+                        audioPlayer.play(audio, ttsEngine.getSampleRate())
                         onDone?.let { runOnUiThread { it() } }
                     }
                 }

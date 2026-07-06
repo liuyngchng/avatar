@@ -19,6 +19,7 @@ import com.mobilerobot.app.camera.FaceDetectionResult
 import com.mobilerobot.app.robot.Emotion
 import com.mobilerobot.app.robot.RobotMode
 import com.mobilerobot.app.robot.RobotState
+import kotlinx.coroutines.delay
 import kotlin.math.*
 import kotlin.random.Random
 
@@ -52,7 +53,8 @@ private const val MOUTH_W_FRACTION = 0.18f      // mouth half-width
 @Composable
 fun RobotFaceScreen(
     state: RobotState,
-    onTap: () -> Unit = {}
+    onTap: () -> Unit = {},
+    onLongPress: () -> Unit = {}
 ) {
     // Smoothly interpolate face target for eye movement
     val targetX by animateFloatAsState(
@@ -96,7 +98,10 @@ fun RobotFaceScreen(
             .fillMaxSize()
             .background(ColorBg)
             .pointerInput(Unit) {
-                detectTapGestures { onTap() }
+                detectTapGestures(
+                    onTap = { onTap() },
+                    onLongPress = { onLongPress() }
+                )
             }
     ) {
         Canvas(modifier = Modifier.fillMaxSize()) {

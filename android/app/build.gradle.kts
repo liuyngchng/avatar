@@ -89,6 +89,9 @@ dependencies {
     // Core (NotificationCompat for VoiceService)
     implementation("androidx.core:core-ktx:1.12.0")
 
+    // Security (encrypted API key storage)
+    implementation("androidx.security:security-crypto:1.1.0-alpha06")
+
     // CameraX
     val cameraxVersion = "1.3.1"
     implementation("androidx.camera:camera-core:$cameraxVersion")
