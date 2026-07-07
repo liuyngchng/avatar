@@ -2,7 +2,7 @@
 //  FaceParts.swift
 //  MobileRobot
 //
-//  Drawing functions for robot face: eyes, pupils, eyebrows, mouth, blush.
+//  Drawing functions for robot face: face, ears, antenna, eyes, mouth, blush.
 //  Ported from Android: RobotFaceScreen.kt (DrawScope extensions)
 //
 
@@ -10,25 +10,35 @@ import Foundation
 import CoreGraphics
 import UIKit
 
-// MARK: - Color Palette (iOS-friendly)
+// MARK: - Color Palette
 
 enum FaceColors {
     static let bg = UIColor(red: 0.10, green: 0.10, blue: 0.18, alpha: 1.0)
-    static let faceFill = UIColor(red: 0.96, green: 0.94, blue: 0.92, alpha: 1.0)
+
+    /// Face fill gradient endpoints
+    static let faceFillLight = UIColor(red: 0.98, green: 0.96, blue: 0.94, alpha: 1.0)
+    static let faceFillMid   = UIColor(red: 0.92, green: 0.89, blue: 0.86, alpha: 1.0)
+
     static let faceBorder = UIColor(red: 0.27, green: 0.27, blue: 0.47, alpha: 1.0)
-    static let eyeSocket = UIColor.white
-    static let pupil = UIColor(red: 0.09, green: 0.13, blue: 0.24, alpha: 1.0)
-    static let iris = UIColor(red: 0.06, green: 0.20, blue: 0.38, alpha: 1.0)
-    static let highlight = UIColor.white
-    static let mouth = UIColor(red: 0.91, green: 0.27, blue: 0.38, alpha: 1.0)
-    static let blush = UIColor(red: 0.91, green: 0.27, blue: 0.38, alpha: 0.33)
-    static let eyebrow = UIColor(red: 0.18, green: 0.18, blue: 0.27, alpha: 1.0)
+    static let eyeSocket  = UIColor.white
+    static let pupil      = UIColor(red: 0.09, green: 0.13, blue: 0.24, alpha: 1.0)
+    static let iris       = UIColor(red: 0.06, green: 0.20, blue: 0.38, alpha: 1.0)
+    static let highlight  = UIColor.white
+    static let mouth      = UIColor(red: 0.91, green: 0.27, blue: 0.38, alpha: 1.0)
+    static let blush      = UIColor(red: 0.91, green: 0.27, blue: 0.38, alpha: 0.30)
+    static let eyebrow    = UIColor(red: 0.18, green: 0.18, blue: 0.27, alpha: 1.0)
+
+    // Robot parts
+    static let earFill    = UIColor(red: 0.22, green: 0.22, blue: 0.40, alpha: 1.0)
+    static let earHighlight = UIColor(red: 0.4, green: 0.4, blue: 0.6, alpha: 1.0)
+    static let antennaStroke = UIColor(red: 0.30, green: 0.30, blue: 0.50, alpha: 1.0)
+    static let antennaGlow   = UIColor(red: 0.4, green: 0.67, blue: 1.0, alpha: 0.8)
 }
 
 // MARK: - Geometry Constants
 
 enum FaceGeometry {
-    static let faceRadiusFraction: CGFloat = 0.40
+    static let faceRadiusFraction: CGFloat = 0.38
     static let faceCenterYFraction: CGFloat = 0.46
     static let eyeYFraction: CGFloat = 0.36
     static let eyeSpacingFraction: CGFloat = 0.22
@@ -40,9 +50,21 @@ enum FaceGeometry {
     static let irisRadiusFraction: CGFloat = 0.09
     static let mouthYFraction: CGFloat = 0.64
     static let mouthWidthFraction: CGFloat = 0.16
-    static let eyebrowYOffsetFraction: CGFloat = 0.075
+    static let eyebrowYOffsetFraction: CGFloat = 0.078
     static let eyebrowLengthFraction: CGFloat = 0.14
-    static let eyebrowThickness: CGFloat = 5
+    static let eyebrowThickness: CGFloat = 3.5
+
+    // Robot ears
+    static let earWidthFraction: CGFloat = 0.09
+    static let earHeightFraction: CGFloat = 0.18
+    static let earOffsetXFraction: CGFloat = 0.44   // from face center
+    static let earYFraction: CGFloat = 0.38
+
+    // Antenna
+    static let antennaBaseYFraction: CGFloat = 0.04  // offset from face top
+    static let antennaHeightFraction: CGFloat = 0.10
+    static let antennaBallRadiusFraction: CGFloat = 0.025
+    static let antennaStickWidth: CGFloat = 3
 }
 
 // MARK: - Face Drawing
@@ -88,14 +110,50 @@ final class FaceDrawer {
         let cy = rect.height * FaceGeometry.faceCenterYFraction
         let faceRadius = rect.width * FaceGeometry.faceRadiusFraction
 
-        // ── Face outline ──
-        ctx.setFillColor(FaceColors.faceFill.cgColor)
-        ctx.fillEllipse(in: CGRect(x: cx - faceRadius, y: cy - faceRadius,
-                                    width: faceRadius * 2, height: faceRadius * 2))
+        // ── Robot ears ──
+        drawEars(ctx: ctx, faceCx: cx, faceCy: cy, faceRadius: faceRadius, rect: rect)
+
+        // ── Face shadow ──
+        ctx.saveGState()
+        ctx.setShadow(offset: CGSize(width: 0, height: faceRadius * 0.06),
+                      blur: faceRadius * 0.12,
+                      color: UIColor(white: 0, alpha: 0.35).cgColor)
+
+        // ── Face fill with radial gradient ──
+        let faceRect = CGRect(x: cx - faceRadius, y: cy - faceRadius,
+                              width: faceRadius * 2, height: faceRadius * 2)
+        let colors = [FaceColors.faceFillLight.cgColor,
+                      FaceColors.faceFillMid.cgColor] as CFArray
+        let locations: [CGFloat] = [0.0, 1.0]
+        if let gradient = CGGradient(
+            colorsSpace: CGColorSpaceCreateDeviceRGB(),
+            colors: colors,
+            locations: locations
+        ) {
+            let startPoint = CGPoint(x: cx, y: cy - faceRadius * 0.5)
+            let endPoint   = CGPoint(x: cx, y: cy + faceRadius)
+            ctx.addEllipse(in: faceRect)
+            ctx.clip()
+            ctx.drawRadialGradient(
+                gradient,
+                startCenter: startPoint, startRadius: faceRadius * 0.1,
+                endCenter: endPoint, endRadius: faceRadius * 1.1,
+                options: []
+            )
+            ctx.resetClip()
+        } else {
+            ctx.setFillColor(FaceColors.faceFillMid.cgColor)
+            ctx.fillEllipse(in: faceRect)
+        }
+
+        // ── Face border ──
         ctx.setStrokeColor(FaceColors.faceBorder.cgColor)
         ctx.setLineWidth(4)
-        ctx.strokeEllipse(in: CGRect(x: cx - faceRadius, y: cy - faceRadius,
-                                      width: faceRadius * 2, height: faceRadius * 2))
+        ctx.strokeEllipse(in: faceRect)
+        ctx.restoreGState()
+
+        // ── Antenna ──
+        drawAntenna(ctx: ctx, faceCx: cx, faceCy: cy, faceRadius: faceRadius, rect: rect)
 
         // ── Geometry derived values ──
         let eyeY = rect.height * FaceGeometry.eyeYFraction
@@ -160,7 +218,7 @@ final class FaceDrawer {
             drawListeningIndicator(ctx: ctx, cx: cx, y: cy + faceRadius + 28)
         }
         if state.mode == .thinking {
-            drawThinkingIndicator(ctx: ctx, cx: cx, y: cy - faceRadius - 20)
+            drawThinkingIndicator(ctx: ctx, cx: cx, y: cy - faceRadius - 40)
         }
 
         // ── Status ring ──
@@ -174,6 +232,109 @@ final class FaceDrawer {
             ctx.strokeEllipse(in: CGRect(x: cx - faceRadius - 6, y: cy - faceRadius - 6,
                                           width: (faceRadius + 6) * 2, height: (faceRadius + 6) * 2))
         }
+    }
+
+    // MARK: - Robot Ears
+
+    private static func drawEars(
+        ctx: CGContext, faceCx: CGFloat, faceCy: CGFloat,
+        faceRadius: CGFloat, rect: CGRect
+    ) {
+        let earW = rect.width * FaceGeometry.earWidthFraction
+        let earH = rect.height * FaceGeometry.earHeightFraction
+        let earOffX = rect.width * FaceGeometry.earOffsetXFraction
+        let earY = rect.height * FaceGeometry.earYFraction
+
+        let earCornerRadius = earW * 0.45
+
+        for side: CGFloat in [-1, 1] {
+            let earCx = faceCx + earOffX * side
+            let earRect = CGRect(x: earCx - earW / 2, y: earY - earH / 2,
+                                 width: earW, height: earH)
+
+            let path = UIBezierPath(roundedRect: earRect, cornerRadius: earCornerRadius)
+            ctx.addPath(path.cgPath)
+
+            // Ear fill with gradient
+            ctx.saveGState()
+            ctx.addPath(path.cgPath)
+            ctx.clip()
+
+            let colors = [FaceColors.earHighlight.cgColor,
+                          FaceColors.earFill.cgColor] as CFArray
+            if let gradient = CGGradient(
+                colorsSpace: CGColorSpaceCreateDeviceRGB(),
+                colors: colors,
+                locations: [0.0, 1.0]
+            ) {
+                ctx.drawLinearGradient(
+                    gradient,
+                    start: CGPoint(x: earCx, y: earY - earH / 2),
+                    end: CGPoint(x: earCx, y: earY + earH / 2),
+                    options: []
+                )
+            }
+            ctx.restoreGState()
+
+            // Ear border
+            ctx.setStrokeColor(FaceColors.faceBorder.cgColor)
+            ctx.setLineWidth(2.5)
+            ctx.addPath(path.cgPath)
+            ctx.strokePath()
+        }
+    }
+
+    // MARK: - Antenna
+
+    private static func drawAntenna(
+        ctx: CGContext, faceCx: CGFloat, faceCy: CGFloat,
+        faceRadius: CGFloat, rect: CGRect
+    ) {
+        let baseY = faceCy - faceRadius + rect.height * FaceGeometry.antennaBaseYFraction
+        let stickHeight = rect.height * FaceGeometry.antennaHeightFraction
+        let ballRadius = rect.width * FaceGeometry.antennaBallRadiusFraction
+        let tipY = baseY - stickHeight
+        let ballCy = tipY - ballRadius
+
+        // Stick
+        ctx.setStrokeColor(FaceColors.antennaStroke.cgColor)
+        ctx.setLineWidth(FaceGeometry.antennaStickWidth)
+        ctx.setLineCap(.round)
+        ctx.move(to: CGPoint(x: faceCx, y: baseY))
+        ctx.addLine(to: CGPoint(x: faceCx, y: tipY))
+        ctx.strokePath()
+
+        // Glow ball
+        ctx.saveGState()
+        let glowRadius = ballRadius * 2.0
+        let glowColors = [FaceColors.antennaGlow.withAlphaComponent(0.5).cgColor,
+                          FaceColors.antennaGlow.withAlphaComponent(0.0).cgColor] as CFArray
+        if let glowGrad = CGGradient(
+            colorsSpace: CGColorSpaceCreateDeviceRGB(),
+            colors: glowColors,
+            locations: [0.0, 1.0]
+        ) {
+            ctx.drawRadialGradient(
+                glowGrad,
+                startCenter: CGPoint(x: faceCx, y: ballCy),
+                startRadius: ballRadius * 0.5,
+                endCenter: CGPoint(x: faceCx, y: ballCy),
+                endRadius: glowRadius,
+                options: []
+            )
+        }
+        ctx.restoreGState()
+
+        // Ball
+        ctx.setFillColor(FaceColors.antennaGlow.cgColor)
+        ctx.fillEllipse(in: CGRect(x: faceCx - ballRadius, y: ballCy - ballRadius,
+                                   width: ballRadius * 2, height: ballRadius * 2))
+
+        // Ball highlight
+        let hlR = ballRadius * 0.3
+        ctx.setFillColor(UIColor.white.withAlphaComponent(0.7).cgColor)
+        ctx.fillEllipse(in: CGRect(x: faceCx - hlR * 0.7, y: ballCy - hlR * 1.2,
+                                   width: hlR * 0.8, height: hlR * 0.8))
     }
 
     // MARK: - Eye
@@ -228,20 +389,25 @@ final class FaceDrawer {
                                         width: pupilRadius * 0.56, height: pupilRadius * 0.56))
         }
 
-        // Eyelid
-        if lidScale > 0.01 {
-            let lidHeight = socketH * lidScale
-            let lidTop = eyeY - socketH / 2
-            ctx.setFillColor(FaceColors.faceFill.cgColor)
-            ctx.fill(CGRect(x: eyeCx - socketW / 2 - 4, y: lidTop - 4,
-                           width: socketW + 8, height: lidHeight + 4))
-        }
-
-        // Eye outline
-        if emotion != .happy {
+        // Eye outline — drawn before eyelid so the lid covers it when blinking.
+        // Happy eyes look softer without outline (perpetual squint).
+        if emotion != .happy && lidScale < 0.98 {
             ctx.setStrokeColor(FaceColors.faceBorder.cgColor)
             ctx.setLineWidth(3)
             ctx.strokeEllipse(in: socketRect)
+        }
+
+        // Eyelid — clipped to socket ellipse so it follows the eye contour
+        if lidScale > 0.01 {
+            ctx.saveGState()
+            ctx.addEllipse(in: socketRect)
+            ctx.clip()
+            let lidHeight = socketH * lidScale
+            let lidTop = eyeY - socketH / 2
+            ctx.setFillColor(FaceColors.faceFillLight.cgColor)
+            ctx.fill(CGRect(x: eyeCx - socketW / 2 - 8, y: lidTop - 8,
+                           width: socketW + 16, height: lidHeight + 8))
+            ctx.restoreGState()
         }
     }
 
@@ -251,7 +417,7 @@ final class FaceDrawer {
         ctx: CGContext, eyeCx: CGFloat, browY: CGFloat,
         halfLen: CGFloat, emotion: Emotion, left: Bool
     ) {
-        ctx.setStrokeColor(FaceColors.eyebrow.cgColor)
+        ctx.setStrokeColor(FaceColors.eyebrow.withAlphaComponent(0.75).cgColor)
         ctx.setLineWidth(FaceGeometry.eyebrowThickness)
         ctx.setLineCap(.round)
 
@@ -259,42 +425,64 @@ final class FaceDrawer {
         path.lineWidth = FaceGeometry.eyebrowThickness
         path.lineCapStyle = .round
 
+        let x0 = eyeCx - halfLen
+        let x1 = eyeCx + halfLen
+        let arch = halfLen * 0.35  // natural arch height
+
         switch emotion {
         case .happy:
-            path.move(to: CGPoint(x: eyeCx - halfLen, y: browY + halfLen * 0.15))
-            path.addQuadCurve(to: CGPoint(x: eyeCx + halfLen, y: browY + halfLen * 0.15),
-                              controlPoint: CGPoint(x: eyeCx, y: browY - halfLen * 0.5))
+            // Gentle upward arc, happy
+            path.move(to: CGPoint(x: x0, y: browY))
+            path.addCurve(to: CGPoint(x: x1, y: browY),
+                          controlPoint1: CGPoint(x: x0 + halfLen * 0.4, y: browY - arch * 1.6),
+                          controlPoint2: CGPoint(x: x1 - halfLen * 0.4, y: browY - arch * 1.6))
 
         case .sad:
-            let sign: CGFloat = left ? -1 : 1
-            let innerLow = browY + halfLen * 0.5
-            path.move(to: CGPoint(x: eyeCx - halfLen * sign, y: browY - halfLen * 0.2))
-            path.addLine(to: CGPoint(x: eyeCx + halfLen * sign, y: innerLow))
+            // Inner ends raised, outer ends down
+            let sign: CGFloat = left ? 1 : -1
+            let innerX = left ? x1 : x0
+            let outerX = left ? x0 : x1
+            path.move(to: CGPoint(x: outerX, y: browY + halfLen * 0.45))
+            path.addCurve(to: CGPoint(x: innerX, y: browY - halfLen * 0.15),
+                          controlPoint1: CGPoint(x: outerX + sign * halfLen * 0.6, y: browY + halfLen * 0.2),
+                          controlPoint2: CGPoint(x: innerX - sign * halfLen * 0.6, y: browY - halfLen * 0.05))
 
         case .surprised:
-            path.move(to: CGPoint(x: eyeCx - halfLen, y: browY - halfLen * 0.6))
-            path.addQuadCurve(to: CGPoint(x: eyeCx + halfLen, y: browY - halfLen * 0.6),
-                              controlPoint: CGPoint(x: eyeCx, y: browY - halfLen * 0.8))
+            // High raised arches
+            let highArch = arch * 1.8
+            path.move(to: CGPoint(x: x0, y: browY - highArch * 0.7))
+            path.addCurve(to: CGPoint(x: x1, y: browY - highArch * 0.7),
+                          controlPoint1: CGPoint(x: x0 + halfLen * 0.3, y: browY - highArch * 1.1),
+                          controlPoint2: CGPoint(x: x1 - halfLen * 0.3, y: browY - highArch * 1.1))
 
         case .curious:
-            let raise: CGFloat = left ? halfLen * 0.5 : halfLen * 0.05
-            path.move(to: CGPoint(x: eyeCx - halfLen, y: browY - raise))
-            path.addQuadCurve(to: CGPoint(x: eyeCx + halfLen, y: browY - raise),
-                              controlPoint: CGPoint(x: eyeCx, y: browY - raise - halfLen * 0.25))
+            // One raised (left), one flat
+            let raise: CGFloat = left ? arch * 1.3 : 0
+            path.move(to: CGPoint(x: x0, y: browY - raise))
+            path.addCurve(to: CGPoint(x: x1, y: browY - raise * 0.2),
+                          controlPoint1: CGPoint(x: x0 + halfLen * 0.5, y: browY - raise - arch * 0.5),
+                          controlPoint2: CGPoint(x: x1 - halfLen * 0.5, y: browY - raise - arch * 0.1))
 
         case .sleepy:
-            path.move(to: CGPoint(x: eyeCx - halfLen, y: browY + halfLen * 0.1))
-            path.addLine(to: CGPoint(x: eyeCx + halfLen, y: browY + halfLen * 0.2))
+            // Drooping downward toward outer edges
+            path.move(to: CGPoint(x: x0, y: browY - arch * 0.2))
+            path.addCurve(to: CGPoint(x: x1, y: browY + halfLen * 0.2),
+                          controlPoint1: CGPoint(x: x0 + halfLen * 0.5, y: browY + halfLen * 0.05),
+                          controlPoint2: CGPoint(x: x1 - halfLen * 0.5, y: browY + halfLen * 0.15))
 
         case .shy:
-            path.move(to: CGPoint(x: eyeCx - halfLen, y: browY))
-            path.addQuadCurve(to: CGPoint(x: eyeCx + halfLen, y: browY),
-                              controlPoint: CGPoint(x: eyeCx, y: browY - halfLen * 0.3))
+            // Slightly raised, soft
+            path.move(to: CGPoint(x: x0, y: browY - arch * 0.3))
+            path.addCurve(to: CGPoint(x: x1, y: browY - arch * 0.3),
+                          controlPoint1: CGPoint(x: x0 + halfLen * 0.4, y: browY - arch * 1.0),
+                          controlPoint2: CGPoint(x: x1 - halfLen * 0.4, y: browY - arch * 1.0))
 
         default:
-            path.move(to: CGPoint(x: eyeCx - halfLen, y: browY))
-            path.addQuadCurve(to: CGPoint(x: eyeCx + halfLen, y: browY),
-                              controlPoint: CGPoint(x: eyeCx, y: browY - halfLen * 0.2))
+            // Neutral: gentle natural arch
+            path.move(to: CGPoint(x: x0, y: browY))
+            path.addCurve(to: CGPoint(x: x1, y: browY),
+                          controlPoint1: CGPoint(x: x0 + halfLen * 0.4, y: browY - arch),
+                          controlPoint2: CGPoint(x: x1 - halfLen * 0.4, y: browY - arch))
         }
 
         ctx.addPath(path.cgPath)
@@ -319,67 +507,76 @@ final class FaceDrawer {
         halfWidth: CGFloat, emotion: Emotion,
         isSpeaking: Bool, speakAmount: CGFloat
     ) {
-        let speakOpen = halfWidth * 0.7 * speakAmount
+        // speakAmount 0..1: 0 = closed, 1 = fully open
+        let openRatio = isSpeaking ? speakAmount : 0
+
+        // ── Open mouth (speaking): draw as a filled ellipse ──────────
+        if openRatio > 0.15 {
+            let openW = halfWidth * 0.5 * openRatio
+            let openH = halfWidth * 0.85 * openRatio
+            let ovalRect = CGRect(x: cx - openW, y: mouthY - openH * 0.5,
+                                  width: openW * 2, height: openH * 1.6)
+
+            // Outer lip
+            ctx.setFillColor(FaceColors.mouth.cgColor)
+            ctx.fillEllipse(in: ovalRect)
+
+            // Inner dark (depth)
+            let innerW = openW * 0.55
+            let innerH = openH * 0.5
+            ctx.setFillColor(FaceColors.pupil.withAlphaComponent(0.6).cgColor)
+            ctx.fillEllipse(in: CGRect(x: cx - innerW, y: mouthY + innerH * 0.3,
+                                       width: innerW * 2, height: innerH * 1.4))
+            return
+        }
+
+        // ── Closed mouth: thin curved line ───────────────────────────
         let path = UIBezierPath()
+        let bw: CGFloat   // width multiplier
+        let cpY: CGFloat  // control point y offset (positive = smile, negative = frown)
 
         switch emotion {
         case .happy:
-            let yOff = halfWidth * 0.9 + speakOpen * 0.6
-            path.move(to: CGPoint(x: cx - halfWidth * 1.2, y: mouthY))
-            path.addQuadCurve(to: CGPoint(x: cx + halfWidth * 1.2, y: mouthY),
-                              controlPoint: CGPoint(x: cx, y: mouthY + yOff))
-
-        case .surprised:
-            let r = halfWidth * 0.6 + speakOpen
-            path.addArc(withCenter: CGPoint(x: cx, y: mouthY + r * 0.3),
-                       radius: r, startAngle: 0, endAngle: .pi * 2, clockwise: true)
-
+            bw = 1.2
+            cpY = halfWidth * 0.9
         case .sad:
-            path.move(to: CGPoint(x: cx - halfWidth * 0.8, y: mouthY))
-            path.addQuadCurve(to: CGPoint(x: cx + halfWidth * 0.8, y: mouthY),
-                              controlPoint: CGPoint(x: cx, y: mouthY - halfWidth * 0.5 - speakOpen * 0.3))
-
+            bw = 0.7
+            cpY = -halfWidth * 0.45
+        case .surprised:
+            // Small round "o"
+            let r = halfWidth * 0.35
+            ctx.setStrokeColor(FaceColors.mouth.cgColor)
+            ctx.setLineWidth(3.5)
+            ctx.strokeEllipse(in: CGRect(x: cx - r, y: mouthY - r * 0.7,
+                                         width: r * 2, height: r * 2))
+            return
         case .curious:
-            let r = halfWidth * 0.35 + speakOpen * 0.5
+            let r = halfWidth * 0.35
             ctx.setFillColor(FaceColors.mouth.cgColor)
             ctx.fillEllipse(in: CGRect(x: cx - r, y: mouthY - r, width: r * 2, height: r * 2))
             return
-
         case .sleepy:
-            let dy = halfWidth * 0.3 + speakOpen * 0.5
-            path.move(to: CGPoint(x: cx - halfWidth * 0.5, y: mouthY))
-            path.addQuadCurve(to: CGPoint(x: cx + halfWidth * 0.5, y: mouthY),
-                              controlPoint: CGPoint(x: cx, y: mouthY + dy))
-
+            bw = 0.5
+            cpY = halfWidth * 0.3
         case .shy:
-            let dy = halfWidth * 0.15 + speakOpen * 0.3
-            path.move(to: CGPoint(x: cx - halfWidth * 0.5, y: mouthY))
-            path.addCurve(to: CGPoint(x: cx + halfWidth * 0.5, y: mouthY),
-                          controlPoint1: CGPoint(x: cx - halfWidth * 0.25, y: mouthY - dy),
-                          controlPoint2: CGPoint(x: cx + halfWidth * 0.25, y: mouthY + dy))
-
+            bw = 0.45
+            cpY = halfWidth * 0.15
         default:
-            let dy = halfWidth * 0.25 + speakOpen * 0.5
-            path.move(to: CGPoint(x: cx - halfWidth * 0.7, y: mouthY))
-            path.addQuadCurve(to: CGPoint(x: cx + halfWidth * 0.7, y: mouthY),
-                              controlPoint: CGPoint(x: cx, y: mouthY + dy))
+            bw = 0.65
+            cpY = halfWidth * 0.12  // subtle, almost flat
         }
 
-        let filled = emotion == .surprised || (isSpeaking && speakAmount > 0.4)
+        let x0 = cx - halfWidth * bw
+        let x1 = cx + halfWidth * bw
+        path.move(to: CGPoint(x: x0, y: mouthY))
+        path.addQuadCurve(to: CGPoint(x: x1, y: mouthY),
+                          controlPoint: CGPoint(x: cx, y: mouthY + cpY))
 
-        if filled {
-            // For surprised: already drawn as filled circle above
-            if emotion != .curious {
-                ctx.setFillColor(FaceColors.mouth.cgColor)
-                ctx.addPath(path.cgPath)
-                ctx.fillPath()
-            }
-        } else if emotion != .curious {
-            ctx.setStrokeColor(FaceColors.mouth.cgColor)
-            ctx.setLineWidth(4)
-            ctx.addPath(path.cgPath)
-            ctx.strokePath()
-        }
+        ctx.setStrokeColor(FaceColors.mouth.cgColor)
+        ctx.setLineWidth(3.5)
+        ctx.setLineCap(.round)
+        ctx.addPath(path.cgPath)
+        ctx.strokePath()
     }
 
     // MARK: - Indicators
