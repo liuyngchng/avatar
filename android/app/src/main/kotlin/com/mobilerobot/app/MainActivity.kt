@@ -18,11 +18,15 @@ import com.mobilerobot.app.robot.Emotion
 import com.mobilerobot.app.robot.RobotMode
 import com.mobilerobot.app.robot.RobotState
 import com.mobilerobot.app.ui.RobotFaceScreen
+import android.util.Log
 import com.rd.siri.asr.SherpaAsrEngine
 import com.rd.siri.audio.AudioPlayer
 import com.rd.siri.audio.AudioRecorder
 import com.rd.siri.audio.VoiceService
 import com.rd.siri.audio.WakeWordManager
+import com.rd.siri.chat.ChatSession
+import com.rd.siri.chat.LlmClient
+import com.rd.siri.config.ConfigRepository
 import com.rd.siri.config.ConfigViewModel
 import com.rd.siri.model.ModelManager
 import com.rd.siri.tts.SherpaTtsEngine
@@ -55,9 +59,25 @@ class MainActivity : ComponentActivity() {
     private var ttsReady = false
     private var isRecording = false
     private var recordingJob: Job? = null
+    private var onSpeechEnd: ((String?) -> Unit)? = null
+
+    // VAD (Voice Activity Detection) constants
+    companion object {
+        private const val VAD_SILENCE_THRESHOLD = 0.012f  // RMS below this = silence
+        private const val VAD_MAX_SILENT_CHUNKS = 25       // ~2 seconds at 80ms/chunk
+    }
+
+    // LLM integration
+    private val configRepository by lazy { ConfigRepository(this) }
+    private val llmClient by lazy { LlmClient(configRepository) }
+    private val chatSession by lazy { ChatSession(llmClient) }
+    private var llmConfigured = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        llmConfigured = configRepository.hasConfig
+        Log.i("MainActivity", "LLM configured: $llmConfigured")
 
         faceDetector = FaceDetector(this)
 
@@ -72,6 +92,9 @@ class MainActivity : ComponentActivity() {
             var currentScreen by remember {
                 mutableStateOf<Screen>(if (modelsReady) Screen.RobotFace else Screen.ModelSetup)
             }
+
+            // Coroutine scope for LLM calls
+            val scope = rememberCoroutineScope()
 
             // Wake word toggle state
             val wakeWordEnabled by WakeWordManager.isRunning.collectAsState()
@@ -171,13 +194,29 @@ class MainActivity : ComponentActivity() {
                                 audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
                                 return@RobotFaceScreen
                             }
-                            if (isRecording) {
-                                stopRecording { text ->
-                                    if (text != null && text.isNotBlank()) {
-                                        val (response, emotion) = behaviorEngine.respond(text)
+                            // Shared result handler (VAD auto-stop or manual tap-to-stop)
+                            val onSpeechResult: (String?) -> Unit = { text ->
+                                if (text != null && text.isNotBlank()) {
+                                    robotState = robotState.copy(
+                                        mode = RobotMode.THINKING,
+                                        lastUserText = text,
+                                        emotion = Emotion.CURIOUS,
+                                        isSpeaking = false
+                                    )
+                                    scope.launch {
+                                        val (response, emotion) = if (configRepository.hasConfig) {
+                                            chatSession.send(text).fold(
+                                                onSuccess = { it to Emotion.HAPPY },
+                                                onFailure = { e ->
+                                                    Log.w("MainActivity", "LLM fail, fallback to rules", e)
+                                                    behaviorEngine.respond(text)
+                                                }
+                                            )
+                                        } else {
+                                            behaviorEngine.respond(text)
+                                        }
                                         robotState = robotState.copy(
                                             mode = RobotMode.SPEAKING,
-                                            lastUserText = text,
                                             responseText = response,
                                             emotion = emotion,
                                             isSpeaking = true
@@ -189,15 +228,19 @@ class MainActivity : ComponentActivity() {
                                                 isSpeaking = false
                                             )
                                         }
-                                    } else {
-                                        robotState = robotState.copy(
-                                            mode = if (robotState.faceTargetX != null)
-                                                RobotMode.WATCHING else RobotMode.IDLE
-                                        )
                                     }
+                                } else {
+                                    robotState = robotState.copy(
+                                        mode = if (robotState.faceTargetX != null)
+                                            RobotMode.WATCHING else RobotMode.IDLE
+                                    )
                                 }
+                            }
+
+                            if (isRecording) {
+                                stopRecording { onSpeechResult(it) }
                             } else {
-                                startRecording()
+                                startRecording { onSpeechResult(it) }
                                 robotState = robotState.copy(mode = RobotMode.LISTENING)
                             }
                         },
@@ -261,24 +304,48 @@ class MainActivity : ComponentActivity() {
 
     // ── ASR recording ─────────────────────────────────────────────────
 
-    private fun startRecording() {
+    private fun startRecording(onResult: (String?) -> Unit) {
         if (!asrReady) return
         isRecording = true
+        onSpeechEnd = onResult
+        var silentChunks = 0
+
         recordingJob = CoroutineScope(Dispatchers.IO).launch {
-            audioRecorder.startRecording().collect { samples ->
-                asrEngine.acceptWaveform(samples)
+            try {
+                audioRecorder.startRecording().collect { samples ->
+                    asrEngine.acceptWaveform(samples)
+
+                    // VAD: RMS energy-based silence detection
+                    var sumSq = 0f
+                    for (s in samples) sumSq += s * s
+                    val rms = kotlin.math.sqrt(sumSq / samples.size)
+
+                    if (rms < VAD_SILENCE_THRESHOLD) {
+                        silentChunks++
+                        if (silentChunks >= VAD_MAX_SILENT_CHUNKS) {
+                            audioRecorder.stopRecording()
+                            return@collect // flow completes → finally decodes
+                        }
+                    } else {
+                        silentChunks = maxOf(0, silentChunks - 1)
+                    }
+                }
+            } finally {
+                // Decode ASR result after recording stops (VAD or manual)
+                if (isRecording) {
+                    isRecording = false
+                    val text = try { asrEngine.inputFinished() } catch (_: Exception) { null }
+                    val cb = onSpeechEnd
+                    onSpeechEnd = null
+                    withContext(Dispatchers.Main) { cb?.invoke(text) }
+                }
             }
         }
     }
 
     private fun stopRecording(onResult: (String?) -> Unit) {
-        isRecording = false
-        recordingJob?.cancel()
+        onSpeechEnd = onResult
         audioRecorder.stopRecording()
-        Thread {
-            val text = asrEngine.inputFinished()
-            runOnUiThread { onResult(text) }
-        }.start()
     }
 
     // ── TTS playback ──────────────────────────────────────────────────
