@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Antenna stick -->
+    <path
+        android:pathData="M54,22 L54,12"
+        android:strokeWidth="2.5"
+        android:strokeColor="#E2E8F0"
+        android:strokeLineCap="round" />
+
+    <!-- Antenna tip -->
+    <path
+        android:pathData="M54,12m-3,0a3,3 0,1 1,6 0a3,3 0,1 1,-6 0"
+        android:fillColor="#22D3EE" />
+
+    <!-- Robot head - rounded rectangle -->
+    <path
+        android:pathData="M30,40 L78,40 Q84,40 84,46 L84,76 Q84,82 78,82 L30,82 Q24,82 24,76 L24,46 Q24,40 30,40z"
+        android:fillColor="#334155" />
+
+    <!-- Left eye outer -->
+    <path
+        android:pathData="M42,57m-7,0a7,7 0,1 1,14 0a7,7 0,1 1,-14 0"
+        android:fillColor="#E2E8F0" />
+
+    <!-- Left eye inner (pupil) -->
+    <path
+        android:pathData="M44,57m-3.5,0a3.5,3.5 0,1 1,7 0a3.5,3.5 0,1 1,-7 0"
+        android:fillColor="#22D3EE" />
+
+    <!-- Right eye outer -->
+    <path
+        android:pathData="M66,57m-7,0a7,7 0,1 1,14 0a7,7 0,1 1,-14 0"
+        android:fillColor="#E2E8F0" />
+
+    <!-- Right eye inner (pupil) -->
+    <path
+        android:pathData="M68,57m-3.5,0a3.5,3.5 0,1 1,7 0a3.5,3.5 0,1 1,-7 0"
+        android:fillColor="#22D3EE" />
+
+    <!-- Smile -->
+    <path
+        android:pathData="M44,70 Q54,78 64,70"
+        android:strokeWidth="2.5"
+        android:strokeColor="#22D3EE"
+        android:fillColor="@android:color/transparent"
+        android:strokeLineCap="round" />
+
+    <!-- Left ear -->
+    <path
+        android:pathData="M28,50 L28,44 Q28,37 20,37"
+        android:strokeWidth="3"
+        android:strokeColor="#475569"
+        android:fillColor="@android:color/transparent"
+        android:strokeLineCap="round" />
+
+    <!-- Right ear -->
+    <path
+        android:pathData="M80,50 L80,44 Q80,37 88,37"
+        android:strokeWidth="3"
+        android:strokeColor="#475569"
+        android:fillColor="@android:color/transparent"
+        android:strokeLineCap="round" />
+</vector>

@@ -159,7 +159,14 @@ object ModelManager {
         return try {
             val totalSize = getSize(context, uri)
             context.contentResolver.openInputStream(uri)?.use { input ->
-                extractTarStream(context, input, destSubDir, totalSize, onProgress)
+                // Auto-detect bzip2 compression: read magic bytes "BZh"
+                val wrapped = if (isBzip2Stream(input)) {
+                    Log.i(TAG, "Tar: detected bzip2 compression, auto-decompressing")
+                    BZip2CompressorInputStream(input)
+                } else {
+                    input
+                }
+                extractTarStream(context, wrapped, destSubDir, totalSize, onProgress)
             } ?: Result.failure(Exception("无法打开文件"))
         } catch (e: Exception) {
             Log.e(TAG, "Tar extraction to $destSubDir failed", e)
@@ -359,6 +366,22 @@ object ModelManager {
         } catch (e: Exception) {
             Log.e(TAG, "Tar extraction to $destSubDir failed", e)
             Result.failure(e)
+        }
+    }
+
+    /**
+     * Peek at the first 3 bytes of the stream to detect bzip2 magic ("BZh").
+     * The stream must support mark/reset; wrap with [java.io.BufferedInputStream] if needed.
+     */
+    private fun isBzip2Stream(input: InputStream): Boolean {
+        return try {
+            val buf = java.io.BufferedInputStream(input).also { it.mark(3) }
+            val magic = ByteArray(3)
+            val n = buf.read(magic)
+            buf.reset()
+            n == 3 && magic[0] == 'B'.code.toByte() && magic[1] == 'Z'.code.toByte() && magic[2] == 'h'.code.toByte()
+        } catch (_: Exception) {
+            false
         }
     }
 

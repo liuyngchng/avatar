@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Robot Companion</string>
+    <string name="app_name">虚拟机器人</string>
     <string name="wake_word_listening_title">小爱在听</string>
     <string name="wake_word_listening_text">说"小爱小爱"唤醒我~</string>
     <string name="voice_channel">语音服务</string>
