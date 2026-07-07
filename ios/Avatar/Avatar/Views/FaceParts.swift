@@ -44,9 +44,6 @@ enum FaceColors {
     /// Nose — subtle dark dot
     static let noseDot = UIColor(red: 0.18, green: 0.16, blue: 0.20, alpha: 0.50)
 
-    /// T-shirt
-    static let tShirtWhite = UIColor(red: 0.96, green: 0.96, blue: 0.97, alpha: 1.0)
-    static let collarBlack = UIColor(red: 0.10, green: 0.09, blue: 0.12, alpha: 1.0)
 }
 
 // MARK: - Cached Gradients
@@ -66,8 +63,8 @@ enum FaceGradients {
 
 enum FaceGeometry {
     // Face
-    static let faceRadiusFraction: CGFloat   = 0.35
-    static let faceCenterYFraction: CGFloat  = 0.40
+    static let faceRadiusFraction: CGFloat   = 0.38
+    static let faceCenterYFraction: CGFloat  = 0.48
 
     // Eyes — simple dots
     static let eyeYFraction: CGFloat          = 0.40
@@ -105,10 +102,6 @@ enum FaceGeometry {
     static let hairCapTopFraction: CGFloat    = 0.76   // where hair cap starts (0=center, 1=top of face)
     static let tuftHeightFraction: CGFloat    = 0.035  // height of hair tufts
     static let tuftWidthFraction: CGFloat     = 0.025  // half-width of tufts
-
-    // T-shirt collar
-    static let collarYFraction: CGFloat       = 0.70
-    static let collarWidthFraction: CGFloat   = 0.36
 }
 
 // MARK: - Face Drawing
@@ -246,9 +239,6 @@ final class FaceDrawer {
         drawSimpleMouth(ctx: ctx, cx: cx, mouthY: mouthY, halfWidth: mouthHalfW,
                         emotion: state.emotion, isSpeaking: state.isSpeaking,
                         speakAmount: speakAmount)
-
-        // ── T-shirt collar ──
-        drawTShirtCollar(ctx: ctx, cx: cx, faceCy: cy, faceRadius: faceRadius, rect: rect)
 
         // ── Mode indicators ──
         if state.mode == .listening {
@@ -601,61 +591,6 @@ final class FaceDrawer {
             ctx.addPath(smilePath.cgPath)
             ctx.strokePath()
         }
-    }
-
-    // MARK: - T-shirt Collar
-
-    /// Draws a white T-shirt with a thick black collar line below the face.
-    private static func drawTShirtCollar(
-        ctx: CGContext, cx: CGFloat, faceCy: CGFloat,
-        faceRadius: CGFloat, rect: CGRect
-    ) {
-        let collarY = rect.height * FaceGeometry.collarYFraction
-        let collarHW = rect.width * FaceGeometry.collarWidthFraction
-        let neckWidth = collarHW * 0.55
-
-        // ── White T-shirt fill below collar ──
-        let shirtPath = UIBezierPath()
-        shirtPath.move(to: CGPoint(x: cx - collarHW, y: collarY))
-        shirtPath.addLine(to: CGPoint(x: cx - collarHW, y: rect.height + 20))
-        shirtPath.addLine(to: CGPoint(x: cx + collarHW, y: rect.height + 20))
-        shirtPath.addLine(to: CGPoint(x: cx + collarHW, y: collarY))
-        // Slight inward curve at the top edges (shoulder line)
-        shirtPath.close()
-
-        ctx.setFillColor(FaceColors.tShirtWhite.cgColor)
-        ctx.addPath(shirtPath.cgPath)
-        ctx.fillPath()
-
-        // ── Thick black collar line (round neck) ──
-        let collarPath = UIBezierPath()
-        collarPath.move(to: CGPoint(x: cx - neckWidth, y: collarY + 6))
-        collarPath.addQuadCurve(
-            to: CGPoint(x: cx + neckWidth, y: collarY + 6),
-            controlPoint: CGPoint(x: cx, y: collarY - 14)
-        )
-
-        ctx.setStrokeColor(FaceColors.collarBlack.cgColor)
-        ctx.setLineWidth(5.0)
-        ctx.setLineCap(.round)
-        ctx.addPath(collarPath.cgPath)
-        ctx.strokePath()
-
-        // ── Shoulder outlines (thick) ──
-        let shoulderLineWidth: CGFloat = 4.5
-        ctx.setStrokeColor(FaceColors.collarBlack.cgColor)
-        ctx.setLineWidth(shoulderLineWidth)
-        ctx.setLineCap(.round)
-
-        // Left shoulder
-        ctx.move(to: CGPoint(x: cx - collarHW, y: collarY))
-        ctx.addLine(to: CGPoint(x: cx - collarHW, y: collarY + 30))
-        ctx.strokePath()
-
-        // Right shoulder
-        ctx.move(to: CGPoint(x: cx + collarHW, y: collarY))
-        ctx.addLine(to: CGPoint(x: cx + collarHW, y: collarY + 30))
-        ctx.strokePath()
     }
 
     // MARK: - Indicators
