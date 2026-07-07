@@ -1,73 +1,104 @@
-# Avatar — 纯手机版机器人伴侣
+# Avatar — 手机里的数字人
 
-一部 Android 12 手机 = 机器人的眼睛、耳朵、嘴巴和脸。
+一个跑在 iPhone 上的数字人。她会看着你、模仿你的表情、听懂你说的话、用自然的声音回答你。你也可以给她一段文字，让她念出来。
 
-**不需要任何外部硬件。** 前置摄像头看人脸，麦克风听语音，TTS 说话，屏幕显示一张会跟着你动的机器人脸。
+**不需要任何外部硬件。** 只有你的手机，和一个住在屏幕里的她。
 
-## 功能
+## 她能做什么
 
-- 👀 **眼睛跟随** — 检测人脸后，屏幕上的眼睛会跟着你移动
-- 😊 **表情系统** — 7 种情绪：开心/好奇/惊讶/害羞/困倦/难过/中性
-- 🗣️ **语音对话** — 点屏幕说话，机器人用语音+表情回应
-- 😉 **眨眼** — 随机眨眼，自然生动
-- 🧠 **规则引擎** — 关键词匹配对话（可替换为 GPT/Claude API）
+- 👀 **眼神跟随** — 前置摄像头检测人脸，眼睛会一直看着你
+- 😊 **表情模仿** — 你笑她就笑，你惊讶她就惊讶，你眯眼她就犯困
+- 🗣️ **语音对话** — 点屏幕说话，她听懂后回答你（ASR → LLM → TTS）
+- 📝 **文字朗读** — 贴一段文字给她，她用自然的声音念出来
+- 🎤 **唤醒词** — 喊"小爱小爱"，她应一声"哎，我在呢"，然后听你说话
+- 🎨 **生动表情** — 7 种情绪 + 眨眼 + 说话时嘴巴张合
 
-## 快速启动
+## 快速开始
 
-### 1. 用 Android Studio 打开
+### 1. 用 Xcode 打开
 
 ```
-File → Open → 选择 android/ 目录
+open ios/Avatar/Avatar.xcodeproj
 ```
 
-### 2. 同步 Gradle
+### 2. 准备模型文件
 
-等待依赖下载完成（CameraX, ML Kit, Compose）。
+App 内置模型管理界面，可以从手机上传/解压模型文件。需要的模型：
+
+| 模型 | 用途 | 大小 |
+|------|------|------|
+| SenseVoiceSmall | 语音识别 (ASR) | ~158MB |
+| Matcha-TTS + vocos | 语音合成 (TTS) | ~123MB |
+| Zipformer KWS | 唤醒词 | ~13MB |
 
 ### 3. 在手机上运行
 
-- USB 连接手机，开启 USB 调试
-- 点击 Run
-- 首次启动需授权**相机**和**麦克风**权限
+- USB 连接 iPhone
+- Xcode 中选择你的设备，点 Run
+- 首次启动授权**相机**和**麦克风**
 
-### 4. 互动
+### 4. 开始互动
 
-- 把脸对着手机 → 机器人眼睛看过来
-- 点击屏幕 → 说话 → 机器人回应
-- 走远 → 机器人说"你去哪了？"
+- 把脸对着手机 — 她会看着你，模仿你的表情
+- 点击屏幕 — 说话 — 她回答
+- 或喊"小爱小爱"唤醒她
+
+## 技术栈
+
+| 层 | 技术 |
+|----|------|
+| **UI** | SwiftUI + UIKit (Core Graphics 绘制脸部) |
+| **人脸检测** | AVFoundation + Vision (`VNDetectFaceLandmarksRequest`) |
+| **语音识别** | sherpa-onnx SenseVoiceSmall (离线) |
+| **语音合成** | sherpa-onnx Matcha-TTS (离线) |
+| **唤醒词** | sherpa-onnx Zipformer KWS (离线) |
+| **对话** | LLM API（可配置 OpenAI / Claude / 本地模型） |
+| **最低系统** | iOS 14.0 |
 
 ## 项目结构
 
 ```
-avatar/
-├── README.md
-├── docs/
-│   ├── architecture.md       # 系统架构
-│   ├── hardware.md           # 硬件选型（将来买底盘时参考）
-│   └── android_app.md        # App 技术方案
-├── android/                   # Android App ★ 核心代码
-│   ├── build.gradle.kts
-│   ├── settings.gradle.kts
-│   └── app/src/main/kotlin/com/mobilerobot/app/
-│       ├── MainActivity.kt           # 入口，模块编排
-│       ├── RobotApplication.kt       # Application
-│       ├── camera/FaceDetector.kt    # CameraX + ML Kit
-│       ├── voice/SpeechToText.kt     # 语音输入
-│       ├── voice/RobotTTS.kt         # 语音输出
-│       ├── ui/RobotFaceScreen.kt     # 脸部动画 UI
-│       ├── robot/BehaviorEngine.kt   # 对话引擎
-│       └── robot/RobotState.kt       # 状态模型
-├── firmware/                  # ESP32 固件（将来买底盘后用）
-└── models/                    # 预训练模型
+ios/Avatar/
+├── Avatar.xcodeproj
+├── Avatar/
+│   ├── AvatarApp.swift               # App 入口
+│   ├── ContentView.swift             # 根导航
+│   ├── ViewModels/
+│   │   ├── RobotViewModel.swift      # 核心编排：感知→决策→表达
+│   │   └── ContentViewModel.swift    # 导航状态
+│   ├── Views/
+│   │   ├── RobotMainScreen.swift     # 主界面
+│   │   ├── RobotFaceView.swift       # 脸部渲染 (UIKit)
+│   │   ├── FaceParts.swift           # 脸部绘制 (眼/眉/嘴/耳/天线)
+│   │   ├── SettingsScreen.swift      # 设置页
+│   │   ├── ModelSetupScreen.swift    # 模型上传
+│   │   └── ...
+│   ├── Services/
+│   │   ├── FaceDetector.swift        # Vision 人脸检测 + 表情分析
+│   │   └── BehaviorEngine.swift      # 规则对话引擎 (无 LLM 时的后备)
+│   ├── ASR/
+│   │   └── SherpaAsrEngine.swift     # sherpa-onnx 语音识别
+│   ├── TTS/
+│   │   ├── SherpaTtsEngine.swift     # sherpa-onnx 语音合成
+│   │   └── TextNormalizer.swift      # 文本预处理
+│   ├── Audio/
+│   │   ├── AudioRecorder.swift       # 录音
+│   │   ├── AudioPlayer.swift         # 播放
+│   │   ├── WakeWordEngine.swift      # 唤醒词检测
+│   │   └── WakeWordManager.swift     # 唤醒状态管理
+│   ├── Chat/
+│   │   ├── ChatSession.swift         # 对话管理
+│   │   └── LlmClient.swift           # LLM API 客户端
+│   ├── Models/                       # 数据模型
+│   └── Config/                       # 配置管理
+├── Frameworks/
+│   ├── sherpa-onnx.xcframework
+│   └── onnxruntime.xcframework
+└── generate_icon.py
 ```
 
-## 下一步路线
+## 给开发者
 
-| 阶段 | 内容 | 状态 |
-|------|------|------|
-| 0 | 纯手机：眼睛+语音+表情 | ✅ 当前 |
-| 1 | 接大模型 API：智能对话 | 📋 替换 BehaviorEngine |
-| 2 | 人脸识别：记住不同的人 | 📋 升级 ML Kit |
-| 3 | 长期记忆：SQLite 存历史 | 📋 |
-| 4 | 买底盘+ESP32：物理移动 | 📋 见 docs/hardware.md |
-| 5 | SLAM 导航：自主巡航 | 📋 |
+全部离线运行，不依赖云端。LLM 对话需要网络，但可以配置你自己的 API endpoint。
+
+如果你只想让她念文字（不上传 LLM），那她完全离线：模型在本地，ASR 在本地，TTS 在本地。
