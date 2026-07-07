@@ -31,6 +31,53 @@ bin/
 app/src/main/assets/models/
 .model_cache/
 
+# ── iOS ────────────────────────────────────────────────
+# Xcode
+**/xcuserdata/
+**/*.xcworkspace/xcuserdata/
+DerivedData/
+*.pbxuser
+!default.pbxuser
+*.mode1v3
+!default.mode1v3
+*.mode2v3
+!default.mode2v3
+*.perspectivev3
+!default.perspectivev3
+*.xcarchive
+*.xcbkptlist
+*.xcresult
+
+# CocoaPods
+Pods/
+
+# Carthage
+Carthage/Build/
+
+# Swift Package Manager
+.swiftpm/
+.build/
+
+# Fastlane
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/screenshots/
+fastlane/test_output
+
+# Code signing
+*.cer
+*.mobileprovision
+*.provisionprofile
+
+# Playgrounds
+playground.xcworkspace
+
+# ── iOS Frameworks (download separately) ──────────────
+ios/MobileRobot/Frameworks/
+
+# ── Tool scripts (one-shot) ───────────────────────────
+ios/MobileRobot/generate_icon.py
+
 # ── Secrets ───────────────────────────────────────────
 *.keystore
 *.jks
