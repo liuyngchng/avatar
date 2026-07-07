@@ -108,6 +108,9 @@ struct RobotMainScreen: View {
                     configVM: ConfigViewModel(),
                     onDismiss: {
                         showSettings = false
+                    },
+                    onReadText: { text in
+                        viewModel.speakText(text)
                     }
                 )
             }

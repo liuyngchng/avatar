@@ -33,6 +33,7 @@ import com.rd.siri.tts.SherpaTtsEngine
 import com.rd.siri.ui.ModelSetupScreen
 import com.rd.siri.ui.SettingsHubScreen
 import com.rd.siri.ui.SettingsScreen
+import com.rd.siri.ui.TextReaderScreen
 import kotlinx.coroutines.*
 import kotlin.random.Random
 
@@ -42,6 +43,7 @@ private sealed class Screen {
     object SettingsHub : Screen()
     object LlmConfig : Screen()
     object ModelSetup : Screen()
+    object TextReader : Screen()
 }
 
 class MainActivity : ComponentActivity() {
@@ -272,6 +274,7 @@ class MainActivity : ComponentActivity() {
                     SettingsHubScreen(
                         onNavigateToLlmConfig = { currentScreen = Screen.LlmConfig },
                         onNavigateToModelSetup = { currentScreen = Screen.ModelSetup },
+                        onNavigateToTextReader = { currentScreen = Screen.TextReader },
                         onDismiss = { currentScreen = Screen.RobotFace },
                         wakeWordEnabled = wakeWordEnabled,
                         onToggleWakeWord = { enabled ->
@@ -296,6 +299,27 @@ class MainActivity : ComponentActivity() {
                     ModelSetupScreen(
                         onBack = {
                             currentScreen = Screen.SettingsHub
+                        }
+                    )
+                }
+
+                is Screen.TextReader -> {
+                    TextReaderScreen(
+                        onBack = { currentScreen = Screen.SettingsHub },
+                        onRead = { text ->
+                            // Speak the text using TTS
+                            robotState = robotState.copy(
+                                mode = RobotMode.SPEAKING,
+                                responseText = text,
+                                isSpeaking = true
+                            )
+                            speak(text) {
+                                robotState = robotState.copy(
+                                    mode = if (robotState.faceTargetX != null)
+                                        RobotMode.WATCHING else RobotMode.IDLE,
+                                    isSpeaking = false
+                                )
+                            }
                         }
                     )
                 }

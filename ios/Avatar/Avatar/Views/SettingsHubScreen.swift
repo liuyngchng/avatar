@@ -11,6 +11,7 @@ import SwiftUI
 struct SettingsHubScreen: View {
     @ObservedObject var configVM: ConfigViewModel
     var onDismiss: () -> Void
+    var onReadText: (String) -> Void = { _ in }
 
     /// Build-time-based version string (executable modification date).
     private var appVersion: String {
@@ -50,6 +51,23 @@ struct SettingsHubScreen: View {
                             Text("语音模型")
                         } icon: {
                             Image(systemName: "waveform.circle.fill")
+                                .foregroundColor(.blue)
+                        }
+                    }
+                }
+
+                // MARK: - 交互
+                Section(header: Text("交互")) {
+                    NavigationLink(destination:
+                        TextReaderView(
+                            onRead: onReadText,
+                            onBack: {}
+                        )
+                    ) {
+                        Label {
+                            Text("文本朗读")
+                        } icon: {
+                            Image(systemName: "text.quote")
                                 .foregroundColor(.blue)
                         }
                     }

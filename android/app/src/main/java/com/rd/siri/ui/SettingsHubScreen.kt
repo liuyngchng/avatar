@@ -11,6 +11,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.BatteryAlert
 import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.Create
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.VoiceOverOff
@@ -37,6 +38,7 @@ import java.util.Locale
 fun SettingsHubScreen(
     onNavigateToLlmConfig: () -> Unit,
     onNavigateToModelSetup: () -> Unit,
+    onNavigateToTextReader: () -> Unit = {},
     onDismiss: () -> Unit,
     wakeWordEnabled: Boolean = false,
     onToggleWakeWord: (Boolean) -> Unit = {}
@@ -144,6 +146,14 @@ fun SettingsHubScreen(
                         onCheckedChange = onToggleWakeWord
                     )
                 }
+            }
+            item(key = "text_reader") {
+                SettingsRow(
+                    icon = Icons.Filled.Create,
+                    title = "文本朗读",
+                    subtitle = "输入或粘贴文本，让数字人朗读",
+                    onClick = onNavigateToTextReader
+                )
             }
 
             // Battery optimization warning
