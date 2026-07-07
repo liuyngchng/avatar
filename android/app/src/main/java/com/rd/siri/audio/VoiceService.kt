@@ -52,17 +52,6 @@ class VoiceService : Service() {
         super.onCreate()
         createNotificationChannel()
 
-        // Acquire partial wake lock to keep CPU running for KWS when screen is off.
-        // Without this, deep doze suspends the CPU and AudioRecord.read() never returns.
-        val pm = getSystemService(PowerManager::class.java)
-        wakeLock = pm.newWakeLock(
-            PowerManager.PARTIAL_WAKE_LOCK,
-            "RobotCompanion:VoiceService"
-        ).apply {
-            setReferenceCounted(false)
-            acquire()
-        }
-
         // Observe resume signal: when the voice flow completes, restart KWS
         serviceScope.launch {
             WakeWordManager.resumeSignal.collect {
@@ -156,6 +145,7 @@ class VoiceService : Service() {
             return
         }
         kwsActive = true
+        acquireWakeLock()
         engine.start(
             onDetected = { keyword ->
                 val now = System.currentTimeMillis()
@@ -187,7 +177,35 @@ class VoiceService : Service() {
     private fun stopEngine() {
         engine.stop()
         kwsActive = false
+        releaseWakeLock()
         Log.i(TAG, "VoiceService: engine stopped")
+    }
+
+    // ── WakeLock management ─────────────────────────────────────────────────
+
+    private fun acquireWakeLock() {
+        if (wakeLock == null) {
+            val pm = getSystemService(PowerManager::class.java)
+            wakeLock = pm.newWakeLock(
+                PowerManager.PARTIAL_WAKE_LOCK,
+                "RobotCompanion:VoiceService"
+            ).apply { setReferenceCounted(false) }
+        }
+        wakeLock?.let {
+            if (!it.isHeld) {
+                it.acquire()
+                Log.d(TAG, "VoiceService: wakeLock acquired")
+            }
+        }
+    }
+
+    private fun releaseWakeLock() {
+        wakeLock?.let {
+            if (it.isHeld) {
+                it.release()
+                Log.d(TAG, "VoiceService: wakeLock released")
+            }
+        }
     }
 
     // ── Crash recovery ──────────────────────────────────────────────────────

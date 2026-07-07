@@ -35,7 +35,7 @@ class SherpaTtsEngine(private val context: Context) {
             return false
         }
 
-        val numThreads = Runtime.getRuntime().availableProcessors().coerceIn(2, 8)
+        val numThreads = Runtime.getRuntime().availableProcessors().coerceIn(2, 4)
 
         Log.i(TAG, "TTS: initializing with numThreads=$numThreads")
         statePtr = nativeCreateTts(

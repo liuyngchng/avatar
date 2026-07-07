@@ -125,13 +125,23 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
-            // Collect face detection results
+            // Collect face detection results (conflated to reduce recomposition pressure)
             LaunchedEffect(Unit) {
                 faceDetector.faces.collect { result ->
+                    // Skip redundant updates: only update state if face presence changed
+                    // or coordinates shifted meaningfully (>1% of screen)
+                    val prevHasFace = robotState.faceTargetX != null
+                    val hasFace = result != null
+                    if (!prevHasFace && !hasFace) {
+                        robotState = robotState.copy(
+                            msSinceLastFace = robotState.msSinceLastFace + 200
+                        )
+                        return@collect
+                    }
                     robotState = robotState.copy(
                         faceTargetX = result?.cx,
                         faceTargetY = result?.cy,
-                        msSinceLastFace = if (result != null) 0L
+                        msSinceLastFace = if (hasFace) 0L
                             else robotState.msSinceLastFace + 200
                     )
                 }
@@ -139,7 +149,7 @@ class MainActivity : ComponentActivity() {
 
             // Blink timer
             LaunchedEffect(Unit) {
-                while (true) {
+                while (isActive) {
                     delay(Random.nextLong(2000, 5000))
                     robotState = robotState.copy(
                         blinkTrigger = robotState.blinkTrigger + 1
@@ -244,8 +254,16 @@ class MainActivity : ComponentActivity() {
                                 robotState = robotState.copy(mode = RobotMode.LISTENING)
                             }
                         },
-                        onLongPress = {
+                        onSettingsClick = {
                             currentScreen = Screen.SettingsHub
+                        },
+                        wakeWordEnabled = wakeWordEnabled,
+                        onToggleWakeWord = {
+                            if (wakeWordEnabled) {
+                                stopWakeWordService()
+                            } else {
+                                startWakeWordService()
+                            }
                         }
                     )
                 }
@@ -352,19 +370,15 @@ class MainActivity : ComponentActivity() {
 
     private fun speak(text: String, onDone: (() -> Unit)? = null) {
         if (!ttsReady) return
-        Thread {
+        CoroutineScope(Dispatchers.IO).launch {
             val audio = ttsEngine.synthesize(text)
             if (audio != null) {
-                runOnUiThread {
-                    CoroutineScope(Dispatchers.IO).launch {
-                        audioPlayer.play(audio, ttsEngine.getSampleRate())
-                        onDone?.let { runOnUiThread { it() } }
-                    }
-                }
+                audioPlayer.play(audio, ttsEngine.getSampleRate())
+                onDone?.let { withContext(Dispatchers.Main) { it() } }
             } else {
-                onDone?.let { runOnUiThread { it() } }
+                onDone?.let { withContext(Dispatchers.Main) { it() } }
             }
-        }.start()
+        }
     }
 
     // ── Permission helpers ────────────────────────────────────────────

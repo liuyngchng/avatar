@@ -49,13 +49,18 @@ class FaceDetector(private val appContext: android.content.Context) {
 
     private val analysisExecutor = Executors.newSingleThreadExecutor()
 
+    /** Frame skip: only run ML Kit every N camera frames to reduce CPU/GPU load.
+     *  At ~30 fps camera, every 4th frame ≈ 7.5 Hz — plenty for smooth face tracking.
+     *  Same optimization applied to iOS FaceDetector. */
+    private val visionFrameInterval = 4
+    private var frameCounter = 0
+
     private val faceDetector by lazy {
         val options = FaceDetectorOptions.Builder()
             .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_FAST)
-            .setLandmarkMode(FaceDetectorOptions.LANDMARK_MODE_ALL)
-            .setClassificationMode(FaceDetectorOptions.CLASSIFICATION_MODE_ALL)
+            .setLandmarkMode(FaceDetectorOptions.LANDMARK_MODE_NONE)
+            .setClassificationMode(FaceDetectorOptions.CLASSIFICATION_MODE_NONE)
             .setMinFaceSize(0.15f) // relative to image; ~15% minimum
-            .enableTracking()      // assigns stable IDs across frames
             .build()
         FaceDetection.getClient(options)
     }
@@ -90,6 +95,13 @@ class FaceDetector(private val appContext: android.content.Context) {
     }
 
     private fun analyzeFrame(imageProxy: ImageProxy) {
+        // Throttle: only run ML Kit detection every N frames
+        frameCounter++
+        if (frameCounter % visionFrameInterval != 0) {
+            imageProxy.close()
+            return
+        }
+
         val mediaImage = imageProxy.image ?: run {
             imageProxy.close()
             return

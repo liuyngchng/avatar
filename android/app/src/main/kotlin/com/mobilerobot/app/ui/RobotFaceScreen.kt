@@ -5,9 +5,15 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
+import androidx.compose.material.Icon
+import androidx.compose.material.IconButton
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -17,11 +23,14 @@ import androidx.compose.ui.graphics.drawscope.Fill
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.unit.dp
 import com.mobilerobot.app.robot.Emotion
 import com.mobilerobot.app.robot.RobotMode
 import com.mobilerobot.app.robot.RobotState
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlin.math.*
 import kotlin.random.Random
 
@@ -77,7 +86,9 @@ private const val ANTENNA_STICK_WIDTH = 3f
 fun RobotFaceScreen(
     state: RobotState,
     onTap: () -> Unit = {},
-    onLongPress: () -> Unit = {}
+    onSettingsClick: () -> Unit = {},
+    wakeWordEnabled: Boolean = false,
+    onToggleWakeWord: () -> Unit = {}
 ) {
     val targetX by animateFloatAsState(
         targetValue = state.faceTargetX ?: 0.5f,
@@ -95,7 +106,7 @@ fun RobotFaceScreen(
 
     LaunchedEffect(state.faceTargetX) {
         if (state.faceTargetX == null) {
-            while (true) {
+            while (isActive) {
                 idleWander.animateTo(
                     targetValue = Random.nextFloat() * 2f - 1f,
                     animationSpec = tween(2000 + Random.nextInt(1500), easing = FastOutSlowInEasing)
@@ -115,7 +126,7 @@ fun RobotFaceScreen(
 
     LaunchedEffect(state.isSpeaking) {
         if (state.isSpeaking) {
-            while (true) {
+            while (isActive) {
                 speakMouth.animateTo(1f, tween(120))
                 speakMouth.animateTo(0.2f, tween(120))
             }
@@ -126,7 +137,7 @@ fun RobotFaceScreen(
 
     LaunchedEffect(state.mode) {
         if (state.mode == RobotMode.THINKING) {
-            while (true) {
+            while (isActive) {
                 thinkPhase.animateTo(1f, tween(800, easing = FastOutSlowInEasing))
                 thinkPhase.animateTo(-1f, tween(800, easing = FastOutSlowInEasing))
             }
@@ -139,14 +150,14 @@ fun RobotFaceScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(ColorBg)
-            .pointerInput(Unit) {
-                detectTapGestures(
-                    onTap = { onTap() },
-                    onLongPress = { onLongPress() }
-                )
-            }
     ) {
-        Canvas(modifier = Modifier.fillMaxSize()) {
+        Canvas(
+            modifier = Modifier
+                .fillMaxSize()
+                .pointerInput(Unit) {
+                    detectTapGestures(onTap = { onTap() })
+                }
+        ) {
             val cx = size.width / 2f
             val cy = size.height * FACE_CENTER_Y_FRACTION
             val faceRadius = size.width * FACE_RADIUS_FRACTION
@@ -263,6 +274,79 @@ fun RobotFaceScreen(
             if (state.lastUserText != null && state.mode != RobotMode.IDLE) {
                 drawContextBubble(cx, cy + faceRadius + 10f, state)
             }
+        }
+
+        // ── Top overlay: ear (wake word) + gear (settings) ──
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .statusBarsPadding()
+                .padding(horizontal = 12.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.End,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // Wake word toggle (ear icon)
+            IconButton(onClick = onToggleWakeWord) {
+                EarIcon(
+                    active = wakeWordEnabled,
+                    tint = if (wakeWordEnabled) Color(0xFF4488FF)
+                        else Color.White.copy(alpha = 0.55f)
+                )
+            }
+
+            Spacer(modifier = Modifier.width(2.dp))
+
+            // Settings gear
+            IconButton(onClick = onSettingsClick) {
+                Icon(
+                    imageVector = Icons.Filled.Settings,
+                    contentDescription = "设置",
+                    tint = Color.White.copy(alpha = 0.6f),
+                    modifier = Modifier.size(22.dp)
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Simple ear icon drawn with Canvas — outline when inactive, filled when active.
+ * Matches iOS SF Symbol "ear" / "ear.fill" behavior.
+ */
+@Composable
+private fun EarIcon(active: Boolean, tint: Color) {
+    Canvas(modifier = Modifier.size(22.dp)) {
+        val cx = size.width / 2f
+        val cy = size.height / 2f
+        val r = size.width * 0.42f
+
+        // Ear outer shape: an arc with a small lobe at bottom
+        val path = Path().apply {
+            // Main arc of the ear (left side, curves up and around)
+            arcTo(
+                rect = Rect(
+                    offset = Offset(cx - r * 0.8f, cy - r * 0.9f),
+                    size = Size(r * 1.4f, r * 1.8f)
+                ),
+                startAngleDegrees = 120f,
+                sweepAngleDegrees = -240f,
+                forceMoveTo = true
+            )
+        }
+
+        drawPath(
+            path = path,
+            color = tint,
+            style = Stroke(width = 2.2f, cap = StrokeCap.Round)
+        )
+
+        // Inner fill dot when active
+        if (active) {
+            drawCircle(
+                color = tint,
+                radius = r * 0.22f,
+                center = Offset(cx - r * 0.05f, cy)
+            )
         }
     }
 }

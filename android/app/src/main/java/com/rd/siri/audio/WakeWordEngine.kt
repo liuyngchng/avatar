@@ -93,7 +93,7 @@ class WakeWordEngine(private val context: Context) {
         }
 
         detectionThread = Thread({
-            android.os.Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_AUDIO)
+            android.os.Process.setThreadPriority(Process.THREAD_PRIORITY_DEFAULT)
             runDetectionLoop(onDetected, onError)
         }).apply {
             name = "WakeWordDetection"
