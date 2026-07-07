@@ -7,92 +7,94 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		1F2912C9882440599395897B /* sherpa-onnx.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 256966A8CF0042169B0BBFFA /* sherpa-onnx.xcframework */; };
-		902A3DFAE2004D3980AE032B /* onnxruntime.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 325DFA22DC2E4568BE4DE448 /* onnxruntime.xcframework */; };
-		902E043BFE5F4872BE695D96 /* AvatarApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40E98E11791C47EDA8B4676E /* AvatarApp.swift */; };
-		BEE79ACBDCA24ED5821D81AC /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C043840BBEFE441C9BCC4A1D /* ContentView.swift */; };
-		DD32158AD18C4C2898B7211E /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5AB1B8E743E24141B324E371 /* AppDelegate.swift */; };
 		083DB04E950444E18A378BF3 /* ChatMessage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 66785CB86F274EEBA14A6E41 /* ChatMessage.swift */; };
-		A811BD717DEF472B85ADA406 /* LlmConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 677D2F1BEDF74DF3A5C896C8 /* LlmConfig.swift */; };
-		49E64EA0E4074CB985EA89C6 /* LlmPreset.swift in Sources */ = {isa = PBXBuildFile; fileRef = C813FF332DFB473BBDC23345 /* LlmPreset.swift */; };
-		A7EBE6CBCEEA483BA492F888 /* RobotState.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACAC4956597E458FAE803460 /* RobotState.swift */; };
-		9F5F7D095F934FADB916EE21 /* FaceDetectionResult.swift in Sources */ = {isa = PBXBuildFile; fileRef = 87676A939FC54D6EAF30B690 /* FaceDetectionResult.swift */; };
-		EF0EE0C402F64607A435815D /* KeychainHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = F6D88578934A4826A18C6E1A /* KeychainHelper.swift */; };
-		36650F6D12634F85AF13DAD5 /* Extensions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1580876A790141DCA4336ACE /* Extensions.swift */; };
-		2EA1308074A84E57ADE91641 /* DesignTokens.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B5A5A32638C4F39A2F5E0A9 /* DesignTokens.swift */; };
-		6AD824679C8642F9A4ABC127 /* ModelManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9758262897654CFDB0764EBC /* ModelManager.swift */; };
-		B57BB741E5F14CB2A979154D /* TarBz2Extractor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 553A7F735DE54CCB8CBDD424 /* TarBz2Extractor.swift */; };
-		94BCEC4C3E9649FCB255B881 /* AudioSessionManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 82806B2D9B5445F99B20215C /* AudioSessionManager.swift */; };
-		F2A0BF5975BE43C0AED2A557 /* AudioRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = A097DDC904EE4566A223D98C /* AudioRecorder.swift */; };
+		0FA046327A174DABA86359A0 /* BlurView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E7094C2772F4233A74F8AE1 /* BlurView.swift */; };
+		127AE621FAA942B8B40B1E66 /* FaceDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = BDA57F3B870147FEA169EF9B /* FaceDetector.swift */; };
 		1B9D44DCD61346BF9EC0B65D /* AudioPlayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 78FA92B6AE904573B5E862D1 /* AudioPlayer.swift */; };
-		E9A6CDA5CDBD49A58E2A831B /* WakeWordEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0F5B97A9CF842D1B71DDE48 /* WakeWordEngine.swift */; };
-		D4BA91704CE94E7FA0D5934B /* WakeWordManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 531151A92A5448128A92EEAA /* WakeWordManager.swift */; };
-		E8C8EE4EB2EE49E4B00F0A3A /* SherpaAsrEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = D04EE43B1D654E2FAF6A4A53 /* SherpaAsrEngine.swift */; };
+		1F2912C9882440599395897B /* sherpa-onnx.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 256966A8CF0042169B0BBFFA /* sherpa-onnx.xcframework */; };
+		2EA1308074A84E57ADE91641 /* DesignTokens.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B5A5A32638C4F39A2F5E0A9 /* DesignTokens.swift */; };
+		36650F6D12634F85AF13DAD5 /* Extensions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1580876A790141DCA4336ACE /* Extensions.swift */; };
 		3CFFFDFE2562465187124136 /* SherpaTtsEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1060D928D8DF468EB336C68C /* SherpaTtsEngine.swift */; };
 		45DB2E13076B451BBA41525B /* TextNormalizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 499063CFE0B1421C94A7421A /* TextNormalizer.swift */; };
-		B47094999D5E4CF38DC06356 /* LlmClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5F965C758AF24C0C8659FE77 /* LlmClient.swift */; };
-		875D25526ECD465E977D5B3D /* ChatSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDF988054AE944C8B87DC271 /* ChatSession.swift */; };
-		953DD84B55CC4EE38E3601D6 /* ConfigRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5031DA13F3243F9B18D6B17 /* ConfigRepository.swift */; };
-		CB6185003AB4425CBEA5C47A /* ConfigViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8DD6FD3166CD42ADB97CB842 /* ConfigViewModel.swift */; };
-		127AE621FAA942B8B40B1E66 /* FaceDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = BDA57F3B870147FEA169EF9B /* FaceDetector.swift */; };
-		7044B48FDCF74D0892B887A6 /* BehaviorEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86BBFAEAB2E54C42ABA1FFC9 /* BehaviorEngine.swift */; };
-		949E3321EF2F4005AFB7C1A8 /* RobotViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = DE1D1B23E43A4AD7907A24B1 /* RobotViewModel.swift */; };
+		49E64EA0E4074CB985EA89C6 /* LlmPreset.swift in Sources */ = {isa = PBXBuildFile; fileRef = C813FF332DFB473BBDC23345 /* LlmPreset.swift */; };
 		67885D247A47480B8CF2AE0E /* ContentViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0AC910BF7DAF49A2BFA50953 /* ContentViewModel.swift */; };
+		6AD824679C8642F9A4ABC127 /* ModelManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9758262897654CFDB0764EBC /* ModelManager.swift */; };
+		7044B48FDCF74D0892B887A6 /* BehaviorEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86BBFAEAB2E54C42ABA1FFC9 /* BehaviorEngine.swift */; };
+		73E2902863974E2196BADC81 /* Preview Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = F0C26431A7CB4C25858A8F6B /* Preview Assets.xcassets */; };
 		79B90B06EB504098BE67F7DA /* FaceParts.swift in Sources */ = {isa = PBXBuildFile; fileRef = EB3BD1694A594C23AC1A9C36 /* FaceParts.swift */; };
+		79E62BA92FFD390600CDB096 /* TextReaderView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 79E62BA82FFD390600CDB096 /* TextReaderView.swift */; };
+		875D25526ECD465E977D5B3D /* ChatSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDF988054AE944C8B87DC271 /* ChatSession.swift */; };
+		902A3DFAE2004D3980AE032B /* onnxruntime.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 325DFA22DC2E4568BE4DE448 /* onnxruntime.xcframework */; };
+		902E043BFE5F4872BE695D96 /* AvatarApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40E98E11791C47EDA8B4676E /* AvatarApp.swift */; };
+		949E3321EF2F4005AFB7C1A8 /* RobotViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = DE1D1B23E43A4AD7907A24B1 /* RobotViewModel.swift */; };
+		94BCEC4C3E9649FCB255B881 /* AudioSessionManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 82806B2D9B5445F99B20215C /* AudioSessionManager.swift */; };
+		94E81D6CCF82489AA1ED9C9D /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = F47D52598F7547AA952A9272 /* Assets.xcassets */; };
+		953DD84B55CC4EE38E3601D6 /* ConfigRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5031DA13F3243F9B18D6B17 /* ConfigRepository.swift */; };
+		9F5F7D095F934FADB916EE21 /* FaceDetectionResult.swift in Sources */ = {isa = PBXBuildFile; fileRef = 87676A939FC54D6EAF30B690 /* FaceDetectionResult.swift */; };
+		A7EBE6CBCEEA483BA492F888 /* RobotState.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACAC4956597E458FAE803460 /* RobotState.swift */; };
+		A811BD717DEF472B85ADA406 /* LlmConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 677D2F1BEDF74DF3A5C896C8 /* LlmConfig.swift */; };
+		B47094999D5E4CF38DC06356 /* LlmClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5F965C758AF24C0C8659FE77 /* LlmClient.swift */; };
+		B57BB741E5F14CB2A979154D /* TarBz2Extractor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 553A7F735DE54CCB8CBDD424 /* TarBz2Extractor.swift */; };
+		BEE79ACBDCA24ED5821D81AC /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C043840BBEFE441C9BCC4A1D /* ContentView.swift */; };
+		CB6185003AB4425CBEA5C47A /* ConfigViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8DD6FD3166CD42ADB97CB842 /* ConfigViewModel.swift */; };
+		D4BA91704CE94E7FA0D5934B /* WakeWordManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 531151A92A5448128A92EEAA /* WakeWordManager.swift */; };
 		D9BD46894966416CAAEFEA76 /* RobotFaceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA6469FDF28748CAAC42FDDB /* RobotFaceView.swift */; };
 		DA903505CEA44546AC16359C /* RobotMainScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C199BAFEBD74E92B3455833 /* RobotMainScreen.swift */; };
-		FEEE49C906C54F80872495CA /* SettingsScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 313415E5895641A3A9161C78 /* SettingsScreen.swift */; };
-		FE5EA47B44704950B0593FD1 /* ModelSetupScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4506EB0BF44E4883BCABFE98 /* ModelSetupScreen.swift */; };
+		DD32158AD18C4C2898B7211E /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5AB1B8E743E24141B324E371 /* AppDelegate.swift */; };
+		E8C8EE4EB2EE49E4B00F0A3A /* SherpaAsrEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = D04EE43B1D654E2FAF6A4A53 /* SherpaAsrEngine.swift */; };
+		E9A6CDA5CDBD49A58E2A831B /* WakeWordEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0F5B97A9CF842D1B71DDE48 /* WakeWordEngine.swift */; };
 		EB6F2863463B421BAEB3A616 /* SettingsHubScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 744AD196A83E40A9B5492397 /* SettingsHubScreen.swift */; };
-		0FA046327A174DABA86359A0 /* BlurView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E7094C2772F4233A74F8AE1 /* BlurView.swift */; };
-		94E81D6CCF82489AA1ED9C9D /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = F47D52598F7547AA952A9272 /* Assets.xcassets */; };
-		73E2902863974E2196BADC81 /* Preview Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = F0C26431A7CB4C25858A8F6B /* Preview Assets.xcassets */; };
+		EF0EE0C402F64607A435815D /* KeychainHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = F6D88578934A4826A18C6E1A /* KeychainHelper.swift */; };
+		F2A0BF5975BE43C0AED2A557 /* AudioRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = A097DDC904EE4566A223D98C /* AudioRecorder.swift */; };
+		FE5EA47B44704950B0593FD1 /* ModelSetupScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4506EB0BF44E4883BCABFE98 /* ModelSetupScreen.swift */; };
+		FEEE49C906C54F80872495CA /* SettingsScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 313415E5895641A3A9161C78 /* SettingsScreen.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
-		79D564C2A0094B549419F765 /* Avatar.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Avatar.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		256966A8CF0042169B0BBFFA /* sherpa-onnx.xcframework */ = {isa = PBXFileReference; includeInIndex = 1; name = "sherpa-onnx.xcframework"; path = "Frameworks/sherpa-onnx.xcframework"; sourceTree = "<group>"; };
-		325DFA22DC2E4568BE4DE448 /* onnxruntime.xcframework */ = {isa = PBXFileReference; includeInIndex = 1; name = onnxruntime.xcframework; path = Frameworks/onnxruntime.xcframework; sourceTree = "<group>"; };
+		0AC910BF7DAF49A2BFA50953 /* ContentViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentViewModel.swift; sourceTree = "<group>"; };
+		0B5A5A32638C4F39A2F5E0A9 /* DesignTokens.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesignTokens.swift; sourceTree = "<group>"; };
+		1060D928D8DF468EB336C68C /* SherpaTtsEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SherpaTtsEngine.swift; sourceTree = "<group>"; };
+		1580876A790141DCA4336ACE /* Extensions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Extensions.swift; sourceTree = "<group>"; };
 		1EBF89119CDD4E0F979AAAE6 /* Avatar-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "Avatar-Bridging-Header.h"; sourceTree = "<group>"; };
-		7FC7C908614C4E969ED783D1 /* Bzip2Helper.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = Bzip2Helper.h; sourceTree = "<group>"; };
-		F47D52598F7547AA952A9272 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
-		F0C26431A7CB4C25858A8F6B /* Preview Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = "Preview Assets.xcassets"; sourceTree = "<group>"; };
+		256966A8CF0042169B0BBFFA /* sherpa-onnx.xcframework */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = wrapper.xcframework; name = "sherpa-onnx.xcframework"; path = "Frameworks/sherpa-onnx.xcframework"; sourceTree = "<group>"; };
+		313415E5895641A3A9161C78 /* SettingsScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsScreen.swift; sourceTree = "<group>"; };
+		325DFA22DC2E4568BE4DE448 /* onnxruntime.xcframework */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = wrapper.xcframework; name = onnxruntime.xcframework; path = Frameworks/onnxruntime.xcframework; sourceTree = "<group>"; };
+		3C199BAFEBD74E92B3455833 /* RobotMainScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RobotMainScreen.swift; sourceTree = "<group>"; };
 		40E98E11791C47EDA8B4676E /* AvatarApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AvatarApp.swift; sourceTree = "<group>"; };
-		C043840BBEFE441C9BCC4A1D /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		4506EB0BF44E4883BCABFE98 /* ModelSetupScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelSetupScreen.swift; sourceTree = "<group>"; };
+		499063CFE0B1421C94A7421A /* TextNormalizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TextNormalizer.swift; sourceTree = "<group>"; };
+		531151A92A5448128A92EEAA /* WakeWordManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WakeWordManager.swift; sourceTree = "<group>"; };
+		553A7F735DE54CCB8CBDD424 /* TarBz2Extractor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TarBz2Extractor.swift; sourceTree = "<group>"; };
 		5AB1B8E743E24141B324E371 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
+		5F965C758AF24C0C8659FE77 /* LlmClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LlmClient.swift; sourceTree = "<group>"; };
 		66785CB86F274EEBA14A6E41 /* ChatMessage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatMessage.swift; sourceTree = "<group>"; };
 		677D2F1BEDF74DF3A5C896C8 /* LlmConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LlmConfig.swift; sourceTree = "<group>"; };
-		C813FF332DFB473BBDC23345 /* LlmPreset.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LlmPreset.swift; sourceTree = "<group>"; };
-		ACAC4956597E458FAE803460 /* RobotState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RobotState.swift; sourceTree = "<group>"; };
-		87676A939FC54D6EAF30B690 /* FaceDetectionResult.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FaceDetectionResult.swift; sourceTree = "<group>"; };
-		F6D88578934A4826A18C6E1A /* KeychainHelper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainHelper.swift; sourceTree = "<group>"; };
-		1580876A790141DCA4336ACE /* Extensions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Extensions.swift; sourceTree = "<group>"; };
-		0B5A5A32638C4F39A2F5E0A9 /* DesignTokens.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesignTokens.swift; sourceTree = "<group>"; };
-		9758262897654CFDB0764EBC /* ModelManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelManager.swift; sourceTree = "<group>"; };
-		553A7F735DE54CCB8CBDD424 /* TarBz2Extractor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TarBz2Extractor.swift; sourceTree = "<group>"; };
-		82806B2D9B5445F99B20215C /* AudioSessionManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioSessionManager.swift; sourceTree = "<group>"; };
-		A097DDC904EE4566A223D98C /* AudioRecorder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioRecorder.swift; sourceTree = "<group>"; };
-		78FA92B6AE904573B5E862D1 /* AudioPlayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioPlayer.swift; sourceTree = "<group>"; };
-		D0F5B97A9CF842D1B71DDE48 /* WakeWordEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WakeWordEngine.swift; sourceTree = "<group>"; };
-		531151A92A5448128A92EEAA /* WakeWordManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WakeWordManager.swift; sourceTree = "<group>"; };
-		D04EE43B1D654E2FAF6A4A53 /* SherpaAsrEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SherpaAsrEngine.swift; sourceTree = "<group>"; };
-		1060D928D8DF468EB336C68C /* SherpaTtsEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SherpaTtsEngine.swift; sourceTree = "<group>"; };
-		499063CFE0B1421C94A7421A /* TextNormalizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TextNormalizer.swift; sourceTree = "<group>"; };
-		5F965C758AF24C0C8659FE77 /* LlmClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LlmClient.swift; sourceTree = "<group>"; };
-		EDF988054AE944C8B87DC271 /* ChatSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatSession.swift; sourceTree = "<group>"; };
-		B5031DA13F3243F9B18D6B17 /* ConfigRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConfigRepository.swift; sourceTree = "<group>"; };
-		8DD6FD3166CD42ADB97CB842 /* ConfigViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConfigViewModel.swift; sourceTree = "<group>"; };
-		BDA57F3B870147FEA169EF9B /* FaceDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FaceDetector.swift; sourceTree = "<group>"; };
-		86BBFAEAB2E54C42ABA1FFC9 /* BehaviorEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BehaviorEngine.swift; sourceTree = "<group>"; };
-		DE1D1B23E43A4AD7907A24B1 /* RobotViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RobotViewModel.swift; sourceTree = "<group>"; };
-		0AC910BF7DAF49A2BFA50953 /* ContentViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentViewModel.swift; sourceTree = "<group>"; };
-		EB3BD1694A594C23AC1A9C36 /* FaceParts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FaceParts.swift; sourceTree = "<group>"; };
-		EA6469FDF28748CAAC42FDDB /* RobotFaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RobotFaceView.swift; sourceTree = "<group>"; };
-		3C199BAFEBD74E92B3455833 /* RobotMainScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RobotMainScreen.swift; sourceTree = "<group>"; };
-		313415E5895641A3A9161C78 /* SettingsScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsScreen.swift; sourceTree = "<group>"; };
-		4506EB0BF44E4883BCABFE98 /* ModelSetupScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelSetupScreen.swift; sourceTree = "<group>"; };
 		744AD196A83E40A9B5492397 /* SettingsHubScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsHubScreen.swift; sourceTree = "<group>"; };
+		78FA92B6AE904573B5E862D1 /* AudioPlayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioPlayer.swift; sourceTree = "<group>"; };
+		79D564C2A0094B549419F765 /* Avatar.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Avatar.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		79E62BA82FFD390600CDB096 /* TextReaderView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = TextReaderView.swift; sourceTree = "<group>"; };
+		7FC7C908614C4E969ED783D1 /* Bzip2Helper.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = Bzip2Helper.h; sourceTree = "<group>"; };
+		82806B2D9B5445F99B20215C /* AudioSessionManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioSessionManager.swift; sourceTree = "<group>"; };
+		86BBFAEAB2E54C42ABA1FFC9 /* BehaviorEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BehaviorEngine.swift; sourceTree = "<group>"; };
+		87676A939FC54D6EAF30B690 /* FaceDetectionResult.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FaceDetectionResult.swift; sourceTree = "<group>"; };
+		8DD6FD3166CD42ADB97CB842 /* ConfigViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConfigViewModel.swift; sourceTree = "<group>"; };
 		8E7094C2772F4233A74F8AE1 /* BlurView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlurView.swift; sourceTree = "<group>"; };
+		9758262897654CFDB0764EBC /* ModelManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelManager.swift; sourceTree = "<group>"; };
+		A097DDC904EE4566A223D98C /* AudioRecorder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioRecorder.swift; sourceTree = "<group>"; };
+		ACAC4956597E458FAE803460 /* RobotState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RobotState.swift; sourceTree = "<group>"; };
+		B5031DA13F3243F9B18D6B17 /* ConfigRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConfigRepository.swift; sourceTree = "<group>"; };
+		BDA57F3B870147FEA169EF9B /* FaceDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FaceDetector.swift; sourceTree = "<group>"; };
+		C043840BBEFE441C9BCC4A1D /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		C813FF332DFB473BBDC23345 /* LlmPreset.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LlmPreset.swift; sourceTree = "<group>"; };
+		D04EE43B1D654E2FAF6A4A53 /* SherpaAsrEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SherpaAsrEngine.swift; sourceTree = "<group>"; };
+		D0F5B97A9CF842D1B71DDE48 /* WakeWordEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WakeWordEngine.swift; sourceTree = "<group>"; };
+		DE1D1B23E43A4AD7907A24B1 /* RobotViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RobotViewModel.swift; sourceTree = "<group>"; };
+		EA6469FDF28748CAAC42FDDB /* RobotFaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RobotFaceView.swift; sourceTree = "<group>"; };
+		EB3BD1694A594C23AC1A9C36 /* FaceParts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FaceParts.swift; sourceTree = "<group>"; };
+		EDF988054AE944C8B87DC271 /* ChatSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatSession.swift; sourceTree = "<group>"; };
+		F0C26431A7CB4C25858A8F6B /* Preview Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = "Preview Assets.xcassets"; sourceTree = "<group>"; };
+		F47D52598F7547AA952A9272 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		F6D88578934A4826A18C6E1A /* KeychainHelper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainHelper.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -108,30 +110,32 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
-		6FD406F04EA449599856EC48 = {
+		0112D458FCD04093BEB1E3FC /* Views */ = {
 			isa = PBXGroup;
 			children = (
-				08748E08A7D24E67B61059FD /* Avatar */,
-				F7DB94BD448C48DFBA222B2F /* Frameworks */,
-				CF057D69A1D54036B202BE2E /* Products */,
+				79E62BA82FFD390600CDB096 /* TextReaderView.swift */,
+				EB3BD1694A594C23AC1A9C36 /* FaceParts.swift */,
+				EA6469FDF28748CAAC42FDDB /* RobotFaceView.swift */,
+				3C199BAFEBD74E92B3455833 /* RobotMainScreen.swift */,
+				313415E5895641A3A9161C78 /* SettingsScreen.swift */,
+				4506EB0BF44E4883BCABFE98 /* ModelSetupScreen.swift */,
+				744AD196A83E40A9B5492397 /* SettingsHubScreen.swift */,
+				8E7094C2772F4233A74F8AE1 /* BlurView.swift */,
 			);
+			path = Views;
 			sourceTree = "<group>";
 		};
-		CF057D69A1D54036B202BE2E /* Products */ = {
+		07D7F02C44AC45F68FAB44DD /* Helpers */ = {
 			isa = PBXGroup;
 			children = (
-				79D564C2A0094B549419F765 /* Avatar.app */,
+				F6D88578934A4826A18C6E1A /* KeychainHelper.swift */,
+				1580876A790141DCA4336ACE /* Extensions.swift */,
+				0B5A5A32638C4F39A2F5E0A9 /* DesignTokens.swift */,
+				9758262897654CFDB0764EBC /* ModelManager.swift */,
+				553A7F735DE54CCB8CBDD424 /* TarBz2Extractor.swift */,
+				7FC7C908614C4E969ED783D1 /* Bzip2Helper.h */,
 			);
-			name = Products;
-			sourceTree = "<group>";
-		};
-		F7DB94BD448C48DFBA222B2F /* Frameworks */ = {
-			isa = PBXGroup;
-			children = (
-				256966A8CF0042169B0BBFFA /* sherpa-onnx.xcframework */,
-				325DFA22DC2E4568BE4DE448 /* onnxruntime.xcframework */,
-			);
-			name = Frameworks;
+			path = Helpers;
 			sourceTree = "<group>";
 		};
 		08748E08A7D24E67B61059FD /* Avatar */ = {
@@ -157,57 +161,13 @@
 			path = Avatar;
 			sourceTree = "<group>";
 		};
-		C068E8F7D06C4D1DA04634E9 /* Preview Content */ = {
+		0A28F72FF2624C03AF30AAC7 /* Config */ = {
 			isa = PBXGroup;
 			children = (
-				F0C26431A7CB4C25858A8F6B /* Preview Assets.xcassets */,
+				B5031DA13F3243F9B18D6B17 /* ConfigRepository.swift */,
+				8DD6FD3166CD42ADB97CB842 /* ConfigViewModel.swift */,
 			);
-			path = "Preview Content";
-			sourceTree = "<group>";
-		};
-		E41098E210A741E78B704328 /* Models */ = {
-			isa = PBXGroup;
-			children = (
-				66785CB86F274EEBA14A6E41 /* ChatMessage.swift */,
-				677D2F1BEDF74DF3A5C896C8 /* LlmConfig.swift */,
-				C813FF332DFB473BBDC23345 /* LlmPreset.swift */,
-				ACAC4956597E458FAE803460 /* RobotState.swift */,
-				87676A939FC54D6EAF30B690 /* FaceDetectionResult.swift */,
-			);
-			path = Models;
-			sourceTree = "<group>";
-		};
-		07D7F02C44AC45F68FAB44DD /* Helpers */ = {
-			isa = PBXGroup;
-			children = (
-				F6D88578934A4826A18C6E1A /* KeychainHelper.swift */,
-				1580876A790141DCA4336ACE /* Extensions.swift */,
-				0B5A5A32638C4F39A2F5E0A9 /* DesignTokens.swift */,
-				9758262897654CFDB0764EBC /* ModelManager.swift */,
-				553A7F735DE54CCB8CBDD424 /* TarBz2Extractor.swift */,
-				7FC7C908614C4E969ED783D1 /* Bzip2Helper.h */,
-			);
-			path = Helpers;
-			sourceTree = "<group>";
-		};
-		BD000EC9E4CF4770A3A0AC06 /* Audio */ = {
-			isa = PBXGroup;
-			children = (
-				82806B2D9B5445F99B20215C /* AudioSessionManager.swift */,
-				A097DDC904EE4566A223D98C /* AudioRecorder.swift */,
-				78FA92B6AE904573B5E862D1 /* AudioPlayer.swift */,
-				D0F5B97A9CF842D1B71DDE48 /* WakeWordEngine.swift */,
-				531151A92A5448128A92EEAA /* WakeWordManager.swift */,
-			);
-			path = Audio;
-			sourceTree = "<group>";
-		};
-		9C8AB631EF234FA2966D2D10 /* ASR */ = {
-			isa = PBXGroup;
-			children = (
-				D04EE43B1D654E2FAF6A4A53 /* SherpaAsrEngine.swift */,
-			);
-			path = ASR;
+			path = Config;
 			sourceTree = "<group>";
 		};
 		1C10EBC88E244B7282B5DA53 /* TTS */ = {
@@ -217,24 +177,6 @@
 				499063CFE0B1421C94A7421A /* TextNormalizer.swift */,
 			);
 			path = TTS;
-			sourceTree = "<group>";
-		};
-		5601F74B488848E187A77EEB /* Chat */ = {
-			isa = PBXGroup;
-			children = (
-				5F965C758AF24C0C8659FE77 /* LlmClient.swift */,
-				EDF988054AE944C8B87DC271 /* ChatSession.swift */,
-			);
-			path = Chat;
-			sourceTree = "<group>";
-		};
-		0A28F72FF2624C03AF30AAC7 /* Config */ = {
-			isa = PBXGroup;
-			children = (
-				B5031DA13F3243F9B18D6B17 /* ConfigRepository.swift */,
-				8DD6FD3166CD42ADB97CB842 /* ConfigViewModel.swift */,
-			);
-			path = Config;
 			sourceTree = "<group>";
 		};
 		1E05F692255B4212A76F826D /* Services */ = {
@@ -255,18 +197,79 @@
 			path = ViewModels;
 			sourceTree = "<group>";
 		};
-		0112D458FCD04093BEB1E3FC /* Views */ = {
+		5601F74B488848E187A77EEB /* Chat */ = {
 			isa = PBXGroup;
 			children = (
-				EB3BD1694A594C23AC1A9C36 /* FaceParts.swift */,
-				EA6469FDF28748CAAC42FDDB /* RobotFaceView.swift */,
-				3C199BAFEBD74E92B3455833 /* RobotMainScreen.swift */,
-				313415E5895641A3A9161C78 /* SettingsScreen.swift */,
-				4506EB0BF44E4883BCABFE98 /* ModelSetupScreen.swift */,
-				744AD196A83E40A9B5492397 /* SettingsHubScreen.swift */,
-				8E7094C2772F4233A74F8AE1 /* BlurView.swift */,
+				5F965C758AF24C0C8659FE77 /* LlmClient.swift */,
+				EDF988054AE944C8B87DC271 /* ChatSession.swift */,
 			);
-			path = Views;
+			path = Chat;
+			sourceTree = "<group>";
+		};
+		6FD406F04EA449599856EC48 = {
+			isa = PBXGroup;
+			children = (
+				08748E08A7D24E67B61059FD /* Avatar */,
+				F7DB94BD448C48DFBA222B2F /* Frameworks */,
+				CF057D69A1D54036B202BE2E /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		9C8AB631EF234FA2966D2D10 /* ASR */ = {
+			isa = PBXGroup;
+			children = (
+				D04EE43B1D654E2FAF6A4A53 /* SherpaAsrEngine.swift */,
+			);
+			path = ASR;
+			sourceTree = "<group>";
+		};
+		BD000EC9E4CF4770A3A0AC06 /* Audio */ = {
+			isa = PBXGroup;
+			children = (
+				82806B2D9B5445F99B20215C /* AudioSessionManager.swift */,
+				A097DDC904EE4566A223D98C /* AudioRecorder.swift */,
+				78FA92B6AE904573B5E862D1 /* AudioPlayer.swift */,
+				D0F5B97A9CF842D1B71DDE48 /* WakeWordEngine.swift */,
+				531151A92A5448128A92EEAA /* WakeWordManager.swift */,
+			);
+			path = Audio;
+			sourceTree = "<group>";
+		};
+		C068E8F7D06C4D1DA04634E9 /* Preview Content */ = {
+			isa = PBXGroup;
+			children = (
+				F0C26431A7CB4C25858A8F6B /* Preview Assets.xcassets */,
+			);
+			path = "Preview Content";
+			sourceTree = "<group>";
+		};
+		CF057D69A1D54036B202BE2E /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				79D564C2A0094B549419F765 /* Avatar.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		E41098E210A741E78B704328 /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				66785CB86F274EEBA14A6E41 /* ChatMessage.swift */,
+				677D2F1BEDF74DF3A5C896C8 /* LlmConfig.swift */,
+				C813FF332DFB473BBDC23345 /* LlmPreset.swift */,
+				ACAC4956597E458FAE803460 /* RobotState.swift */,
+				87676A939FC54D6EAF30B690 /* FaceDetectionResult.swift */,
+			);
+			path = Models;
+			sourceTree = "<group>";
+		};
+		F7DB94BD448C48DFBA222B2F /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				256966A8CF0042169B0BBFFA /* sherpa-onnx.xcframework */,
+				325DFA22DC2E4568BE4DE448 /* onnxruntime.xcframework */,
+			);
+			name = Frameworks;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -359,6 +362,7 @@
 				D4BA91704CE94E7FA0D5934B /* WakeWordManager.swift in Sources */,
 				E8C8EE4EB2EE49E4B00F0A3A /* SherpaAsrEngine.swift in Sources */,
 				3CFFFDFE2562465187124136 /* SherpaTtsEngine.swift in Sources */,
+				79E62BA92FFD390600CDB096 /* TextReaderView.swift in Sources */,
 				45DB2E13076B451BBA41525B /* TextNormalizer.swift in Sources */,
 				B47094999D5E4CF38DC06356 /* LlmClient.swift in Sources */,
 				875D25526ECD465E977D5B3D /* ChatSession.swift in Sources */,
@@ -381,6 +385,66 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin XCBuildConfiguration section */
+		459F1B891AF4406B97EE7EF2 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_ASSET_PATHS = "\"Avatar/Preview Content\"";
+				DEVELOPMENT_TEAM = 2XX528DY7X;
+				ENABLE_PREVIEWS = YES;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(PROJECT_DIR)/Frameworks",
+				);
+				GENERATE_INFOPLIST_FILE = YES;
+				HEADER_SEARCH_PATHS = (
+					"$(PROJECT_DIR)/Frameworks/sherpa-onnx.xcframework/ios-arm64_x86_64-simulator/Headers",
+					"$(PROJECT_DIR)/Frameworks/sherpa-onnx.xcframework/ios-arm64/Headers",
+					"$(PROJECT_DIR)/Frameworks/onnxruntime.xcframework/ios-arm64_x86_64-simulator/onnxruntime.framework/Headers",
+					"$(PROJECT_DIR)/Frameworks/onnxruntime.xcframework/ios-arm64/onnxruntime.framework/Headers",
+				);
+				INFOPLIST_KEY_NSCameraUsageDescription = "需要使用摄像头进行人脸检测";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "需要使用麦克风进行语音识别";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 14.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				LIBRARY_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(PROJECT_DIR)/Frameworks/sherpa-onnx.xcframework/ios-arm64_x86_64-simulator",
+					"$(PROJECT_DIR)/Frameworks/sherpa-onnx.xcframework/ios-arm64",
+				);
+				MARKETING_VERSION = 1.0;
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-lbz2",
+					"-lc++",
+					"-lsherpa-onnx",
+					"-framework",
+					onnxruntime,
+					"-framework",
+					CoreML,
+					"-Wl,-U,_OBJC_CLASS_$_MLComputePlan",
+					"-Wl,-U,_OBJC_CLASS_$_MLOptimizationHints",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = dev.Avatar;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OBJC_BRIDGING_HEADER = "Avatar/Avatar-Bridging-Header.h";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
 		51478866DB8B454A98958794 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -414,9 +478,13 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
 				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
 				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
 				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
 				GCC_WARN_UNDECLARED_SELECTOR = YES;
@@ -424,14 +492,10 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 14.0;
-				SDKROOT = iphoneos;
-				MTL_FAST_MATH = YES;
-				DEBUG_INFORMATION_FORMAT = dwarf;
-				ENABLE_TESTABILITY = YES;
-				GCC_DYNAMIC_NO_PIC = NO;
-				GCC_OPTIMIZATION_LEVEL = 0;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 			};
@@ -470,6 +534,8 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu11;
 				GCC_NO_COMMON_BLOCKS = YES;
@@ -480,11 +546,9 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 14.0;
-				SDKROOT = iphoneos;
-				MTL_FAST_MATH = YES;
-				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
-				ENABLE_NS_ASSERTIONS = NO;
 				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SDKROOT = iphoneos;
 				SWIFT_COMPILATION_MODE = wholemodule;
 				SWIFT_OPTIMIZATION_LEVEL = "-O";
 				VALIDATE_PRODUCT = YES;
@@ -501,7 +565,17 @@
 				DEVELOPMENT_ASSET_PATHS = "\"Avatar/Preview Content\"";
 				DEVELOPMENT_TEAM = 2XX528DY7X;
 				ENABLE_PREVIEWS = YES;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(PROJECT_DIR)/Frameworks",
+				);
 				GENERATE_INFOPLIST_FILE = YES;
+				HEADER_SEARCH_PATHS = (
+					"$(PROJECT_DIR)/Frameworks/sherpa-onnx.xcframework/ios-arm64_x86_64-simulator/Headers",
+					"$(PROJECT_DIR)/Frameworks/sherpa-onnx.xcframework/ios-arm64/Headers",
+					"$(PROJECT_DIR)/Frameworks/onnxruntime.xcframework/ios-arm64_x86_64-simulator/onnxruntime.framework/Headers",
+					"$(PROJECT_DIR)/Frameworks/onnxruntime.xcframework/ios-arm64/onnxruntime.framework/Headers",
+				);
 				INFOPLIST_KEY_NSCameraUsageDescription = "需要使用摄像头进行人脸检测";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "需要使用麦克风进行语音识别";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
@@ -510,23 +584,6 @@
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				IPHONEOS_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = dev.Avatar;
-				PRODUCT_NAME = "$(TARGET_NAME)";
-				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_OBJC_BRIDGING_HEADER = "Avatar/Avatar-Bridging-Header.h";
-				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2";
-				FRAMEWORK_SEARCH_PATHS = (
-					"$(inherited)",
-					"$(PROJECT_DIR)/Frameworks",
-				);
-				HEADER_SEARCH_PATHS = (
-					"$(PROJECT_DIR)/Frameworks/sherpa-onnx.xcframework/ios-arm64_x86_64-simulator/Headers",
-					"$(PROJECT_DIR)/Frameworks/sherpa-onnx.xcframework/ios-arm64/Headers",
-					"$(PROJECT_DIR)/Frameworks/onnxruntime.xcframework/ios-arm64_x86_64-simulator/onnxruntime.framework/Headers",
-					"$(PROJECT_DIR)/Frameworks/onnxruntime.xcframework/ios-arm64/onnxruntime.framework/Headers",
-				);
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -536,6 +593,7 @@
 					"$(PROJECT_DIR)/Frameworks/sherpa-onnx.xcframework/ios-arm64_x86_64-simulator",
 					"$(PROJECT_DIR)/Frameworks/sherpa-onnx.xcframework/ios-arm64",
 				);
+				MARKETING_VERSION = 1.0;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-lbz2",
@@ -548,68 +606,14 @@
 					"-Wl,-U,_OBJC_CLASS_$_MLComputePlan",
 					"-Wl,-U,_OBJC_CLASS_$_MLOptimizationHints",
 				);
+				PRODUCT_BUNDLE_IDENTIFIER = dev.Avatar;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OBJC_BRIDGING_HEADER = "Avatar/Avatar-Bridging-Header.h";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Debug;
-		};
-		459F1B891AF4406B97EE7EF2 /* Release */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
-				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_ASSET_PATHS = "\"Avatar/Preview Content\"";
-				DEVELOPMENT_TEAM = 2XX528DY7X;
-				ENABLE_PREVIEWS = YES;
-				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_NSCameraUsageDescription = "需要使用摄像头进行人脸检测";
-				INFOPLIST_KEY_NSMicrophoneUsageDescription = "需要使用麦克风进行语音识别";
-				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
-				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
-				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				IPHONEOS_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = dev.Avatar;
-				PRODUCT_NAME = "$(TARGET_NAME)";
-				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_OBJC_BRIDGING_HEADER = "Avatar/Avatar-Bridging-Header.h";
-				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2";
-				FRAMEWORK_SEARCH_PATHS = (
-					"$(inherited)",
-					"$(PROJECT_DIR)/Frameworks",
-				);
-				HEADER_SEARCH_PATHS = (
-					"$(PROJECT_DIR)/Frameworks/sherpa-onnx.xcframework/ios-arm64_x86_64-simulator/Headers",
-					"$(PROJECT_DIR)/Frameworks/sherpa-onnx.xcframework/ios-arm64/Headers",
-					"$(PROJECT_DIR)/Frameworks/onnxruntime.xcframework/ios-arm64_x86_64-simulator/onnxruntime.framework/Headers",
-					"$(PROJECT_DIR)/Frameworks/onnxruntime.xcframework/ios-arm64/onnxruntime.framework/Headers",
-				);
-				LD_RUNPATH_SEARCH_PATHS = (
-					"$(inherited)",
-					"@executable_path/Frameworks",
-				);
-				LIBRARY_SEARCH_PATHS = (
-					"$(inherited)",
-					"$(PROJECT_DIR)/Frameworks/sherpa-onnx.xcframework/ios-arm64_x86_64-simulator",
-					"$(PROJECT_DIR)/Frameworks/sherpa-onnx.xcframework/ios-arm64",
-				);
-				OTHER_LDFLAGS = (
-					"$(inherited)",
-					"-lbz2",
-					"-lc++",
-					"-lsherpa-onnx",
-					"-framework",
-					onnxruntime,
-					"-framework",
-					CoreML,
-					"-Wl,-U,_OBJC_CLASS_$_MLComputePlan",
-					"-Wl,-U,_OBJC_CLASS_$_MLOptimizationHints",
-				);
-			};
-			name = Release;
 		};
 /* End XCBuildConfiguration section */
 
@@ -633,7 +637,6 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
-
 	};
 	rootObject = 4CFFF7BD5A4D460D88B78EA2 /* Project object */;
 }

@@ -2,7 +2,7 @@
 //  RobotFaceView.swift
 //  Avatar
 //
-//  UIViewRepresentable wrapping a UIKit UIView that draws the robot face.
+//  UIViewRepresentable wrapping a UIKit UIView that draws the cartoon boy face.
 //  Uses CADisplayLink for animation (blink, speak, idle wander).
 //  Frame rate capped at 20 fps to reduce CPU/thermal load.
 //  iOS 14 compatible (SwiftUI Canvas requires iOS 15).
@@ -15,7 +15,7 @@ import UIKit
 
 final class FaceDisplayView: UIView {
 
-    /// Target display refresh rate. 20 fps is smooth enough for a robot face
+    /// Target display refresh rate. 20 fps is smooth enough for the cartoon face
     /// while dramatically reducing CPU vs. the default 60 fps.
     private static let targetFPS: Int = 20
 
