@@ -5,64 +5,151 @@
     android:viewportWidth="108"
     android:viewportHeight="108">
 
-    <!-- Antenna stick -->
-    <path
-        android:pathData="M54,22 L54,12"
-        android:strokeWidth="2.5"
-        android:strokeColor="#E2E8F0"
-        android:strokeLineCap="round" />
+    <group
+        android:pivotX="54"
+        android:pivotY="54"
+        android:scaleX="0.8"
+        android:scaleY="0.8">
 
-    <!-- Antenna tip -->
-    <path
-        android:pathData="M54,12m-3,0a3,3 0,1 1,6 0a3,3 0,1 1,-6 0"
-        android:fillColor="#22D3EE" />
-
-    <!-- Robot head - rounded rectangle -->
-    <path
-        android:pathData="M30,40 L78,40 Q84,40 84,46 L84,76 Q84,82 78,82 L30,82 Q24,82 24,76 L24,46 Q24,40 30,40z"
-        android:fillColor="#334155" />
-
-    <!-- Left eye outer -->
-    <path
-        android:pathData="M42,57m-7,0a7,7 0,1 1,14 0a7,7 0,1 1,-14 0"
-        android:fillColor="#E2E8F0" />
-
-    <!-- Left eye inner (pupil) -->
-    <path
-        android:pathData="M44,57m-3.5,0a3.5,3.5 0,1 1,7 0a3.5,3.5 0,1 1,-7 0"
-        android:fillColor="#22D3EE" />
-
-    <!-- Right eye outer -->
-    <path
-        android:pathData="M66,57m-7,0a7,7 0,1 1,14 0a7,7 0,1 1,-14 0"
-        android:fillColor="#E2E8F0" />
-
-    <!-- Right eye inner (pupil) -->
-    <path
-        android:pathData="M68,57m-3.5,0a3.5,3.5 0,1 1,7 0a3.5,3.5 0,1 1,-7 0"
-        android:fillColor="#22D3EE" />
-
-    <!-- Smile -->
-    <path
-        android:pathData="M44,70 Q54,78 64,70"
-        android:strokeWidth="2.5"
-        android:strokeColor="#22D3EE"
-        android:fillColor="@android:color/transparent"
-        android:strokeLineCap="round" />
-
+    <!-- ── Ears ──────────────────────────────────────── -->
     <!-- Left ear -->
     <path
-        android:pathData="M28,50 L28,44 Q28,37 20,37"
-        android:strokeWidth="3"
-        android:strokeColor="#475569"
+        android:pathData="M2,36 L2,46 Q2,51 7,51 L11,51 Q16,51 16,46 L16,36 Q16,31 11,31 L7,31 Q2,31 2,36z"
+        android:fillColor="#383866" />
+    <path
+        android:pathData="M2,36 L2,46 Q2,51 7,51 L11,51 Q16,51 16,46 L16,36 Q16,31 11,31 L7,31 Q2,31 2,36z"
+        android:strokeWidth="2.5"
+        android:strokeColor="#4D4D80"
         android:fillColor="@android:color/transparent"
-        android:strokeLineCap="round" />
-
+        android:strokeLineJoin="round" />
     <!-- Right ear -->
     <path
-        android:pathData="M80,50 L80,44 Q80,37 88,37"
-        android:strokeWidth="3"
-        android:strokeColor="#475569"
+        android:pathData="M92,36 L92,46 Q92,51 97,51 L101,51 Q106,51 106,46 L106,36 Q106,31 101,31 L97,31 Q92,31 92,36z"
+        android:fillColor="#383866" />
+    <path
+        android:pathData="M92,36 L92,46 Q92,51 97,51 L101,51 Q106,51 106,46 L106,36 Q106,31 101,31 L97,31 Q92,31 92,36z"
+        android:strokeWidth="2.5"
+        android:strokeColor="#4D4D80"
         android:fillColor="@android:color/transparent"
+        android:strokeLineJoin="round" />
+
+    <!-- ── Antenna ───────────────────────────────────── -->
+    <!-- Stick -->
+    <path
+        android:pathData="M54,13 L54,3"
+        android:strokeWidth="3"
+        android:strokeColor="#4D4D80"
         android:strokeLineCap="round" />
+    <!-- Glow ball -->
+    <path
+        android:pathData="M54,3m-3,0a3,3 0,1 1,6 0a3,3 0,1 1,-6 0"
+        android:fillColor="#66AAFF" />
+    <!-- Ball highlight -->
+    <path
+        android:pathData="M52.5,1.5m-0.8,0a0.8,0.8 0,1 1,1.6 0a0.8,0.8 0,1 1,-1.6 0"
+        android:fillColor="#FFFFFF" />
+
+    <!-- ── Face ───────────────────────────────────────── -->
+    <!-- Face fill (simulating radial gradient: lighter on top) -->
+    <path
+        android:pathData="M54,9 A41,41 0 1,1 13,50 A41,41 0 0,1 54,9z"
+        android:fillColor="#C8CCE8" />
+    <!-- Gradient highlight: lighter area at top-center -->
+    <path
+        android:pathData="M54,22 A28,28 0 0,1 54,50"
+        android:fillColor="#DEE1F2" />
+    <!-- Face border -->
+    <path
+        android:pathData="M54,9 A41,41 0 1,1 13,50 A41,41 0 0,1 54,9z"
+        android:strokeWidth="4"
+        android:strokeColor="#4D4D80"
+        android:fillColor="@android:color/transparent" />
+
+    <!-- ── Blush ──────────────────────────────────────── -->
+    <!-- Left blush -->
+    <path
+        android:pathData="M21,50m-5.5,0a5.5,3.5 0,1 1,11 0a5.5,3.5 0,1 1,-11 0"
+        android:fillColor="#E94560"
+        android:alpha="0.3" />
+    <!-- Right blush -->
+    <path
+        android:pathData="M87,50m-5.5,0a5.5,3.5 0,1 1,11 0a5.5,3.5 0,1 1,-11 0"
+        android:fillColor="#E94560"
+        android:alpha="0.3" />
+
+    <!-- ── Eyebrows ───────────────────────────────────── -->
+    <!-- Left eyebrow (gentle arch) -->
+    <path
+        android:pathData="M15,31 C21,26 39,26 45,31"
+        android:strokeWidth="3.5"
+        android:strokeColor="#BF2D2D44"
+        android:strokeLineCap="round"
+        android:fillColor="@android:color/transparent" />
+    <!-- Right eyebrow -->
+    <path
+        android:pathData="M63,31 C69,26 87,26 93,31"
+        android:strokeWidth="3.5"
+        android:strokeColor="#BF2D2D44"
+        android:strokeLineCap="round"
+        android:fillColor="@android:color/transparent" />
+
+    <!-- ── Left Eye ───────────────────────────────────── -->
+    <!-- Socket -->
+    <path
+        android:pathData="M30,26 A10,13 0 1,1 30,52 A10,13 0 1,1 30,26z"
+        android:fillColor="#FFFFFF" />
+    <!-- Iris -->
+    <path
+        android:pathData="M30,39m-10,0a10,10 0,1 1,20 0a10,10 0,1 1,-20 0"
+        android:fillColor="#4499FF" />
+    <!-- Pupil -->
+    <path
+        android:pathData="M30,39m-7.5,0a7.5,7.5 0,1 1,15 0a7.5,7.5 0,1 1,-15 0"
+        android:fillColor="#1A1A2E" />
+    <!-- Highlight -->
+    <path
+        android:pathData="M27,36m-2,0a2,2 0,1 1,4 0a2,2 0,1 1,-4 0"
+        android:fillColor="#FFFFFF" />
+    <!-- Eye outline -->
+    <path
+        android:pathData="M30,26 A10,13 0 1,1 30,52 A10,13 0 1,1 30,26z"
+        android:strokeWidth="3"
+        android:strokeColor="#4D4D80"
+        android:fillColor="@android:color/transparent" />
+
+    <!-- ── Right Eye ──────────────────────────────────── -->
+    <!-- Socket -->
+    <path
+        android:pathData="M78,26 A10,13 0 1,1 78,52 A10,13 0 1,1 78,26z"
+        android:fillColor="#FFFFFF" />
+    <!-- Iris -->
+    <path
+        android:pathData="M78,39m-10,0a10,10 0,1 1,20 0a10,10 0,1 1,-20 0"
+        android:fillColor="#4499FF" />
+    <!-- Pupil -->
+    <path
+        android:pathData="M78,39m-7.5,0a7.5,7.5 0,1 1,15 0a7.5,7.5 0,1 1,-15 0"
+        android:fillColor="#1A1A2E" />
+    <!-- Highlight -->
+    <path
+        android:pathData="M75,36m-2,0a2,2 0,1 1,4 0a2,2 0,1 1,-4 0"
+        android:fillColor="#FFFFFF" />
+    <!-- Eye outline -->
+    <path
+        android:pathData="M78,26 A10,13 0 1,1 78,52 A10,13 0 1,1 78,26z"
+        android:strokeWidth="3"
+        android:strokeColor="#4D4D80"
+        android:fillColor="@android:color/transparent" />
+
+    <!-- ── Mouth ──────────────────────────────────────── -->
+    <!-- Happy smile -->
+    <path
+        android:pathData="M41,69 Q54,78 67,69"
+        android:strokeWidth="3.5"
+        android:strokeColor="#E94560"
+        android:strokeLineCap="round"
+        android:fillColor="@android:color/transparent" />
+
+    </group>
+
 </vector>

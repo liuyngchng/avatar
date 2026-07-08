@@ -164,7 +164,7 @@ fun RobotFaceScreen(
             val faceRadius = size.width * FACE_RADIUS_FRACTION
 
             // ── Robot ears ──
-            drawEars(cx, cy, faceRadius)
+            drawEars(cx)
 
             // ── Face with radial gradient ──
             val faceCenter = Offset(cx, cy)
@@ -273,7 +273,7 @@ fun RobotFaceScreen(
 
             // ── Face text below ──
             if (state.lastUserText != null && state.mode != RobotMode.IDLE) {
-                drawContextBubble(cx, cy + faceRadius + 10f, state)
+                drawContextBubble(cx, state)
             }
         }
 
@@ -371,7 +371,7 @@ private fun computePupilOffset(
 
 // ─── Robot Ears ────────────────────────────────────────────────
 
-private fun DrawScope.drawEars(faceCx: Float, faceCy: Float, faceRadius: Float) {
+private fun DrawScope.drawEars(faceCx: Float) {
     val earW = size.width * EAR_W_FRACTION
     val earH = size.height * EAR_H_FRACTION
     val earOffX = size.width * EAR_OFFSET_X_FRACTION
@@ -641,27 +641,22 @@ private fun DrawScope.drawMouth(
     isSpeaking: Boolean,
     speakAmount: Float
 ) {
-    val openRatio = if (isSpeaking) speakAmount else 0f
-
-    // ── Open mouth (speaking): filled ellipse ──────────────────
-    if (openRatio > 0.15f) {
-        val openW = halfWidth * 0.5f * openRatio
-        val openH = halfWidth * 0.85f * openRatio
-
-        // Outer lip
-        drawOval(
+    // ── Speaking: animated line that bobs with speech ─────────────
+    if (isSpeaking) {
+        val bw = 0.65f
+        val cpY = halfWidth * 0.15f * speakAmount
+        val x0 = cx - halfWidth * bw
+        val x1 = cx + halfWidth * bw
+        val path = Path()
+        path.moveTo(x0, mouthY)
+        path.quadraticBezierTo(cx, mouthY + cpY, x1, mouthY)
+        drawPath(
+            path = path,
             color = ColorMouth,
-            topLeft = Offset(cx - openW, mouthY - openH * 0.5f),
-            size = Size(openW * 2f, openH * 1.6f)
-        )
-
-        // Inner dark (depth)
-        val innerW = openW * 0.55f
-        val innerH = openH * 0.5f
-        drawOval(
-            color = ColorPupil.copy(alpha = 0.6f),
-            topLeft = Offset(cx - innerW, mouthY + innerH * 0.3f),
-            size = Size(innerW * 2f, innerH * 1.4f)
+            style = Stroke(
+                width = 3.5f + speakAmount * 2f,
+                cap = StrokeCap.Round
+            )
         )
         return
     }
@@ -734,7 +729,7 @@ private fun DrawScope.drawThinkingIndicator(cx: Float, y: Float) {
     }
 }
 
-private fun DrawScope.drawContextBubble(cx: Float, y: Float, state: RobotState) {
+private fun DrawScope.drawContextBubble(cx: Float, state: RobotState) {
     val active = state.lastUserText != null
     if (active) {
         if (state.mode == RobotMode.THINKING || state.mode == RobotMode.SPEAKING) {
