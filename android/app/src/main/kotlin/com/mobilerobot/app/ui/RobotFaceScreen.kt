@@ -7,6 +7,7 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.Text
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.runtime.*
@@ -104,6 +105,7 @@ fun RobotFaceScreen(
     val blinkProgress = remember { Animatable(0f) }
     val speakMouth = remember { Animatable(0f) }
     val thinkPhase = remember { Animatable(0f) }
+    val listenPulse = remember { Animatable(0f) }
 
     LaunchedEffect(state.faceTargetX) {
         if (state.faceTargetX == null) {
@@ -147,6 +149,17 @@ fun RobotFaceScreen(
         }
     }
 
+    LaunchedEffect(state.mode) {
+        if (state.mode == RobotMode.LISTENING) {
+            while (isActive) {
+                listenPulse.animateTo(1f, tween(350))
+                listenPulse.animateTo(0.2f, tween(350))
+            }
+        } else {
+            listenPulse.snapTo(0f)
+        }
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -185,7 +198,7 @@ fun RobotFaceScreen(
             )
 
             // ── Antenna ──
-            drawAntenna(cx, cy, faceRadius)
+            drawAntenna(cx, cy, faceRadius, state.mode, listenPulse.value)
 
             val eyeY = size.height * EYE_Y_FRACTION
             val mouthY = size.height * MOUTH_Y_FRACTION
@@ -277,7 +290,7 @@ fun RobotFaceScreen(
             }
         }
 
-        // ── Top overlay: ear (wake word) + gear (settings) ──
+            // ── Top overlay: ear (wake word) + gear (settings) ──
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -306,6 +319,23 @@ fun RobotFaceScreen(
                     modifier = Modifier.size(22.dp)
                 )
             }
+        }
+
+        // ── Status text below face ──
+        val statusText = when (state.mode) {
+            RobotMode.LISTENING -> "聆听中..."
+            RobotMode.THINKING -> "思考中..."
+            RobotMode.SPEAKING -> state.responseText ?: ""
+            else -> ""
+        }
+        if (statusText.isNotEmpty()) {
+            Text(
+                text = statusText,
+                color = Color.White.copy(alpha = 0.7f),
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 120.dp)
+            )
         }
     }
 }
@@ -413,12 +443,23 @@ private fun DrawScope.drawEars(faceCx: Float) {
 
 // ─── Antenna ───────────────────────────────────────────────────
 
-private fun DrawScope.drawAntenna(faceCx: Float, faceCy: Float, faceRadius: Float) {
+private fun DrawScope.drawAntenna(
+    faceCx: Float, faceCy: Float, faceRadius: Float,
+    mode: RobotMode, pulse: Float
+) {
     val baseY = faceCy - faceRadius + size.height * ANTENNA_BASE_Y_FRACTION
     val stickH = size.height * ANTENNA_HEIGHT_FRACTION
     val ballR = size.width * ANTENNA_BALL_RADIUS_FRACTION
     val tipY = baseY - stickH
     val ballCy = tipY - ballR
+
+    val isListening = mode == RobotMode.LISTENING
+    val ballColor = if (isListening) {
+        val alpha = 0.4f + pulse * 0.6f   // blink between 0.4 and 1.0
+        Color(0xFFFF3333).copy(alpha = alpha)
+    } else {
+        ColorAntennaGlow
+    }
 
     // Stick
     drawLine(
@@ -434,8 +475,8 @@ private fun DrawScope.drawAntenna(faceCx: Float, faceCy: Float, faceRadius: Floa
     drawCircle(
         brush = Brush.radialGradient(
             colors = listOf(
-                ColorAntennaGlow.copy(alpha = 0.5f),
-                ColorAntennaGlow.copy(alpha = 0f)
+                ballColor.copy(alpha = ballColor.alpha * 0.5f),
+                ballColor.copy(alpha = 0f)
             ),
             center = Offset(faceCx, ballCy),
             radius = glowR
@@ -446,7 +487,7 @@ private fun DrawScope.drawAntenna(faceCx: Float, faceCy: Float, faceRadius: Floa
 
     // Ball
     drawCircle(
-        color = ColorAntennaGlow,
+        color = ballColor,
         radius = ballR,
         center = Offset(faceCx, ballCy)
     )
