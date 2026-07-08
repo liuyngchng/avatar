@@ -157,7 +157,7 @@ class RobotViewModel: ObservableObject {
                 let delay = UInt64.random(in: 2_000_000_000...5_000_000_000)
                 try? await Task.sleep(nanoseconds: delay)
                 guard let self = self, !self.isPaused else { continue }
-                self?.robotState.blinkTrigger += 1
+                self.robotState.blinkTrigger += 1
             }
         }
 
