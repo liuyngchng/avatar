@@ -27,7 +27,8 @@ struct RobotMainScreen: View {
                     // Face view fills the screen
                     RobotFaceView(
                         robotState: $viewModel.robotState,
-                        blinkTrigger: $viewModel.robotState.blinkTrigger
+                        blinkTrigger: $viewModel.robotState.blinkTrigger,
+                        isPaused: showSettings
                     )
                     .edgesIgnoringSafeArea(.all)
                     .simultaneousGesture(
@@ -125,6 +126,9 @@ struct RobotMainScreen: View {
             }
             .onAppear {
                 viewModel.startRobot()
+            }
+            .onChange(of: showSettings) { newValue in
+                viewModel.isPaused = newValue
             }
         }
         .navigationViewStyle(.stack)

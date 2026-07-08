@@ -18,6 +18,7 @@ class RobotViewModel: ObservableObject {
     @Published var kwsReady: Bool = false
     @Published var enginesReady: Bool = false
     @Published var errorMessage: String?
+    @Published var isPaused: Bool = false
 
     // MARK: - Services
 
@@ -155,6 +156,7 @@ class RobotViewModel: ObservableObject {
             while !Task.isCancelled {
                 let delay = UInt64.random(in: 2_000_000_000...5_000_000_000)
                 try? await Task.sleep(nanoseconds: delay)
+                guard let self = self, !self.isPaused else { continue }
                 self?.robotState.blinkTrigger += 1
             }
         }
@@ -164,7 +166,7 @@ class RobotViewModel: ObservableObject {
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 200_000_000)  // 200ms poll
 
-                guard let self = self else { return }
+                guard let self = self, !self.isPaused else { continue }
                 let hasFace = self.robotState.faceTargetX != nil
                 let idleTooLong = self.robotState.msSinceLastFace > 10_000
 
