@@ -30,6 +30,7 @@ import com.rd.avatar.config.ConfigRepository
 import com.rd.avatar.config.ConfigViewModel
 import com.rd.avatar.model.ModelManager
 import com.rd.avatar.tts.SherpaTtsEngine
+import com.rd.avatar.tts.TextNormalizer
 import com.rd.avatar.ui.ModelSetupScreen
 import com.rd.avatar.ui.SettingsHubScreen
 import com.rd.avatar.ui.SettingsScreen
@@ -394,8 +395,9 @@ class MainActivity : ComponentActivity() {
 
     private fun speak(text: String, onDone: (() -> Unit)? = null) {
         if (!ttsReady) return
+        val normalized = TextNormalizer.normalize(text)
         CoroutineScope(Dispatchers.IO).launch {
-            val audio = ttsEngine.synthesize(text)
+            val audio = ttsEngine.synthesize(normalized)
             if (audio != null) {
                 audioPlayer.play(audio, ttsEngine.getSampleRate())
                 onDone?.let { withContext(Dispatchers.Main) { it() } }

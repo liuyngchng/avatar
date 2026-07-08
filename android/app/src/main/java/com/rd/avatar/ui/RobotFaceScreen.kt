@@ -46,6 +46,7 @@ private val ColorPupil = Color(0xFF16213E)
 private val ColorIris = Color(0xFF0F3460)
 private val ColorHighlight = Color(0xFFFFFFFF)
 private val ColorMouth = Color(0xFFE94560)
+private val ColorTongue = Color(0xFFFF6B8A)
 private val ColorBlush = Color(0x4DE94560)
 private val ColorEyebrow = Color(0xBF2D2D44)  // ~75% opaque
 
@@ -643,6 +644,11 @@ private fun DrawScope.drawMouth(
             size = Size(rx * 2f, ry * 2f),
             style = Stroke(width = 3.5f, cap = StrokeCap.Round)
         )
+        // Tongue inside speaking mouth
+        val tongueW = rx * 0.5f
+        val tongueH = ry * 0.65f
+        val tongueY = mouthY + ry * 0.55f
+        drawTongue(cx, tongueY, tongueW, tongueH)
         return
     }
 
@@ -662,6 +668,11 @@ private fun DrawScope.drawMouth(
                 size = Size(r * 2f, r * 2f),
                 style = Stroke(width = 3.5f)
             )
+            // Tongue inside surprised mouth
+            val tongueW = r * 0.45f
+            val tongueH = r * 0.55f
+            val tongueY = mouthY + r * 0.5f
+            drawTongue(cx, tongueY, tongueW, tongueH)
             return
         }
         Emotion.CURIOUS -> {
@@ -685,6 +696,43 @@ private fun DrawScope.drawMouth(
             width = 3.5f,
             cap = androidx.compose.ui.graphics.StrokeCap.Round
         )
+    )
+}
+
+// ─── Tongue ──────────────────────────────────────────────────
+
+private fun DrawScope.drawTongue(
+    cx: Float, baseY: Float,
+    width: Float, height: Float
+) {
+    // Main tongue body: a soft rounded shape using an oval clipped to a path
+    val tonguePath = Path().apply {
+        // Rounded shape: wider at top, narrower at bottom
+        moveTo(cx - width, baseY)
+        cubicTo(
+            cx - width, baseY - height * 0.8f,
+            cx - width * 0.6f, baseY - height,
+            cx, baseY - height
+        )
+        cubicTo(
+            cx + width * 0.6f, baseY - height,
+            cx + width, baseY - height * 0.8f,
+            cx + width, baseY
+        )
+        // Slight indent at top center for cute tongue groove
+        cubicTo(
+            cx + width * 0.3f, baseY - height * 0.15f,
+            cx - width * 0.3f, baseY - height * 0.15f,
+            cx - width, baseY
+        )
+    }
+    drawPath(tonguePath, ColorTongue)
+
+    // Tongue highlight
+    drawCircle(
+        color = Color.White.copy(alpha = 0.35f),
+        radius = width * 0.15f,
+        center = Offset(cx - width * 0.1f, baseY - height * 0.6f)
     )
 }
 
