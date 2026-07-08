@@ -75,7 +75,7 @@ private const val EYEBROW_THICKNESS = 3.5f
 private const val EAR_W_FRACTION = 0.09f
 private const val EAR_H_FRACTION = 0.18f
 private const val EAR_OFFSET_X_FRACTION = 0.44f
-private const val EAR_Y_FRACTION = 0.38f
+private const val EAR_Y_FRACTION = 0.46f
 
 // Antenna
 private const val ANTENNA_BASE_Y_FRACTION = 0.04f
