@@ -65,7 +65,7 @@ private const val PUPIL_RADIUS_FRACTION = 0.07f
 private const val PUPIL_MAX_OFFSET_X_FRACTION = 0.07f
 private const val PUPIL_MAX_OFFSET_Y_FRACTION = 0.04f
 private const val IRIS_RADIUS_FRACTION = 0.09f
-private const val MOUTH_Y_FRACTION = 0.64f
+private const val MOUTH_Y_FRACTION = 0.58f
 private const val MOUTH_W_FRACTION = 0.16f
 private const val EYEBROW_Y_OFFSET_FRACTION = 0.078f
 private const val EYEBROW_LENGTH_FRACTION = 0.14f
@@ -641,22 +641,17 @@ private fun DrawScope.drawMouth(
     isSpeaking: Boolean,
     speakAmount: Float
 ) {
-    // ── Speaking: animated line that bobs with speech ─────────────
+    // ── Speaking: outlined oval, ry oscillates 80%↔100% ─────
     if (isSpeaking) {
-        val bw = 0.65f
-        val cpY = halfWidth * 0.15f * speakAmount
-        val x0 = cx - halfWidth * bw
-        val x1 = cx + halfWidth * bw
-        val path = Path()
-        path.moveTo(x0, mouthY)
-        path.quadraticBezierTo(cx, mouthY + cpY, x1, mouthY)
-        drawPath(
-            path = path,
+        val rx = halfWidth * 0.7f          // constant horizontal radius
+        val baseRy = halfWidth * 0.5f       // base vertical radius
+        val scale = 0.75f + speakAmount * 0.25f  // 0.8 → 1.0
+        val ry = baseRy * scale
+        drawOval(
             color = ColorMouth,
-            style = Stroke(
-                width = 3.5f + speakAmount * 2f,
-                cap = StrokeCap.Round
-            )
+            topLeft = Offset(cx - rx, mouthY - ry),
+            size = Size(rx * 2f, ry * 2f),
+            style = Stroke(width = 3.5f, cap = StrokeCap.Round)
         )
         return
     }
