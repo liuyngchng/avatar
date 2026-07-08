@@ -50,8 +50,6 @@ private val ColorBlush = Color(0x4DE94560)
 private val ColorEyebrow = Color(0xBF2D2D44)  // ~75% opaque
 
 // Robot parts
-private val ColorEarFill = Color(0xFF383866)
-private val ColorEarHighlight = Color(0xFF666699)
 private val ColorAntennaStroke = Color(0xFF4D4D80)
 private val ColorAntennaGlow = Color(0xCC66AAFF)
 
@@ -71,12 +69,6 @@ private const val MOUTH_W_FRACTION = 0.16f
 private const val EYEBROW_Y_OFFSET_FRACTION = 0.078f
 private const val EYEBROW_LENGTH_FRACTION = 0.14f
 private const val EYEBROW_THICKNESS = 3.5f
-
-// Robot ears
-private const val EAR_W_FRACTION = 0.09f
-private const val EAR_H_FRACTION = 0.18f
-private const val EAR_OFFSET_X_FRACTION = 0.44f
-private const val EAR_Y_FRACTION = 0.46f
 
 // Antenna
 private const val ANTENNA_BASE_Y_FRACTION = 0.04f
@@ -175,9 +167,6 @@ fun RobotFaceScreen(
             val cx = size.width / 2f
             val cy = size.height * FACE_CENTER_Y_FRACTION
             val faceRadius = size.width * FACE_RADIUS_FRACTION
-
-            // ── Robot ears ──
-            drawEars(cx)
 
             // ── Face with radial gradient ──
             val faceCenter = Offset(cx, cy)
@@ -398,48 +387,6 @@ private fun computePupilOffset(
     } else {
         val angle = idleWander * PI.toFloat()
         (cos(angle) * maxOffsetX * 0.4f) to (sin(angle * 1.7f) * maxOffsetY * 0.3f)
-    }
-}
-
-// ─── Robot Ears ────────────────────────────────────────────────
-
-private fun DrawScope.drawEars(faceCx: Float) {
-    val earW = size.width * EAR_W_FRACTION
-    val earH = size.height * EAR_H_FRACTION
-    val earOffX = size.width * EAR_OFFSET_X_FRACTION
-    val earY = size.height * EAR_Y_FRACTION
-    val cornerR = earW * 0.45f
-
-    for (side in listOf(-1f, 1f)) {
-        val earCx = faceCx + earOffX * side
-        val earRect = androidx.compose.ui.geometry.Rect(
-            offset = Offset(earCx - earW / 2f, earY - earH / 2f),
-            size = Size(earW, earH)
-        )
-        val earPath = Path().apply {
-            addRoundRect(
-                androidx.compose.ui.geometry.RoundRect(
-                    earRect,
-                    cornerRadius = androidx.compose.ui.geometry.CornerRadius(cornerR, cornerR)
-                )
-            )
-        }
-
-        clipPath(earPath) {
-            drawRect(
-                brush = Brush.linearGradient(
-                    colors = listOf(ColorEarHighlight, ColorEarFill),
-                    start = Offset(earCx, earY - earH / 2f),
-                    end = Offset(earCx, earY + earH / 2f)
-                )
-            )
-        }
-
-        drawPath(
-            path = earPath,
-            color = ColorFaceBorder,
-            style = Stroke(width = 2.5f)
-        )
     }
 }
 
