@@ -21,7 +21,7 @@ typedef struct {
 // ── ASR: Create Recognizer ─────────────────────────────────────────────────
 
 JNIEXPORT jlong JNICALL
-Java_com_rd_siri_asr_SherpaAsrEngine_nativeCreateRecognizer(
+Java_com_rd_avatar_asr_SherpaAsrEngine_nativeCreateRecognizer(
     JNIEnv *env, jclass clazz, jstring modelPath, jstring tokensPath) {
 
     const char *c_model = (*env)->GetStringUTFChars(env, modelPath, NULL);
@@ -75,7 +75,7 @@ Java_com_rd_siri_asr_SherpaAsrEngine_nativeCreateRecognizer(
 // ── ASR: Accept Waveform (buffer samples) ──────────────────────────────────
 
 JNIEXPORT void JNICALL
-Java_com_rd_siri_asr_SherpaAsrEngine_nativeAcceptWaveform(
+Java_com_rd_avatar_asr_SherpaAsrEngine_nativeAcceptWaveform(
     JNIEnv *env, jclass clazz, jlong ptr, jfloatArray samples) {
 
     if (ptr == 0) return;
@@ -108,7 +108,7 @@ Java_com_rd_siri_asr_SherpaAsrEngine_nativeAcceptWaveform(
 // ── ASR: Get Pending Text (none for offline) ───────────────────────────────
 
 JNIEXPORT jstring JNICALL
-Java_com_rd_siri_asr_SherpaAsrEngine_nativeGetText(
+Java_com_rd_avatar_asr_SherpaAsrEngine_nativeGetText(
     JNIEnv *env, jclass clazz, jlong ptr) {
     // Offline recognizer doesn't produce partial results
     return (*env)->NewStringUTF(env, "");
@@ -117,7 +117,7 @@ Java_com_rd_siri_asr_SherpaAsrEngine_nativeGetText(
 // ── ASR: Input Finished (decode all buffered samples) ──────────────────────
 
 JNIEXPORT jstring JNICALL
-Java_com_rd_siri_asr_SherpaAsrEngine_nativeInputFinished(
+Java_com_rd_avatar_asr_SherpaAsrEngine_nativeInputFinished(
     JNIEnv *env, jclass clazz, jlong ptr) {
 
     if (ptr == 0) return (*env)->NewStringUTF(env, "");
@@ -167,7 +167,7 @@ Java_com_rd_siri_asr_SherpaAsrEngine_nativeInputFinished(
 // ── ASR: Destroy Recognizer ────────────────────────────────────────────────
 
 JNIEXPORT void JNICALL
-Java_com_rd_siri_asr_SherpaAsrEngine_nativeDestroyRecognizer(
+Java_com_rd_avatar_asr_SherpaAsrEngine_nativeDestroyRecognizer(
     JNIEnv *env, jclass clazz, jlong ptr) {
 
     if (ptr == 0) return;
@@ -193,7 +193,7 @@ typedef struct {
 // ── TTS: Create ────────────────────────────────────────────────────────────
 
 JNIEXPORT jlong JNICALL
-Java_com_rd_siri_tts_SherpaTtsEngine_nativeCreateTts(
+Java_com_rd_avatar_tts_SherpaTtsEngine_nativeCreateTts(
     JNIEnv *env, jclass clazz,
     jstring acousticModel, jstring vocoder,
     jstring tokens, jstring lexicon, jint numThreads) {
@@ -244,7 +244,7 @@ Java_com_rd_siri_tts_SherpaTtsEngine_nativeCreateTts(
 // ── TTS: Synthesize ────────────────────────────────────────────────────────
 
 JNIEXPORT jfloatArray JNICALL
-Java_com_rd_siri_tts_SherpaTtsEngine_nativeSynthesize(
+Java_com_rd_avatar_tts_SherpaTtsEngine_nativeSynthesize(
     JNIEnv *env, jclass clazz, jlong ptr, jstring text, jfloat speed, jint sid) {
 
     if (ptr == 0) return NULL;
@@ -287,7 +287,7 @@ Java_com_rd_siri_tts_SherpaTtsEngine_nativeSynthesize(
 // ── TTS: Get Sample Rate ───────────────────────────────────────────────────
 
 JNIEXPORT jint JNICALL
-Java_com_rd_siri_tts_SherpaTtsEngine_nativeGetSampleRate(
+Java_com_rd_avatar_tts_SherpaTtsEngine_nativeGetSampleRate(
     JNIEnv *env, jclass clazz, jlong ptr) {
 
     if (ptr == 0) return 22050;
@@ -298,7 +298,7 @@ Java_com_rd_siri_tts_SherpaTtsEngine_nativeGetSampleRate(
 // ── TTS: Destroy ───────────────────────────────────────────────────────────
 
 JNIEXPORT void JNICALL
-Java_com_rd_siri_tts_SherpaTtsEngine_nativeDestroyTts(
+Java_com_rd_avatar_tts_SherpaTtsEngine_nativeDestroyTts(
     JNIEnv *env, jclass clazz, jlong ptr) {
 
     if (ptr == 0) return;
@@ -357,7 +357,7 @@ static void find_model_file(const char *dir, const char *keyword,
 // ── KWS: Create Spotter ────────────────────────────────────────────────────
 
 JNIEXPORT jlong JNICALL
-Java_com_rd_siri_audio_WakeWordEngine_nativeCreateSpotter(
+Java_com_rd_avatar_audio_WakeWordEngine_nativeCreateSpotter(
     JNIEnv *env, jclass clazz, jstring modelDir, jstring keywords, jint numThreads) {
 
     const char *c_dir = (*env)->GetStringUTFChars(env, modelDir, NULL);
@@ -430,7 +430,7 @@ Java_com_rd_siri_audio_WakeWordEngine_nativeCreateSpotter(
 // ── KWS: Destroy Spotter ───────────────────────────────────────────────────
 
 JNIEXPORT void JNICALL
-Java_com_rd_siri_audio_WakeWordEngine_nativeDestroySpotter(
+Java_com_rd_avatar_audio_WakeWordEngine_nativeDestroySpotter(
     JNIEnv *env, jclass clazz, jlong ptr) {
 
     if (ptr == 0) return;
@@ -445,7 +445,7 @@ Java_com_rd_siri_audio_WakeWordEngine_nativeDestroySpotter(
 // ── KWS: Create Stream ──────────────────────────────────────────────────────
 
 JNIEXPORT jlong JNICALL
-Java_com_rd_siri_audio_WakeWordEngine_nativeCreateStream(
+Java_com_rd_avatar_audio_WakeWordEngine_nativeCreateStream(
     JNIEnv *env, jclass clazz, jlong ptr) {
 
     if (ptr == 0) return 0;
@@ -465,7 +465,7 @@ Java_com_rd_siri_audio_WakeWordEngine_nativeCreateStream(
 // ── KWS: Destroy Stream ────────────────────────────────────────────────────
 
 JNIEXPORT void JNICALL
-Java_com_rd_siri_audio_WakeWordEngine_nativeDestroyStream(
+Java_com_rd_avatar_audio_WakeWordEngine_nativeDestroyStream(
     JNIEnv *env, jclass clazz, jlong streamPtr) {
 
     if (streamPtr == 0) return;
@@ -475,7 +475,7 @@ Java_com_rd_siri_audio_WakeWordEngine_nativeDestroyStream(
 // ── KWS: Accept Waveform ───────────────────────────────────────────────────
 
 JNIEXPORT void JNICALL
-Java_com_rd_siri_audio_WakeWordEngine_nativeAcceptWaveform(
+Java_com_rd_avatar_audio_WakeWordEngine_nativeAcceptWaveform(
     JNIEnv *env, jclass clazz, jlong streamPtr, jfloatArray samples, jint sampleRate) {
 
     if (streamPtr == 0) return;
@@ -495,7 +495,7 @@ Java_com_rd_siri_audio_WakeWordEngine_nativeAcceptWaveform(
 // ── KWS: Is Stream Ready ───────────────────────────────────────────────────
 
 JNIEXPORT jboolean JNICALL
-Java_com_rd_siri_audio_WakeWordEngine_nativeIsStreamReady(
+Java_com_rd_avatar_audio_WakeWordEngine_nativeIsStreamReady(
     JNIEnv *env, jclass clazz, jlong ptr, jlong streamPtr) {
 
     if (ptr == 0 || streamPtr == 0) return JNI_FALSE;
@@ -507,7 +507,7 @@ Java_com_rd_siri_audio_WakeWordEngine_nativeIsStreamReady(
 // ── KWS: Decode Stream ─────────────────────────────────────────────────────
 
 JNIEXPORT void JNICALL
-Java_com_rd_siri_audio_WakeWordEngine_nativeDecodeStream(
+Java_com_rd_avatar_audio_WakeWordEngine_nativeDecodeStream(
     JNIEnv *env, jclass clazz, jlong ptr, jlong streamPtr) {
 
     if (ptr == 0 || streamPtr == 0) return;
@@ -519,7 +519,7 @@ Java_com_rd_siri_audio_WakeWordEngine_nativeDecodeStream(
 // ── KWS: Get Result ────────────────────────────────────────────────────────
 
 JNIEXPORT jstring JNICALL
-Java_com_rd_siri_audio_WakeWordEngine_nativeGetResult(
+Java_com_rd_avatar_audio_WakeWordEngine_nativeGetResult(
     JNIEnv *env, jclass clazz, jlong ptr, jlong streamPtr) {
 
     if (ptr == 0 || streamPtr == 0) return (*env)->NewStringUTF(env, "");
@@ -538,7 +538,7 @@ Java_com_rd_siri_audio_WakeWordEngine_nativeGetResult(
 // ── KWS: Reset Stream ──────────────────────────────────────────────────────
 
 JNIEXPORT void JNICALL
-Java_com_rd_siri_audio_WakeWordEngine_nativeResetStream(
+Java_com_rd_avatar_audio_WakeWordEngine_nativeResetStream(
     JNIEnv *env, jclass clazz, jlong ptr, jlong streamPtr) {
 
     if (ptr == 0 || streamPtr == 0) return;

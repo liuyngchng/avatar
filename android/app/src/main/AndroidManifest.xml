@@ -26,10 +26,10 @@
         android:label="@string/app_name"
         android:supportsRtl="true"
         android:theme="@style/Theme.RobotCompanion"
-        android:name=".RobotApplication">
+        android:name="com.rd.avatar.RobotApplication">
 
         <activity
-            android:name=".MainActivity"
+            android:name="com.rd.avatar.MainActivity"
             android:exported="true"
             android:screenOrientation="portrait"
             android:theme="@style/Theme.RobotCompanion">
@@ -41,7 +41,7 @@
 
         <!-- Wake word foreground service (sherpa-onnx KWS) -->
         <service
-            android:name="com.rd.siri.audio.VoiceService"
+            android:name="com.rd.avatar.audio.VoiceService"
             android:exported="false"
             android:foregroundServiceType="microphone" />
 

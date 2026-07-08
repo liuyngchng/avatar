@@ -4,11 +4,11 @@ plugins {
 }
 
 android {
-    namespace = "com.mobilerobot.app"
+    namespace = "com.rd.avatar"
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.mobilerobot.app"
+        applicationId = "com.rd.avatar"
         minSdk = 31
         targetSdk = 34
         versionCode = 1
