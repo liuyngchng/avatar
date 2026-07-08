@@ -332,9 +332,11 @@ fun RobotFaceScreen(
             Text(
                 text = statusText,
                 color = Color.White.copy(alpha = 0.7f),
+                maxLines = 2,
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
-                    .padding(bottom = 120.dp)
+                    .padding(horizontal = 40.dp)
+                    .padding(bottom = 40.dp)
             )
         }
     }
