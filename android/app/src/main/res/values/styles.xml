@@ -10,6 +10,6 @@
 
         <!-- Android 12+ SplashScreen (minSdk=31, no version guard needed) -->
         <item name="android:windowSplashScreenBackground">@android:color/black</item>
-        <item name="android:windowSplashScreenAnimatedIcon">@drawable/ic_splash_icon</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/ic_splash_adaptive</item>
     </style>
 </resources>
