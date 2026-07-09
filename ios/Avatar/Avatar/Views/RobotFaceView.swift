@@ -174,6 +174,12 @@ final class FaceDisplayView: UIView {
         thinkPhase = 0
     }
 
+    // MARK: - Pause / Resume
+
+    func setPaused(_ paused: Bool) {
+        displayLink?.isPaused = paused
+    }
+
     // MARK: - Adaptive Frame Rate
 
     /// Drop to a lower frame rate when the robot is idle (no face, not
@@ -204,6 +210,7 @@ final class FaceDisplayView: UIView {
 struct RobotFaceView: UIViewRepresentable {
     @Binding var robotState: RobotState
     @Binding var blinkTrigger: Int
+    var isPaused: Bool = false
 
     func makeUIView(context: Context) -> FaceDisplayView {
         FaceDisplayView()
@@ -211,6 +218,9 @@ struct RobotFaceView: UIViewRepresentable {
 
     func updateUIView(_ uiView: FaceDisplayView, context: Context) {
         uiView.robotState = robotState
+
+        // Pause display link when settings is shown
+        uiView.setPaused(isPaused)
 
         // Adaptive frame rate: lower when idle/watching
         if context.coordinator.lastMode != robotState.mode {

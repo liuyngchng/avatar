@@ -124,10 +124,10 @@ final class FaceDrawer {
         ctx.addEllipse(in: faceRect)
         ctx.clip()
         ctx.drawRadialGradient(FaceGradients.skin,
-                               startCenter: CGPoint(x: cx, y: cy - faceRadius * 0.5),
-                               startRadius: faceRadius * 0.1,
-                               endCenter: CGPoint(x: cx, y: cy + faceRadius),
-                               endRadius: faceRadius * 1.2, options: [])
+                               startCenter: CGPoint(x: cx, y: cy),
+                               startRadius: 0,
+                               endCenter: CGPoint(x: cx, y: cy),
+                               endRadius: faceRadius, options: [])
         ctx.resetClip()
 
         // Face outline

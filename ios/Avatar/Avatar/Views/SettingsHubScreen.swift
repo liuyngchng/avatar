@@ -12,6 +12,7 @@ struct SettingsHubScreen: View {
     @ObservedObject var configVM: ConfigViewModel
     var onDismiss: () -> Void
     var onReadText: (String) -> Void = { _ in }
+    @Environment(\.presentationMode) private var presentationMode
 
     /// Build-time-based version string (executable modification date).
     private var appVersion: String {
@@ -88,7 +89,10 @@ struct SettingsHubScreen: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("完成", action: onDismiss)
+                    Button("完成") {
+                        presentationMode.wrappedValue.dismiss()
+                        onDismiss()
+                    }
                 }
             }
         }
