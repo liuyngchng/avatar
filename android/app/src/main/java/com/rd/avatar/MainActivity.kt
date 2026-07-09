@@ -68,7 +68,7 @@ class MainActivity : ComponentActivity() {
     companion object {
         private const val VAD_SILENCE_THRESHOLD = 0.012f  // RMS below this = silence
         private const val VAD_MAX_SILENT_CHUNKS = 25       // ~2 seconds at 80ms/chunk
-        private const val MAX_RECORD_SECONDS = 15f         // force-stop if no silence
+        private const val MAX_RECORD_SECONDS = 10f         // force-stop if no silence
     }
 
     // LLM integration
@@ -207,6 +207,18 @@ class MainActivity : ComponentActivity() {
                             if (!hasAudioPermission) {
                                 audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
                                 return@RobotFaceScreen
+                            }
+                            // Guard: ASR must be ready before entering LISTENING mode.
+                            // Without this check, the mode would be set to LISTENING
+                            // but recording never starts, leaving the UI stuck forever.
+                            if (!asrReady) {
+                                return@RobotFaceScreen
+                            }
+                            // If wake word detection is running, stop it to release
+                            // the microphone before starting recording. Same pattern
+                            // as the wake-word-triggered flow (VoiceService.stopEngine).
+                            if (wakeWordEnabled) {
+                                stopWakeWordService()
                             }
                             // Shared result handler (VAD auto-stop or manual tap-to-stop)
                             val onSpeechResult: (String?) -> Unit = { text ->

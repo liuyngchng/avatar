@@ -203,6 +203,13 @@ class RobotViewModel: ObservableObject {
             return
         }
 
+        // If wake word detection is running, stop it to release the mic
+        // before starting recording. Same pattern as the wake-word-triggered
+        // flow (handleKwsDetected).
+        if wakeWordEnabled {
+            wakeWordEngine.stop()
+        }
+
         if case .listening = robotState.mode {
             stopListening()
         } else if case .speaking = robotState.mode {
@@ -230,7 +237,7 @@ class RobotViewModel: ObservableObject {
         var silentChunks = 0
         let silenceThreshold: Float = 0.012   // RMS below this = silence
         let maxSilentChunks = 25               // ~2 seconds at ~80ms/chunk
-        let maxRecordSeconds: TimeInterval = 15
+        let maxRecordSeconds: TimeInterval = 10
         let startTime = Date()
 
         recordingCancellable = audioRecorder.startRecordingPublisher()
