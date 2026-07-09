@@ -27,7 +27,7 @@ class LlmClient(private val configRepository: ConfigRepository) {
         }
 
         private fun buildSystemPrompt(enableSearch: Boolean): String {
-            val now = dateFormat.get().format(java.util.Date())
+            val now = dateFormat.get()!!.format(java.util.Date())
             val base = "你是一个可爱的小机器人助手，名字叫「小爱」。你的性格活泼、温暖、好奇，喜欢和人聊天。" +
                 "用简短口语化的中文回复，控制在2-3句话（80字以内）。" +
                 "偶尔可以加个颜文字(｡･ω･｡)或者语气词，显得更可爱。" +

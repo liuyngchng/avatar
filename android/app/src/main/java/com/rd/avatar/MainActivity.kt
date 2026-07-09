@@ -122,10 +122,13 @@ class MainActivity : ComponentActivity() {
                 ActivityResultContracts.RequestPermission()
             ) { granted -> hasAudioPermission = granted }
 
-            // Start camera when permission granted
-            LaunchedEffect(hasCameraPermission) {
-                if (hasCameraPermission) {
+            // Camera: only active on RobotFace screen. Stop when navigating away
+            // to release camera sensor + GPU resources.
+            LaunchedEffect(hasCameraPermission, currentScreen) {
+                if (hasCameraPermission && currentScreen is Screen.RobotFace) {
                     faceDetector.start(this@MainActivity)
+                } else {
+                    faceDetector.stop()
                 }
             }
 
@@ -366,7 +369,6 @@ class MainActivity : ComponentActivity() {
         isRecording = true
         onSpeechEnd = onResult
         var silentChunks = 0
-        val startTime = System.currentTimeMillis()
 
         recordingJob = CoroutineScope(Dispatchers.IO).launch {
             try {

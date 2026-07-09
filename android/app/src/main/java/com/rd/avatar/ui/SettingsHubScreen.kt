@@ -21,6 +21,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -29,6 +30,8 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -45,19 +48,26 @@ fun SettingsHubScreen(
 ) {
     val context = LocalContext.current
     val powerManager = remember { context.getSystemService(android.content.Context.POWER_SERVICE) as PowerManager }
-    val batteryOptimized = remember {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            !powerManager.isIgnoringBatteryOptimizations(context.packageName)
+
+    // Defer IPC to background — avoids blocking UI thread on first composition
+    val batteryOptimized by produceState(false, wakeWordEnabled) {
+        value = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            withContext(Dispatchers.IO) {
+                !powerManager.isIgnoringBatteryOptimizations(context.packageName)
+            }
         } else false
     }
     var showBatteryWarning by remember(wakeWordEnabled, batteryOptimized) {
         mutableStateOf(wakeWordEnabled && batteryOptimized)
     }
 
-    val appVersion = remember {
-        try {
+    // Defer getPackageInfo (IPC) off the main thread
+    val appVersion by produceState("1.0.0") {
+        value = try {
             @Suppress("DEPRECATION")
-            val packageInfo = context.packageManager.getPackageInfo(context.packageName, 0)
+            val packageInfo = withContext(Dispatchers.IO) {
+                context.packageManager.getPackageInfo(context.packageName, 0)
+            }
             val buildTime = packageInfo.lastUpdateTime
             val fmt = SimpleDateFormat("yyyyMMdd.HHmm", Locale.getDefault())
             "1.0.0 (${fmt.format(Date(buildTime))})"

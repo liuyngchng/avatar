@@ -73,6 +73,8 @@ class FaceDetector(private val appContext: android.content.Context) {
         FaceDetection.getClient(options)
     }
 
+    private var cameraProvider: ProcessCameraProvider? = null
+
     /**
      * Bind camera + analyzer to the given lifecycle.
      */
@@ -81,6 +83,7 @@ class FaceDetector(private val appContext: android.content.Context) {
 
         cameraProviderFuture.addListener({
             val provider = cameraProviderFuture.get()
+            cameraProvider = provider  // save reference so we can unbind later
 
             // Front camera (selfie) — use DEFAULT_FRONT_CAMERA for clarity
             val cameraSelector = CameraSelector.DEFAULT_FRONT_CAMERA
@@ -100,6 +103,13 @@ class FaceDetector(private val appContext: android.content.Context) {
                 analysis
             )
         }, ContextCompat.getMainExecutor(appContext))
+    }
+
+    /** Stop the camera. Call when navigating away to release camera + GPU resources. */
+    fun stop() {
+        cameraProvider?.unbindAll()
+        cameraProvider = null
+        _faces.value = null
     }
 
     private fun analyzeFrame(imageProxy: ImageProxy) {

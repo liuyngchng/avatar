@@ -93,7 +93,6 @@ class AudioPlayer {
         sampleRate: Int,
         timeoutMs: Long
     ) {
-        val durationMs = (frameCount.toLong() * 1000) / sampleRate
         try {
             withTimeout(timeoutMs) {
                 // Poll playback head position every ~20ms.
