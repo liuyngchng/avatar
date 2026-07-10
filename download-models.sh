@@ -22,8 +22,8 @@ ASR_URL="https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sher
 ASR_FILE="sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09.tar.bz2"
 
 # TTS: VITS-aishell3 多说话人 (174人，含男声)
-TTS_URL="https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-aishell3.tar.bz2"
-TTS_FILE="vits-aishell3.tar.bz2"
+TTS_URL="https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-zh-aishell3.tar.bz2"
+TTS_FILE="vits-zh-aishell3.tar.bz2"
 
 # KWS: 关键词检测 (Zipformer WenetSpeech 3.3M，支持中文唤醒词)
 KWS_URL="https://github.com/k2-fsa/sherpa-onnx/releases/download/kws-models/sherpa-onnx-kws-zipformer-wenetspeech-3.3M-2024-01-01.tar.bz2"
