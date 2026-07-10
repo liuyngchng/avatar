@@ -22,7 +22,7 @@ DerivedData/
 *.xcarchive
 *.xcbkptlist
 *.xcresult
-
+.claude
 # CocoaPods
 Pods/
 
