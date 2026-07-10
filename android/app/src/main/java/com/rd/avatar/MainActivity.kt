@@ -63,8 +63,13 @@ class MainActivity : ComponentActivity() {
 
     // VAD (Voice Activity Detection) constants
     companion object {
-        private const val VAD_SILENCE_THRESHOLD = 0.012f
-        private const val VAD_MAX_SILENT_CHUNKS = 25
+        // Base silence threshold (RMS). Actual threshold = max(this, noiseFloor * 2.0)
+        private const val VAD_SILENCE_THRESHOLD = 0.022f
+        // Consecutive silent chunks to auto-stop (~80ms/chunk)
+        private const val VAD_MAX_SILENT_CHUNKS = 20
+        // Chunks used to calibrate ambient noise floor (~1.2s)
+        private const val NOISE_CALIBRATION_CHUNKS = 15
+        // Max recording duration before force-stop
         private const val MAX_RECORD_SECONDS = 10f
     }
 
@@ -83,6 +88,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             var robotState by remember { mutableStateOf(RobotState()) }
             var hasAudioPermission by remember { mutableStateOf(checkAudioPermission()) }
+            var enginesReady by remember { mutableStateOf(false) }
 
             // Settings navigation
             val modelsReady = ModelManager.checkAsrReady(this) &&
@@ -100,10 +106,23 @@ class MainActivity : ComponentActivity() {
             // Initialize ASR/TTS when models become ready
             LaunchedEffect(modelsReady) {
                 if (modelsReady && !asrReady) {
+                    // Show waking-up state during engine loading
+                    robotState = robotState.copy(
+                        mode = RobotMode.THINKING,
+                        emotion = Emotion.SLEEPY
+                    )
                     withContext(Dispatchers.IO) {
                         asrReady = asrEngine.initialize()
                         ttsReady = ttsEngine.initialize()
                     }
+                    enginesReady = true
+                    robotState = robotState.copy(
+                        mode = RobotMode.IDLE,
+                        emotion = Emotion.NEUTRAL
+                    )
+                } else if (asrReady && ttsReady) {
+                    // Already initialized (fast phone, or modelsReady was cached)
+                    enginesReady = true
                 }
             }
 
@@ -178,12 +197,13 @@ class MainActivity : ComponentActivity() {
                 is Screen.RobotFace -> {
                     RobotFaceScreen(
                         state = robotState,
+                        enginesReady = enginesReady,
                         onTap = {
                             if (!hasAudioPermission) {
                                 audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
                                 return@RobotFaceScreen
                             }
-                            if (!asrReady) {
+                            if (!enginesReady) {
                                 return@RobotFaceScreen
                             }
                             if (wakeWordEnabled) {
@@ -353,6 +373,12 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
+                // Adaptive noise floor: measure ambient RMS over first ~1.2s,
+                // then use max(baseThreshold, noiseFloor × 2.0) as actual threshold.
+                var noiseFloor = Float.MAX_VALUE
+                var calibrationDone = false
+                var chunkIndex = 0
+
                 audioRecorder.startRecording().collect { samples ->
                     asrEngine.acceptWaveform(samples)
 
@@ -360,7 +386,23 @@ class MainActivity : ComponentActivity() {
                     for (s in samples) sumSq += s * s
                     val rms = kotlin.math.sqrt(sumSq / samples.size)
 
-                    if (rms < VAD_SILENCE_THRESHOLD) {
+                    // ── Noise floor calibration ──
+                    if (!calibrationDone) {
+                        noiseFloor = minOf(noiseFloor, rms)
+                        chunkIndex++
+                        if (chunkIndex >= NOISE_CALIBRATION_CHUNKS) {
+                            calibrationDone = true
+                            val effectiveThreshold = maxOf(VAD_SILENCE_THRESHOLD, noiseFloor * 1.8f)
+                            Log.i("MainActivity",
+                                "VAD calibrated: noiseFloor=${"%.4f".format(noiseFloor)}, " +
+                                "threshold=${"%.4f".format(effectiveThreshold)}")
+                        }
+                        return@collect  // skip VAD during calibration
+                    }
+
+                    val effectiveThreshold = maxOf(VAD_SILENCE_THRESHOLD, noiseFloor * 1.8f)
+
+                    if (rms < effectiveThreshold) {
                         silentChunks++
                         if (silentChunks >= VAD_MAX_SILENT_CHUNKS) {
                             timeoutJob.cancel()

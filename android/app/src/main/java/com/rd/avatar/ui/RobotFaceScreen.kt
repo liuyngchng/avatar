@@ -73,7 +73,8 @@ fun RobotFaceScreen(
     onTap: () -> Unit = {},
     onSettingsClick: () -> Unit = {},
     wakeWordEnabled: Boolean = false,
-    onToggleWakeWord: () -> Unit = {}
+    onToggleWakeWord: () -> Unit = {},
+    enginesReady: Boolean = true
 ) {
     // ── Animation states ──
     val idleWander   = remember { Animatable(0f) }
@@ -389,7 +390,9 @@ fun RobotFaceScreen(
         }
 
         // ── Status text below figure ──
-        val statusText = when (state.mode) {
+        val statusText = if (!enginesReady) {
+            "小火正在醒来..."
+        } else when (state.mode) {
             RobotMode.LISTENING -> "聆听中..."
             RobotMode.THINKING  -> "思考中..."
             RobotMode.SPEAKING  -> state.responseText ?: ""
