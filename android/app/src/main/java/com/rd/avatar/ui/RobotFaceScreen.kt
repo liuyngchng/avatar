@@ -83,6 +83,7 @@ fun RobotFaceScreen(
     val listenPulse  = remember { Animatable(0f) }
     val breatheScale = remember { Animatable(1f) }
     val anticPhase   = remember { Animatable(0f) }  // goofy antic animation
+    val jumpPhase    = remember { Animatable(0f) }  // jump animation 0→1
 
     // Idle: eyes wander (always, since no face tracking)
     LaunchedEffect(Unit) {
@@ -112,6 +113,24 @@ fun RobotFaceScreen(
             anticPhase.animateTo(1f, tween(400, easing = FastOutSlowInEasing))
             delay(800)
             anticPhase.animateTo(0f, tween(600, easing = FastOutSlowInEasing))
+        }
+    }
+
+    // Jump animation (triggered ~20% of antics when idle)
+    LaunchedEffect(state.anticTrigger) {
+        if (state.anticTrigger > 0L && state.anticTrigger % 5L == 4L
+            && state.mode == RobotMode.IDLE) {
+            // Phase 1: crouch (0 → 0.25) — anticipation
+            jumpPhase.snapTo(0f)
+            jumpPhase.animateTo(0.25f, tween(200, easing = FastOutSlowInEasing))
+            // Phase 2: launch up (0.25 → 0.6) — fast!
+            jumpPhase.animateTo(0.6f, tween(250, easing = LinearEasing))
+            // Phase 3: hold apex briefly
+            delay(100)
+            // Phase 4: fall + land (0.6 → 1.0) — gravity
+            jumpPhase.animateTo(1f, tween(300, easing = FastOutSlowInEasing))
+            // Reset
+            jumpPhase.snapTo(0f)
         }
     }
 
@@ -193,9 +212,6 @@ fun RobotFaceScreen(
 
             // ── Core figure origin ──
             val headCY = feetY - figureH + headR
-            val headCenter = Offset(cx, headCY)
-            val neckY = headCY + headR
-            val hipY = neckY + bodyLen
 
             // ── Pose angles (in radians, 0 = straight down) ──
             val pose = computePose(
@@ -204,14 +220,37 @@ fun RobotFaceScreen(
                 speakAmount = speakMouth.value,
                 thinkPhase = thinkPhase.value,
                 listenPulse = listenPulse.value,
-                breatheAmount = breatheScale.value
+                breatheAmount = breatheScale.value,
+                anticTrigger = state.anticTrigger,
+                jumpPhase = jumpPhase.value
             )
+
+            val headCenter = Offset(cx, headCY)
+            val neckY = headCY + headR
+            // Body length compressed by bodyScale (for squatting)
+            val effectiveHipY = neckY + bodyLen * (1f - pose.bodyScale)
+
+            // ── Whole-body rotation (for lying down) ──
+            if (pose.figureRotation != 0f) {
+                drawContext.transform.rotate(
+                    pose.figureRotation,
+                    Offset(cx, feetY - figureH / 2f)
+                )
+            }
+
+            // ── Jump vertical offset (parabolic arc) ──
+            val jumpDY = if (jumpPhase.value > 0.01f) {
+                jumpOffsetY(jumpPhase.value, figureH)
+            } else 0f
+            if (jumpDY != 0f) {
+                drawContext.transform.translate(0f, jumpDY)
+            }
 
             // ── Compute joint positions ──
             val neck = Offset(cx + pose.neckShiftX, neckY)
             val leftShoulder  = Offset(neck.x - shoulderHalfW, neck.y)
             val rightShoulder = Offset(neck.x + shoulderHalfW, neck.y)
-            val hip = Offset(cx + pose.hipShiftX, hipY)
+            val hip = Offset(cx + pose.hipShiftX, effectiveHipY + pose.hipShiftY)
             val leftHip  = Offset(hip.x - hipHalfW, hip.y)
             val rightHip = Offset(hip.x + hipHalfW, hip.y)
 
@@ -379,10 +418,13 @@ fun RobotFaceScreen(
  */
 private data class StickPose(
     val headTilt: Float = 0f,          // head tilt angle
-    val headShiftX: Float = 0f,        // horizontal head offset
-    val headShiftY: Float = 0f,        // vertical head offset
-    val neckShiftX: Float = 0f,        // body lean
-    val hipShiftX: Float = 0f,
+    val headShiftX: Float = 0f,        // horizontal head offset (px)
+    val headShiftY: Float = 0f,        // vertical head offset (px)
+    val neckShiftX: Float = 0f,        // body lean (px)
+    val hipShiftX: Float = 0f,         // hip horizontal (px)
+    val hipShiftY: Float = 0f,         // hip vertical fine-tune (px)
+    val bodyScale: Float = 0f,         // 0=normal, >0=compress body (0-1 range)
+    val figureRotation: Float = 0f,    // whole-body rotation degrees (90=lying down)
     val leftUpperArmAngle: Float,      // from shoulder
     val leftForearmAngle: Float,
     val rightUpperArmAngle: Float,
@@ -477,6 +519,74 @@ private fun lookingPose(): StickPose = StickPose(
     leftLowerLegAngle  = 0f,
     rightUpperLegAngle = Math.toRadians(4.0).toFloat(),
     rightLowerLegAngle = 0f,
+)
+
+/** JUMPING: phases 0=crouch → 0.25=launch → 0.6=apex → 1.0=land */
+private fun jumpingPose(phase: Float): StickPose {
+    val crouch = (1f - (phase / 0.25f).coerceIn(0f, 1f)) * 0.5f  // 0.5 at phase 0, 0 at 0.25
+    val launch = ((phase - 0.15f) / 0.45f).coerceIn(0f, 1f)       // 0→1 from launch to apex
+    val tuck  = ((phase - 0.4f) / 0.2f).coerceIn(0f, 1f)          // leg tuck at apex
+    return StickPose(
+        headTilt = 0f,
+        headShiftX = 0f,
+        headShiftY = crouch * 14f - launch * 8f,  // crouch→lower, launch→stretch
+        neckShiftX = 0f, hipShiftX = 0f,
+        hipShiftY = crouch * 8f,
+        bodyScale = crouch * 0.35f,                // compress during crouch
+        figureRotation = 0f,
+        // Arms: back during crouch → up during launch/apex
+        leftUpperArmAngle  = Math.toRadians((-15.0 + crouch * 30 - launch * 115)).toFloat(),
+        leftForearmAngle   = Math.toRadians((8.0 - launch * 100)).toFloat(),
+        rightUpperArmAngle = Math.toRadians((15.0 - crouch * 30 + launch * 115)).toFloat(),
+        rightForearmAngle  = Math.toRadians((-8.0 + launch * 100)).toFloat(),
+        // Legs: straight during crouch → tuck at apex
+        leftUpperLegAngle  = Math.toRadians((-3.0 + tuck * 30).toDouble()).toFloat(),
+        leftLowerLegAngle  = Math.toRadians((-tuck * 35).toDouble()).toFloat(),
+        rightUpperLegAngle = Math.toRadians((3.0 - tuck * 30).toDouble()).toFloat(),
+        rightLowerLegAngle = Math.toRadians((tuck * 35).toDouble()).toFloat(),
+    )
+}
+
+/** Vertical offset for jump: parabolic arc, negative = upward */
+private fun jumpOffsetY(phase: Float, figureHeight: Float): Float {
+    if (phase <= 0f || phase >= 1f) return 0f
+    // Peak at phase ~0.55
+    val t = (phase / 0.55f).coerceIn(0f, 1f)
+    return -sin(t * PI.toFloat()) * figureHeight * 0.35f
+}
+
+/** SQUATTING: knees bent deep, body compressed, hands on knees */
+private fun squattingPose(): StickPose = StickPose(
+    headTilt = 0f,
+    headShiftX = 0f, headShiftY = 12f,
+    neckShiftX = 0f, hipShiftX = 0f, hipShiftY = 0f,
+    bodyScale = 0.55f,   // compress body by 55%
+    figureRotation = 0f,
+    leftUpperArmAngle  = Math.toRadians((-20.0)).toFloat(),
+    leftForearmAngle   = Math.toRadians((-80.0)).toFloat(),  // hands to knees
+    rightUpperArmAngle = Math.toRadians(20.0).toFloat(),
+    rightForearmAngle  = Math.toRadians(80.0).toFloat(),     // hands to knees
+    leftUpperLegAngle  = Math.toRadians((-78.0)).toFloat(),  // thigh far out
+    leftLowerLegAngle  = Math.toRadians(82.0).toFloat(),     // calf back to center
+    rightUpperLegAngle = Math.toRadians(78.0).toFloat(),     // thigh far out
+    rightLowerLegAngle = Math.toRadians((-82.0)).toFloat(),  // calf back to center
+)
+
+/** LYING DOWN: figure rotated 90° clockwise, relaxed pose */
+private fun lyingPose(): StickPose = StickPose(
+    headTilt = Math.toRadians((-15.0)).toFloat(),  // head resting
+    headShiftX = 0f, headShiftY = -10f,
+    neckShiftX = 0f, hipShiftX = 0f, hipShiftY = 0f,
+    bodyScale = 0f,
+    figureRotation = -90f,   // rotate whole figure 90° CW (lying on side)
+    leftUpperArmAngle  = Math.toRadians((-30.0)).toFloat(),   // arm stretched
+    leftForearmAngle   = Math.toRadians((-10.0)).toFloat(),
+    rightUpperArmAngle = Math.toRadians(5.0).toFloat(),       // arm relaxed
+    rightForearmAngle  = Math.toRadians(20.0).toFloat(),
+    leftUpperLegAngle  = Math.toRadians((-10.0)).toFloat(),   // legs relaxed
+    leftLowerLegAngle  = Math.toRadians((-5.0)).toFloat(),
+    rightUpperLegAngle = Math.toRadians(15.0).toFloat(),
+    rightLowerLegAngle = Math.toRadians(10.0).toFloat(),
 )
 
 /** Emotion overlay: modifies the base pose */
@@ -577,6 +687,9 @@ private fun blendPose(a: StickPose, b: StickPose, t: Float): StickPose {
         headShiftY = a.headShiftY + (b.headShiftY - a.headShiftY) * t,
         neckShiftX = a.neckShiftX + (b.neckShiftX - a.neckShiftX) * t,
         hipShiftX  = a.hipShiftX  + (b.hipShiftX  - a.hipShiftX)  * t,
+        hipShiftY  = a.hipShiftY  + (b.hipShiftY  - a.hipShiftY)  * t,
+        bodyScale  = a.bodyScale  + (b.bodyScale  - a.bodyScale)  * t,
+        figureRotation = a.figureRotation + (b.figureRotation - a.figureRotation) * t,
         leftUpperArmAngle  = lerpAngle(a.leftUpperArmAngle, b.leftUpperArmAngle, t),
         leftForearmAngle   = lerpAngle(a.leftForearmAngle, b.leftForearmAngle, t),
         rightUpperArmAngle = lerpAngle(a.rightUpperArmAngle, b.rightUpperArmAngle, t),
@@ -605,11 +718,22 @@ private fun computePose(
     speakAmount: Float,
     thinkPhase: Float,
     listenPulse: Float,
-    breatheAmount: Float
+    breatheAmount: Float,
+    anticTrigger: Long = 0L,
+    jumpPhase: Float = 0f
 ): StickPose {
     // Base pose from mode
     val modePose = when (mode) {
-        RobotMode.IDLE      -> idlePose()
+        RobotMode.IDLE -> {
+            // Jump takes priority when active
+            if (jumpPhase > 0.01f) {
+                jumpingPose(jumpPhase)
+            } else when {
+                anticTrigger > 0 && anticTrigger % 7L == 3L -> squattingPose()
+                anticTrigger > 3 && anticTrigger % 13L == 7L -> lyingPose()
+                else -> idlePose()
+            }
+        }
         RobotMode.LISTENING -> listeningPose(listenPulse)
         RobotMode.SPEAKING  -> speakingPose(speakAmount)
         RobotMode.THINKING  -> thinkingPose(thinkPhase)
