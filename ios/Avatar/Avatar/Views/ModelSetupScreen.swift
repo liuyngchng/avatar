@@ -103,12 +103,13 @@ private struct ModelFilePicker: UIViewControllerRepresentable {
 // MARK: - Sheet Target
 
 enum ModelSheetTarget: Identifiable {
-    case asr, tts, kws
+    case asr, tts, vocoder, kws
     var id: Int {
         switch self {
         case .asr: return 0
         case .tts: return 1
-        case .kws: return 2
+        case .vocoder: return 2
+        case .kws: return 3
         }
     }
 }
@@ -151,7 +152,11 @@ struct ModelSetupContent: View {
         return ModelManager.checkKwsReady()
     }
 
-    private var allReady: Bool { asrOk && ttsOk }
+    private var vocoderOk: Bool {
+        if case .completed = modelManager.vocoderState { return true }
+        return FileManager.default.fileExists(atPath: ModelManager.ttsModelDirURL().appendingPathComponent("vocos.onnx").path)
+    }
+    private var allReady: Bool { asrOk && ttsOk && vocoderOk }
 
     @ViewBuilder
     private var onReadyButton: some View {
@@ -170,6 +175,9 @@ struct ModelSetupContent: View {
         if case .downloading = modelManager.ttsState { return true }
         if case .importing = modelManager.ttsState { return true }
         if case .extracting = modelManager.ttsState { return true }
+        if case .queued = modelManager.vocoderState { return true }
+        if case .downloading = modelManager.vocoderState { return true }
+        if case .importing = modelManager.vocoderState { return true }
         if case .queued = modelManager.kwsState { return true }
         if case .downloading = modelManager.kwsState { return true }
         if case .importing = modelManager.kwsState { return true }
@@ -201,10 +209,17 @@ struct ModelSetupContent: View {
             }
 
             Section(header: Text("TTS 模型")) {
-                slotRow(label: "Kokoro", subtitle: "多语言语音合成 · int8 量化",
+                slotRow(label: "MatchaTTS", subtitle: "中文语音合成 · 冰花",
                         isReady: ttsOk, state: modelManager.ttsState,
                         onDownload: { modelManager.downloadTtsModel() },
                         onImport: { sheetTarget = .tts })
+            }
+
+            Section(header: Text("声码器")) {
+                slotRow(label: "Vocos", subtitle: "22kHz 通用声码器 · ~8MB",
+                        isReady: vocoderOk, state: modelManager.vocoderState,
+                        onDownload: { modelManager.downloadVocoderModel() },
+                        onImport: { sheetTarget = .vocoder })
             }
 
             Section(header: Text("语音唤醒 (可选)")) {
@@ -352,6 +367,16 @@ struct ModelSetupContent: View {
     @ViewBuilder
     private func makeFilePicker(for target: ModelSheetTarget) -> some View {
         switch target {
+        case .vocoder:
+            ModelFilePicker(
+                allowedContentTypes: [.data],
+                onPick: { url, cleanup in
+                    pickerLog.info("Vocoder import picked: \(url.lastPathComponent)")
+                    modelManager.importVocoderModel(from: url, cleanup: cleanup)
+                    sheetTarget = nil
+                },
+                onError: { errorMessage = $0 }
+            )
         case .asr, .tts:
             ModelFilePicker(
                 allowedContentTypes: [

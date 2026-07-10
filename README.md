@@ -103,26 +103,3 @@ ios/Avatar/
 
 如果你只想让她念文字（不上传 LLM），那她完全离线：模型在本地，ASR 在本地，TTS 在本地。
 
-
-
-kokoro 模型下载地址： https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-multi-lang-v1_1.tar.bz2
-
-int8 量化版：https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-int8-multi-lang-v1_1.tar.bz2
-
-
-
-- **SID 49**: `zm_yunjian`
-- **SID 50**: `zm_yunxi`
-- **SID 51**: `zm_yunxia`
-- **SID 52**: `zm_yunyang`
-
-This release contains pre-trained tts models.
-
-Please refer to
-https://k2-fsa.github.io/sherpa/onnx/tts/pretrained_models/index.html
-for more models.
-
-Also, please see https://k2-fsa.github.io/sherpa/onnx/tts/all/ for usages.
-
-Pre-built Android APKs are available at https://k2-fsa.github.io/sherpa/onnx/tts/apk.html
-

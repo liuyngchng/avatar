@@ -49,6 +49,7 @@ private actor OperationQueue {
 final class ModelManager: ObservableObject {
     @Published var asrState: ModelDownloadState = .idle
     @Published var ttsState: ModelDownloadState = .idle
+    @Published var vocoderState: ModelDownloadState = .idle
     @Published var kwsState: ModelDownloadState = .idle
 
     private let queue = OperationQueue()
@@ -62,20 +63,12 @@ final class ModelManager: ObservableObject {
     static let kwsModelDir = "kws"
 
     private static let asrRequired = ["model.int8.onnx", "tokens.txt"]
-    /// VITS: model.onnx + tokens.txt + lexicon.txt
-    /// Kokoro: model.onnx + tokens.txt + voices.bin
-    private static let ttsRequiredVits = ["model.onnx", "tokens.txt", "lexicon.txt"]
-    private static let ttsRequiredKokoro = ["model.onnx", "tokens.txt", "voices.bin"]
+    /// Matcha-TTS: acoustic model + vocoder + tokens + lexicon
+    private static let ttsRequired = ["model.onnx", "vocos.onnx", "tokens.txt", "lexicon.txt"]
     private static let kwsRequired = ["encoder.onnx", "decoder.onnx", "joiner.onnx", "tokens.txt"]
 
-    /// TTS model archives (VITS, Kokoro) may use varying file names.
-    /// Scan the directory and rename to the canonical names expected by
-    /// SherpaTtsEngine.
-    ///
-    /// Kokoro (preferred) — model.int8.onnx → model.onnx (int8 for mobile),
-    ///   lexicon-zh.txt → lexicon.txt.
-    /// VITS (fallback) — *vits*.onnx or *model*.onnx → model.onnx,
-    ///   *token*/*vocab* → tokens.txt, *lexicon*/*lex* → lexicon.txt.
+    /// Rename extracted TTS model files to canonical names expected by
+    /// SherpaTtsEngine: model.onnx, tokens.txt, lexicon.txt.
     nonisolated static func applyTtsRenames() {
         let dir = ttsModelDirURL()
         let fm = FileManager.default
@@ -84,16 +77,14 @@ final class ModelManager: ObservableObject {
             return
         }
 
-        // ── model.onnx ──
+        // ── model.onnx (acoustic model) ──
         if !fm.fileExists(atPath: dir.appendingPathComponent("model.onnx").path) {
             let onnxFiles = contents.filter { $0.pathExtension.lowercased() == "onnx" }
-            // Prefer int8 quantized version (smaller, mobile-friendly)
-            let int8 = onnxFiles.first { $0.lastPathComponent.lowercased().contains("int8") }
-            // Then prefer VITS or model-named files
-            let preferred = int8 ?? onnxFiles.first { name in
+            // Prefer model-named files, skip vocos.onnx (the vocoder)
+            let preferred = onnxFiles.first { name in
                 let n = name.lastPathComponent.lowercased()
-                return n.contains("vits") || n.contains("model") || n.contains("generator")
-            } ?? onnxFiles.first
+                return n.contains("model") || n.contains("generator")
+            } ?? onnxFiles.first { !$0.lastPathComponent.lowercased().contains("vocos") }
             if let src = preferred {
                 let dst = dir.appendingPathComponent("model.onnx")
                 try? fm.removeItem(at: dst)
@@ -118,26 +109,15 @@ final class ModelManager: ObservableObject {
         }
 
         // ── lexicon.txt ──
-        // Re-read directory in case earlier renames changed things
-        let refreshed = (try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? contents
-        let txtFiles = refreshed.filter { $0.pathExtension.lowercased() == "txt" }
-        // Prefer Chinese lexicon, then any lexicon
-        let preferredLex = txtFiles.first { name in
-            let n = name.lastPathComponent.lowercased()
-            return n.contains("lexicon-zh") || n.contains("lex_zh")
-        } ?? txtFiles.first { name in
-            let n = name.lastPathComponent.lowercased()
-            return n.contains("lexicon") || n.contains("lex")
-        } ?? txtFiles.first
-
-        // If a Kokoro model is present (voices.bin exists), always prefer
-        // the Kokoro lexicon over a stale VITS lexicon.txt.
-        let hasVoices = fm.fileExists(atPath: dir.appendingPathComponent("voices.bin").path)
-        let lexiconExists = fm.fileExists(atPath: dir.appendingPathComponent("lexicon.txt").path)
-
-        if let src = preferredLex, (!lexiconExists || hasVoices) {
-            let dst = dir.appendingPathComponent("lexicon.txt")
-            if src.lastPathComponent != "lexicon.txt" {
+        if !fm.fileExists(atPath: dir.appendingPathComponent("lexicon.txt").path) {
+            let refreshed = (try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? contents
+            let txtFiles = refreshed.filter { $0.pathExtension.lowercased() == "txt" }
+            let preferredLex = txtFiles.first { name in
+                let n = name.lastPathComponent.lowercased()
+                return n.contains("lexicon") || n.contains("lex")
+            } ?? txtFiles.first
+            if let src = preferredLex {
+                let dst = dir.appendingPathComponent("lexicon.txt")
                 try? fm.removeItem(at: dst)
                 try? fm.moveItem(at: src, to: dst)
                 modelLog.info("TTS rename: \(src.lastPathComponent) -> lexicon.txt")
@@ -205,7 +185,10 @@ final class ModelManager: ObservableObject {
         string: "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09.tar.bz2"
     )!
     private static let ttsDownloadURL = URL(
-        string: "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-int8-multi-lang-v1_1.tar.bz2"
+        string: "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/matcha-icefall-zh-baker.tar.bz2"
+    )!
+    private static let vocoderDownloadURL = URL(
+        string: "https://github.com/k2-fsa/sherpa-onnx/releases/download/vocoder-models/vocos-22khz-univ.onnx"
     )!
     private static let kwsDownloadURL = URL(
         string: "https://github.com/k2-fsa/sherpa-onnx/releases/download/kws-models/sherpa-onnx-kws-zipformer-wenetspeech-3.3M-2024-01-01.tar.bz2"
@@ -243,21 +226,15 @@ final class ModelManager: ObservableObject {
     }
     nonisolated static func checkTtsReady() -> Bool {
         let dir = ttsModelDirURL()
-        let fm = FileManager.default
-        // Auto-detect model type: Kokoro has voices.bin, VITS does not
-        if fm.fileExists(atPath: dir.appendingPathComponent("voices.bin").path) {
-            return ttsRequiredKokoro.allSatisfy { fm.fileExists(atPath: dir.appendingPathComponent($0).path) }
-        }
-        return ttsRequiredVits.allSatisfy { fm.fileExists(atPath: dir.appendingPathComponent($0).path) }
+        return ttsRequired.allSatisfy { FileManager.default.fileExists(atPath: dir.appendingPathComponent($0).path) }
     }
     nonisolated static func checkTtsExtracted() -> Bool {
-        // Check that at least tokens + (lexicon or voices) exist after extraction
+        // Check that at least tokens + lexicon exist after extraction
         let dir = ttsModelDirURL()
         let fm = FileManager.default
         let hasTokens = fm.fileExists(atPath: dir.appendingPathComponent("tokens.txt").path)
         let hasLexicon = fm.fileExists(atPath: dir.appendingPathComponent("lexicon.txt").path)
-        let hasVoices = fm.fileExists(atPath: dir.appendingPathComponent("voices.bin").path)
-        return hasTokens && (hasLexicon || hasVoices)
+        return hasTokens && hasLexicon
     }
     nonisolated static func checkKwsReady() -> Bool {
         let dir = kwsModelDirURL()
@@ -275,6 +252,7 @@ final class ModelManager: ObservableObject {
         // Reset queued/processing states
         if case .queued = asrState { asrState = .idle }
         if case .queued = ttsState { ttsState = .idle }
+        if case .queued = vocoderState { vocoderState = .idle }
         if case .queued = kwsState { kwsState = .idle }
     }
 
@@ -309,6 +287,27 @@ final class ModelManager: ObservableObject {
         Task {
             await queue.enqueue { [weak self] in
                 await self?._downloadKwsModel()
+            }
+        }
+    }
+
+    func downloadVocoderModel() {
+        guard vocoderState != .completed(Date()) else { return }
+        modelLog.info("downloadVocoderModel enqueued")
+        vocoderState = .queued
+        Task {
+            await queue.enqueue { [weak self] in
+                await self?._downloadVocoderModel()
+            }
+        }
+    }
+
+    func importVocoderModel(from sourceURL: URL, cleanup: (() -> Void)? = nil) {
+        modelLog.info("importVocoderModel enqueued: \(sourceURL.lastPathComponent)")
+        vocoderState = .queued
+        Task {
+            await queue.enqueue { [weak self] in
+                await self?._importVocoderModel(from: sourceURL, cleanup: cleanup)
             }
         }
     }
@@ -365,9 +364,71 @@ final class ModelManager: ObservableObject {
             statePath: \.ttsState,
             checkReady: {
                 Self.applyTtsRenames()
-                return Self.checkTtsReady()
+                return Self.checkTtsExtracted()
             }
         )
+    }
+
+    private func _downloadVocoderModel() async {
+        modelLog.info("Starting vocoder download")
+        vocoderState = .downloading(progress: 0)
+
+        let downloadURL = Self.vocoderDownloadURL
+
+        let fm = FileManager.default
+        let destDir = Self.ttsModelDirURL()
+        try? fm.createDirectory(at: destDir, withIntermediateDirectories: true)
+        let destFile = destDir.appendingPathComponent("vocos.onnx")
+
+        let tempDir = fm.temporaryDirectory.appendingPathComponent("vocoder-download-\(UUID().uuidString)")
+        try? fm.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: tempDir) }
+
+        let tempFile = tempDir.appendingPathComponent("vocos.onnx")
+
+        do {
+            try await _downloadFile(from: downloadURL, to: tempFile) { [weak self] p in
+                self?.vocoderState = .downloading(progress: p)
+            }
+        } catch {
+            if error is CancellationError {
+                vocoderState = .idle; return
+            }
+            modelLog.error("Vocoder download failed: \(error.localizedDescription)")
+            vocoderState = .failed("声码器下载失败: \(error.localizedDescription)")
+            return
+        }
+
+        try? fm.removeItem(at: destFile)
+        do {
+            try fm.copyItem(at: tempFile, to: destFile)
+            vocoderState = .completed(Date())
+            modelLog.info("Vocoder download completed, copied to \(destFile.path)")
+        } catch {
+            vocoderState = .failed("声码器拷贝失败: \(error.localizedDescription)")
+        }
+    }
+
+    private func _importVocoderModel(from sourceURL: URL, cleanup: (() -> Void)?) async {
+        vocoderState = .importing(progress: 0)
+        modelLog.info("[IMPORT-VOCODER] start, source=\(sourceURL.lastPathComponent)")
+
+        let fm = FileManager.default
+        let destDir = Self.ttsModelDirURL()
+        try? fm.createDirectory(at: destDir, withIntermediateDirectories: true)
+        let destFile = destDir.appendingPathComponent("vocos.onnx")
+
+        defer { cleanup?() }
+
+        do {
+            let data = try Data(contentsOf: sourceURL, options: [])
+            try? fm.removeItem(at: destFile)
+            try data.write(to: destFile)
+            vocoderState = .completed(Date())
+            modelLog.info("[IMPORT-VOCODER] completed, \(data.count) bytes -> \(destFile.path)")
+        } catch {
+            vocoderState = .failed("声码器导入失败: \(error.localizedDescription)")
+        }
     }
 
     private func _downloadKwsModel() async {
@@ -394,7 +455,7 @@ final class ModelManager: ObservableObject {
         await _importArchive(from: sourceURL, destDir: Self.ttsModelDir, statePath: \.ttsState,
                             checkReady: {
                                 Self.applyTtsRenames()
-                                return Self.checkTtsReady()
+                                return Self.checkTtsExtracted()
                             }, cleanup: cleanup)
     }
 
