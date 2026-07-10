@@ -255,17 +255,63 @@ fun RobotFaceScreen(
             val leftHip  = Offset(hip.x - hipHalfW, hip.y)
             val rightHip = Offset(hip.x + hipHalfW, hip.y)
 
-            // Arms
-            val leftElbow = leftShoulder + angleToOffset(pose.leftUpperArmAngle, upperArmLen)
-            val leftHand  = leftElbow + angleToOffset(pose.leftForearmAngle, forearmLen)
-            val rightElbow = rightShoulder + angleToOffset(pose.rightUpperArmAngle, upperArmLen)
-            val rightHand  = rightElbow + angleToOffset(pose.rightForearmAngle, forearmLen)
+            // ── Start with FK angles from pose ──
+            var laUA = pose.leftUpperArmAngle
+            var laFA = pose.leftForearmAngle
+            var raUA = pose.rightUpperArmAngle
+            var raFA = pose.rightForearmAngle
+            var llUA = pose.leftUpperLegAngle
+            var llLA = pose.leftLowerLegAngle
+            var rlUA = pose.rightUpperLegAngle
+            var rlLA = pose.rightLowerLegAngle
 
-            // Legs
-            val leftKnee = leftHip + angleToOffset(pose.leftUpperLegAngle, upperLegLen)
-            val leftFoot = leftKnee + angleToOffset(pose.leftLowerLegAngle, lowerLegLen)
-            val rightKnee = rightHip + angleToOffset(pose.rightUpperLegAngle, upperLegLen)
-            val rightFoot = rightKnee + angleToOffset(pose.rightLowerLegAngle, lowerLegLen)
+            // ── IK overrides: precise hand/foot placement per mode ──
+            val headForIK = headCenter + Offset(pose.headShiftX, pose.headShiftY)
+
+            when (state.mode) {
+                RobotMode.THINKING -> {
+                    // Right hand IK → chin
+                    val chin = Offset(headForIK.x + headR * 0.15f + thinkPhase.value * 4f,
+                                      headForIK.y + headR * 0.6f)
+                    solve2BoneIK(rightShoulder, upperArmLen, forearmLen, chin, bendCCW = false)?.let {
+                        raUA = it.angle1; raFA = it.angle2
+                    }
+                }
+                RobotMode.LISTENING -> {
+                    // Left hand IK → near "ear"
+                    val ear = Offset(headForIK.x - headR * 0.85f,
+                                     headForIK.y - headR * 0.25f + listenPulse.value * 4f)
+                    solve2BoneIK(leftShoulder, upperArmLen, forearmLen, ear, bendCCW = true)?.let {
+                        laUA = it.angle1; laFA = it.angle2
+                    }
+                }
+                else -> { /* FK only */ }
+            }
+
+            // ── IK for squatting: feet exact on ground ──
+            val isSquatting = state.mode == RobotMode.IDLE &&
+                state.anticTrigger > 0 && state.anticTrigger % 7L == 3L
+            if (isSquatting) {
+                val groundY = feetY + 6f
+                solve2BoneIK(leftHip, upperLegLen, lowerLegLen,
+                    Offset(leftHip.x - 12f, groundY), bendCCW = true)?.let {
+                    llUA = it.angle1; llLA = it.angle2
+                }
+                solve2BoneIK(rightHip, upperLegLen, lowerLegLen,
+                    Offset(rightHip.x + 12f, groundY), bendCCW = false)?.let {
+                    rlUA = it.angle1; rlLA = it.angle2
+                }
+            }
+
+            // ── Final limb positions (FK with possibly-IK-overridden angles) ──
+            val leftElbow  = leftShoulder + angleToOffset(laUA, upperArmLen)
+            val leftHand   = leftElbow   + angleToOffset(laFA, forearmLen)
+            val rightElbow = rightShoulder + angleToOffset(raUA, upperArmLen)
+            val rightHand  = rightElbow  + angleToOffset(raFA, forearmLen)
+            val leftKnee   = leftHip     + angleToOffset(llUA, upperLegLen)
+            val leftFoot   = leftKnee    + angleToOffset(llLA, lowerLegLen)
+            val rightKnee  = rightHip    + angleToOffset(rlUA, upperLegLen)
+            val rightFoot  = rightKnee   + angleToOffset(rlLA, lowerLegLen)
 
             // ── Eye tracking (idle wander only) ──
             val isThinking = state.mode == RobotMode.THINKING
@@ -437,6 +483,65 @@ private data class StickPose(
     val rightUpperLegAngle: Float,
     val rightLowerLegAngle: Float,
 )
+
+// ═══════════════════════════════════════════════════════════════
+//  2-BONE IK SOLVER
+// ═══════════════════════════════════════════════════════════════
+
+/** Result of a 2-bone IK solve */
+private data class IkResult(
+    val angle1: Float,  // upper segment angle (rad, 0=straight-down, +=CW)
+    val angle2: Float   // lower segment angle
+)
+
+/**
+ * 2-Bone Inverse Kinematics.
+ *
+ * Given root, L1, L2, and a target, returns joint angles that place
+ * the end-effector exactly at the target.
+ *
+ * @param root   shoulder or hip position (screen pixels)
+ * @param len1   upper segment length (upper arm / thigh)
+ * @param len2   lower segment length (forearm / calf)
+ * @param target desired end-effector position (hand / foot)
+ * @param bendCCW true = elbow/knee bends CCW (left leg, left arm),
+ *                false = bends CW (right side)
+ * @return (upperAngle, lowerAngle) in pose-system convention, or null
+ */
+private fun solve2BoneIK(
+    root: Offset, len1: Float, len2: Float,
+    target: Offset, bendCCW: Boolean
+): IkResult? {
+    val dx = target.x - root.x
+    val dy = target.y - root.y
+    val dist = sqrt(dx * dx + dy * dy)
+
+    // Unreachable
+    val minReach = abs(len1 - len2) + 1f
+    val maxReach = len1 + len2
+    if (dist < minReach || dist > maxReach * 1.01f) return null
+    val d = dist.coerceIn(minReach, maxReach)
+
+    // ── Shoulder/hip angle ──
+    // targetAngle: direction from root to target (0=down, +=CW)
+    val targetAngle = atan2(dx, dy)
+
+    // compensation: angle between L1 and root→target line
+    val cosComp = ((len1 * len1 + d * d - len2 * len2) / (2f * len1 * d))
+        .coerceIn(-1f, 1f)
+    val compensation = acos(cosComp)
+
+    // Choose bend direction
+    val sign = if (bendCCW) -1f else 1f
+    val angle1 = targetAngle - sign * compensation
+
+    // ── Forearm/calf angle: point elbow→target ──
+    val elbowX = root.x + len1 * sin(angle1)
+    val elbowY = root.y + len1 * cos(angle1)
+    val angle2 = atan2(target.x - elbowX, target.y - elbowY)
+
+    return IkResult(angle1, angle2)
+}
 
 /** IDLE: relaxed standing with visible elbow/knee bends */
 private fun idlePose(): StickPose = StickPose(
