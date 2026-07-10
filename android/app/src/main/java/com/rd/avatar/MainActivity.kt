@@ -4,7 +4,6 @@ import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
-import android.os.PowerManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -12,7 +11,6 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.*
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.rd.avatar.camera.FaceDetector
 import com.rd.avatar.robot.BehaviorEngine
 import com.rd.avatar.robot.Emotion
 import com.rd.avatar.robot.RobotMode
@@ -49,7 +47,6 @@ private sealed class Screen {
 
 class MainActivity : ComponentActivity() {
 
-    private lateinit var faceDetector: FaceDetector
     private val behaviorEngine = BehaviorEngine()
 
     // Sherpa-onnx engines (offline)
@@ -66,9 +63,9 @@ class MainActivity : ComponentActivity() {
 
     // VAD (Voice Activity Detection) constants
     companion object {
-        private const val VAD_SILENCE_THRESHOLD = 0.012f  // RMS below this = silence
-        private const val VAD_MAX_SILENT_CHUNKS = 25       // ~2 seconds at 80ms/chunk
-        private const val MAX_RECORD_SECONDS = 10f         // force-stop if no silence
+        private const val VAD_SILENCE_THRESHOLD = 0.012f
+        private const val VAD_MAX_SILENT_CHUNKS = 25
+        private const val MAX_RECORD_SECONDS = 10f
     }
 
     // LLM integration
@@ -83,11 +80,8 @@ class MainActivity : ComponentActivity() {
         llmConfigured = configRepository.hasConfig
         Log.i("MainActivity", "LLM configured: $llmConfigured")
 
-        faceDetector = FaceDetector(this)
-
         setContent {
             var robotState by remember { mutableStateOf(RobotState()) }
-            var hasCameraPermission by remember { mutableStateOf(checkCameraPermission()) }
             var hasAudioPermission by remember { mutableStateOf(checkAudioPermission()) }
 
             // Settings navigation
@@ -113,48 +107,12 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
-            // Permission launchers
-            val cameraPermissionLauncher = rememberLauncherForActivityResult(
-                ActivityResultContracts.RequestPermission()
-            ) { granted -> hasCameraPermission = granted }
-
+            // Audio permission launcher
             val audioPermissionLauncher = rememberLauncherForActivityResult(
                 ActivityResultContracts.RequestPermission()
             ) { granted -> hasAudioPermission = granted }
 
-            // Camera: only active on RobotFace screen. Stop when navigating away
-            // to release camera sensor + GPU resources.
-            LaunchedEffect(hasCameraPermission, currentScreen) {
-                if (hasCameraPermission && currentScreen is Screen.RobotFace) {
-                    faceDetector.start(this@MainActivity)
-                } else {
-                    faceDetector.stop()
-                }
-            }
-
-            // Collect face detection results (conflated to reduce recomposition pressure)
-            LaunchedEffect(Unit) {
-                faceDetector.faces.collect { result ->
-                    // Skip redundant updates: only update state if face presence changed
-                    // or coordinates shifted meaningfully (>1% of screen)
-                    val prevHasFace = robotState.faceTargetX != null
-                    val hasFace = result != null
-                    if (!prevHasFace && !hasFace) {
-                        robotState = robotState.copy(
-                            msSinceLastFace = robotState.msSinceLastFace + 200
-                        )
-                        return@collect
-                    }
-                    robotState = robotState.copy(
-                        faceTargetX = result?.cx,
-                        faceTargetY = result?.cy,
-                        msSinceLastFace = if (hasFace) 0L
-                            else robotState.msSinceLastFace + 200
-                    )
-                }
-            }
-
-            // Blink timer
+            // ── Blink timer ──
             LaunchedEffect(Unit) {
                 while (isActive) {
                     delay(Random.nextLong(2000, 5000))
@@ -164,40 +122,54 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
-            // Request permissions on first launch
+            // ── Random antic timer (goofy idle animations) ──
             LaunchedEffect(Unit) {
-                if (!hasCameraPermission) {
-                    cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
-                }
-                if (!hasAudioPermission) {
-                    audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                while (isActive) {
+                    delay(Random.nextLong(6000, 15000))
+                    if (robotState.mode == RobotMode.IDLE) {
+                        robotState = robotState.copy(
+                            anticTrigger = robotState.anticTrigger + 1,
+                            emotion = Emotion.GOOFY
+                        )
+                        // Revert emotion after a moment
+                        delay(3000)
+                        if (robotState.mode == RobotMode.IDLE &&
+                            robotState.emotion == Emotion.GOOFY) {
+                            robotState = robotState.copy(emotion = Emotion.NEUTRAL)
+                        }
+                    }
                 }
             }
 
-            // Mode transitions based on face presence
-            LaunchedEffect(robotState.faceTargetX, robotState.mode) {
-                val hasFace = robotState.faceTargetX != null
-                val idleTooLong = robotState.msSinceLastFace > 10_000L
-
-                when {
-                    hasFace && robotState.mode == RobotMode.IDLE -> {
-                        val greeting = behaviorEngine.onFaceAppear()
-                        robotState = robotState.copy(
-                            mode = RobotMode.WATCHING,
-                            responseText = greeting,
-                            emotion = Emotion.HAPPY
-                        )
-                        delay(800)
-                        speak(greeting)
+            // ── Random goofy remarks during idle ──
+            LaunchedEffect(robotState.mode) {
+                if (robotState.mode == RobotMode.IDLE) {
+                    delay(Random.nextLong(15000, 30000))
+                    if (robotState.mode == RobotMode.IDLE &&
+                        robotState.anticTrigger > 0 &&
+                        robotState.anticTrigger % 3 == 0L) {
+                        val remark = behaviorEngine.randomAntic()
+                        if (remark != null) {
+                            robotState = robotState.copy(
+                                mode = RobotMode.SPEAKING,
+                                responseText = remark,
+                                isSpeaking = true
+                            )
+                            speak(remark) {
+                                robotState = robotState.copy(
+                                    mode = RobotMode.IDLE,
+                                    isSpeaking = false
+                                )
+                            }
+                        }
                     }
+                }
+            }
 
-                    !hasFace && idleTooLong && robotState.mode != RobotMode.IDLE
-                        && robotState.mode != RobotMode.LISTENING
-                        && robotState.mode != RobotMode.SPEAKING -> {
-                        val remark = behaviorEngine.onFaceDisappear()
-                        robotState = robotState.copy(mode = RobotMode.IDLE)
-                        if (remark != null) speak(remark)
-                    }
+            // Request audio permission on first launch
+            LaunchedEffect(Unit) {
+                if (!hasAudioPermission) {
+                    audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
                 }
             }
 
@@ -211,19 +183,13 @@ class MainActivity : ComponentActivity() {
                                 audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
                                 return@RobotFaceScreen
                             }
-                            // Guard: ASR must be ready before entering LISTENING mode.
-                            // Without this check, the mode would be set to LISTENING
-                            // but recording never starts, leaving the UI stuck forever.
                             if (!asrReady) {
                                 return@RobotFaceScreen
                             }
-                            // If wake word detection is running, stop it to release
-                            // the microphone before starting recording. Same pattern
-                            // as the wake-word-triggered flow (VoiceService.stopEngine).
                             if (wakeWordEnabled) {
                                 stopWakeWordService()
                             }
-                            // Shared result handler (VAD auto-stop or manual tap-to-stop)
+                            // Shared result handler
                             val onSpeechResult: (String?) -> Unit = { text ->
                                 if (text != null && text.isNotBlank()) {
                                     robotState = robotState.copy(
@@ -233,6 +199,20 @@ class MainActivity : ComponentActivity() {
                                         isSpeaking = false
                                     )
                                     scope.launch {
+                                        // Check if user is asking to look at something
+                                        val wantsCamera = text.contains("看") &&
+                                            (text.contains("外面") || text.contains("什么") ||
+                                             text.contains("哪里") || text.contains("前面"))
+
+                                        if (wantsCamera) {
+                                            // Switch to LOOKING mode briefly
+                                            robotState = robotState.copy(
+                                                mode = RobotMode.LOOKING,
+                                                emotion = Emotion.CURIOUS
+                                            )
+                                            delay(1500) // brief "looking" pose
+                                        }
+
                                         val (response, emotion) = if (configRepository.hasConfig) {
                                             chatSession.send(text).fold(
                                                 onSuccess = { it to Emotion.HAPPY },
@@ -252,17 +232,13 @@ class MainActivity : ComponentActivity() {
                                         )
                                         speak(response) {
                                             robotState = robotState.copy(
-                                                mode = if (robotState.faceTargetX != null)
-                                                    RobotMode.WATCHING else RobotMode.IDLE,
+                                                mode = RobotMode.IDLE,
                                                 isSpeaking = false
                                             )
                                         }
                                     }
                                 } else {
-                                    robotState = robotState.copy(
-                                        mode = if (robotState.faceTargetX != null)
-                                            RobotMode.WATCHING else RobotMode.IDLE
-                                    )
+                                    robotState = robotState.copy(mode = RobotMode.IDLE)
                                     speak("没听清，请再说一遍")
                                 }
                             }
@@ -325,7 +301,6 @@ class MainActivity : ComponentActivity() {
                     TextReaderScreen(
                         onBack = { currentScreen = Screen.SettingsHub },
                         onRead = { text ->
-                            // Speak the text using TTS
                             robotState = robotState.copy(
                                 mode = RobotMode.SPEAKING,
                                 responseText = text,
@@ -333,8 +308,7 @@ class MainActivity : ComponentActivity() {
                             )
                             speak(text) {
                                 robotState = robotState.copy(
-                                    mode = if (robotState.faceTargetX != null)
-                                        RobotMode.WATCHING else RobotMode.IDLE,
+                                    mode = RobotMode.IDLE,
                                     isSpeaking = false
                                 )
                             }
@@ -372,7 +346,6 @@ class MainActivity : ComponentActivity() {
 
         recordingJob = CoroutineScope(Dispatchers.IO).launch {
             try {
-                // Max duration timeout: force-stop after MAX_RECORD_SECONDS
                 val timeoutJob = launch {
                     delay((MAX_RECORD_SECONDS * 1000).toLong())
                     if (isRecording) {
@@ -383,7 +356,6 @@ class MainActivity : ComponentActivity() {
                 audioRecorder.startRecording().collect { samples ->
                     asrEngine.acceptWaveform(samples)
 
-                    // VAD: RMS energy-based silence detection
                     var sumSq = 0f
                     for (s in samples) sumSq += s * s
                     val rms = kotlin.math.sqrt(sumSq / samples.size)
@@ -393,7 +365,7 @@ class MainActivity : ComponentActivity() {
                         if (silentChunks >= VAD_MAX_SILENT_CHUNKS) {
                             timeoutJob.cancel()
                             audioRecorder.stopRecording()
-                            return@collect // flow completes → finally decodes
+                            return@collect
                         }
                     } else {
                         silentChunks = maxOf(0, silentChunks - 1)
@@ -401,7 +373,6 @@ class MainActivity : ComponentActivity() {
                 }
                 timeoutJob.cancel()
             } finally {
-                // Decode ASR result after recording stops (VAD or manual)
                 if (isRecording) {
                     isRecording = false
                     val text = try { asrEngine.inputFinished() } catch (_: Exception) { null }
@@ -430,8 +401,6 @@ class MainActivity : ComponentActivity() {
                 if (normalized.isBlank()) continue
                 val audio = ttsEngine.synthesize(normalized)
                 if (audio != null) {
-                    // play() internally: write → wait → stop() → flush() → release()
-                    // flush() clears residual audio so next sentence starts clean.
                     audioPlayer.play(audio, sr)
                 }
             }
@@ -440,10 +409,6 @@ class MainActivity : ComponentActivity() {
     }
 
     // ── Permission helpers ────────────────────────────────────────────
-
-    private fun checkCameraPermission(): Boolean =
-        ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) ==
-            PackageManager.PERMISSION_GRANTED
 
     private fun checkAudioPermission(): Boolean =
         ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) ==

@@ -1,28 +1,18 @@
 package com.rd.avatar.camera
 
-import androidx.camera.core.CameraSelector
-import androidx.camera.core.ImageAnalysis
-import androidx.camera.core.ImageProxy
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.util.Log
+import androidx.camera.core.*
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
-import com.google.mlkit.vision.common.InputImage
-import com.google.mlkit.vision.face.Face
-import com.google.mlkit.vision.face.FaceDetection
-import com.google.mlkit.vision.face.FaceDetectorOptions
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
+import java.io.ByteArrayOutputStream
+import java.nio.ByteBuffer
 import java.util.concurrent.Executors
 
 /**
  * Result of face detection — normalized to screen-independent coordinates.
- *
- * @param cx face center X, normalized 0..1 (0=left, 1=right)
- * @param cy face center Y, normalized 0..1 (0=top, 1=bottom)
- * @param faceWidth relative face width (fraction of image width)
- * @param smileProbability 0..1 if smile detected, null otherwise
- * @param leftEyeOpenProbability 0..1, null if undetermined
  */
 data class FaceDetectionResult(
     val cx: Float,
@@ -33,156 +23,123 @@ data class FaceDetectionResult(
 )
 
 /**
- * Wraps CameraX + ML Kit face detection.
+ * Camera manager — rear camera by default, supports photo capture + optional face detection.
  *
  * Usage:
- *   val detector = FaceDetector(context)
- *   detector.start(lifecycleOwner)
- *   detector.faces.collect { result -> /* update robot eyes */ }
+ *   val camera = CameraManager(context)
+ *   camera.startPreview(lifecycleOwner)      // show rear camera preview
+ *   camera.capturePhoto { bitmap -> ... }    // take a photo on demand
+ *   camera.stop()
  */
-@Suppress("UnsafeOptInUsageError")
 class FaceDetector(private val appContext: android.content.Context) {
 
-    /** Emits the most recent detection result, or null when no face is visible. */
-    private val _faces = MutableStateFlow<FaceDetectionResult?>(null)
-    val faces: StateFlow<FaceDetectionResult?> = _faces.asStateFlow()
-
-    private val analysisExecutor = Executors.newSingleThreadExecutor()
-
-    /** Frame skip: only run ML Kit every N camera frames to reduce CPU/GPU load.
-     *  At ~30 fps camera, every 4th frame ≈ 7.5 Hz — plenty for smooth face tracking.
-     *  Same optimization applied to iOS FaceDetector. */
-    private val visionFrameInterval = 4
-    private var frameCounter = 0
-
-    /** Adaptive detection: when no face is detected for 5 seconds, increase the
-     *  frame skip to 20 (≈1.5 Hz detection) to save CPU/GPU. Restore to 4 when
-     *  a face reappears. */
-    private var lastFaceTime = 0L
-    private var lowFreqMode = false
-    private val lowFreqThresholdMs = 5000L
-    private val lowFreqFrameInterval = 20
-
-    private val faceDetector by lazy {
-        val options = FaceDetectorOptions.Builder()
-            .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_FAST)
-            .setLandmarkMode(FaceDetectorOptions.LANDMARK_MODE_NONE)
-            .setClassificationMode(FaceDetectorOptions.CLASSIFICATION_MODE_NONE)
-            .setMinFaceSize(0.15f) // relative to image; ~15% minimum
-            .build()
-        FaceDetection.getClient(options)
+    companion object {
+        private const val TAG = "CameraManager"
     }
 
+    private val cameraExecutor = Executors.newSingleThreadExecutor()
     private var cameraProvider: ProcessCameraProvider? = null
+    private var imageCapture: ImageCapture? = null
+    private var preview: Preview? = null
+    private var analysis: ImageAnalysis? = null
+
+    // Photo capture callback
+    private var onPhotoCaptured: ((Bitmap) -> Unit)? = null
 
     /**
-     * Bind camera + analyzer to the given lifecycle.
+     * Start rear camera preview (no face tracking).
+     * Call when entering LOOKING mode.
      */
-    fun start(owner: LifecycleOwner) {
+    fun startPreview(owner: LifecycleOwner) {
         val cameraProviderFuture = ProcessCameraProvider.getInstance(appContext)
 
         cameraProviderFuture.addListener({
             val provider = cameraProviderFuture.get()
-            cameraProvider = provider  // save reference so we can unbind later
+            cameraProvider = provider
 
-            // Front camera (selfie) — use DEFAULT_FRONT_CAMERA for clarity
-            val cameraSelector = CameraSelector.DEFAULT_FRONT_CAMERA
+            // ── Rear camera ──
+            val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
 
-            // Image analysis: every frame gets passed to ML Kit
-            val analysis = ImageAnalysis.Builder()
-                .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+            // ── Preview ──
+            preview = Preview.Builder().build()
+
+            // ── Image capture (for on-demand photos) ──
+            imageCapture = ImageCapture.Builder()
+                .setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
                 .setTargetRotation(android.view.Surface.ROTATION_0)
                 .build()
-                .also { it.setAnalyzer(analysisExecutor, ::analyzeFrame) }
 
             // Unbind any existing use cases, then bind
             provider.unbindAll()
             provider.bindToLifecycle(
                 owner,
                 cameraSelector,
-                analysis
+                preview,
+                imageCapture
             )
+
+            Log.i(TAG, "Rear camera preview started")
         }, ContextCompat.getMainExecutor(appContext))
     }
 
-    /** Stop the camera. Call when navigating away to release camera + GPU resources. */
-    fun stop() {
-        cameraProvider?.unbindAll()
-        cameraProvider = null
-        _faces.value = null
-    }
-
-    private fun analyzeFrame(imageProxy: ImageProxy) {
-        // Throttle: only run ML Kit detection every N frames.
-        // In low-frequency mode (no face for 5+ seconds), skip more frames.
-        frameCounter++
-        val interval = if (lowFreqMode) lowFreqFrameInterval else visionFrameInterval
-        if (frameCounter % interval != 0) {
-            imageProxy.close()
+    /**
+     * Capture a single photo from the rear camera.
+     *
+     * @param onBitmap callback with the captured bitmap (JPEG → Bitmap)
+     */
+    fun capturePhoto(onBitmap: (Bitmap) -> Unit) {
+        val capture = imageCapture ?: run {
+            Log.w(TAG, "ImageCapture not initialized — call startPreview() first")
             return
         }
 
-        val mediaImage = imageProxy.image ?: run {
-            imageProxy.close()
-            return
-        }
+        onPhotoCaptured = onBitmap
 
-        val inputImage = InputImage.fromMediaImage(mediaImage, imageProxy.imageInfo.rotationDegrees)
+        capture.takePicture(
+            cameraExecutor,
+            object : ImageCapture.OnImageCapturedCallback() {
+                override fun onCaptureSuccess(imageProxy: ImageProxy) {
+                    val bitmap = imageProxyToBitmap(imageProxy)
+                    imageProxy.close()
+                    onPhotoCaptured?.invoke(bitmap)
+                    onPhotoCaptured = null
+                    Log.i(TAG, "Photo captured: ${bitmap.width}x${bitmap.height}")
+                }
 
-        faceDetector.process(inputImage)
-            .addOnSuccessListener { faces ->
-                if (faces.isNotEmpty()) {
-                    lastFaceTime = System.currentTimeMillis()
-                    if (lowFreqMode) {
-                        lowFreqMode = false
-                    }
-                    val face = faces.first()
-                    val result = toDetectionResult(face, imageProxy.width, imageProxy.height)
-                    _faces.value = result
-                } else {
-                    // Adaptive: if no face for too long, reduce detection frequency
-                    if (!lowFreqMode &&
-                        System.currentTimeMillis() - lastFaceTime > lowFreqThresholdMs) {
-                        lowFreqMode = true
-                    }
-                    _faces.value = null
+                override fun onError(exception: ImageCaptureException) {
+                    Log.e(TAG, "Photo capture failed", exception)
+                    onPhotoCaptured = null
                 }
             }
-            .addOnFailureListener {
-                _faces.value = null
-            }
-            .addOnCompleteListener {
-                imageProxy.close()
-            }
+        )
     }
 
     /**
-     * Convert ML Kit [Face] + image dimensions → normalized [FaceDetectionResult].
-     *
-     * Front camera images are displayed mirrored (the user expects it).
-     * ML Kit returns coordinates in the original (un-mirrored) image space,
-     * so we mirror the X coordinate to match what the user sees on screen.
+     * Convert JPEG ImageProxy → Bitmap.
      */
-    private fun toDetectionResult(face: Face, imageW: Int, imageH: Int): FaceDetectionResult {
-        val box = face.boundingBox
+    private fun imageProxyToBitmap(imageProxy: ImageProxy): Bitmap {
+        val buffer: ByteBuffer = imageProxy.planes[0].buffer
+        val bytes = ByteArray(buffer.remaining())
+        buffer.get(bytes)
+        return BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+    }
 
-        // Center in image coordinates, then normalize.
-        // Flip X for front camera mirroring.
-        val rawCx = box.centerX().toFloat() / imageW
-        val mirroredCx = 1f - rawCx
-        val cy = box.centerY().toFloat() / imageH
+    /**
+     * Convert Bitmap → JPEG byte array (for sending to vision API).
+     */
+    fun bitmapToJpeg(bitmap: Bitmap, quality: Int = 85): ByteArray {
+        val stream = ByteArrayOutputStream()
+        bitmap.compress(Bitmap.CompressFormat.JPEG, quality, stream)
+        return stream.toByteArray()
+    }
 
-        val faceWidth = box.width().toFloat() / imageW
-
-        val smile = face.smilingProbability?.takeIf { it >= 0f }
-        val eyeOpen = face.leftEyeOpenProbability?.takeIf { it >= 0f }
-
-        return FaceDetectionResult(
-            cx = mirroredCx.coerceIn(0f, 1f),
-            cy = cy.coerceIn(0f, 1f),
-            faceWidth = faceWidth.coerceIn(0f, 1f),
-            smileProbability = smile,
-            leftEyeOpenProbability = eyeOpen
-        )
+    /** Stop the camera and release resources. */
+    fun stop() {
+        cameraProvider?.unbindAll()
+        cameraProvider = null
+        imageCapture = null
+        preview = null
+        analysis = null
+        Log.i(TAG, "Camera stopped")
     }
 }

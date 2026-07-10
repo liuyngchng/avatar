@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Stick figure splash icon — "Ta-da!" pose, both arms up -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- ═══ Body ═══ -->
+    <path
+        android:pathData="M54,49L54,68"
+        android:strokeWidth="4"
+        android:strokeColor="#F0ECE6"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000" />
+
+    <!-- ═══ Left arm (raised up — ta-da!) ═══ -->
+    <path
+        android:pathData="M46,49L36,37L28,28"
+        android:strokeWidth="3"
+        android:strokeColor="#F0ECE6"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000" />
+
+    <!-- ═══ Right arm (raised up — ta-da!) ═══ -->
+    <path
+        android:pathData="M62,49L72,37L80,28"
+        android:strokeWidth="3"
+        android:strokeColor="#F0ECE6"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000" />
+
+    <!-- ═══ Left leg ═══ -->
+    <path
+        android:pathData="M48,68L42,80L40,88"
+        android:strokeWidth="3"
+        android:strokeColor="#F0ECE6"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000" />
+
+    <!-- ═══ Right leg ═══ -->
+    <path
+        android:pathData="M60,68L66,80L68,88"
+        android:strokeWidth="3"
+        android:strokeColor="#F0ECE6"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000" />
+
+    <!-- ═══ Head (filled circle) ═══ -->
+    <path
+        android:pathData="M54,36m-13,0a13,13,0,1,1,26,0a13,13,0,1,1,-26,0"
+        android:fillColor="#FAF8F5" />
+
+    <!-- ═══ Head outline ═══ -->
+    <path
+        android:pathData="M54,36m-13,0a13,13,0,1,1,26,0a13,13,0,1,1,-26,0"
+        android:strokeWidth="1.5"
+        android:strokeColor="#D0CCC6"
+        android:fillColor="#00000000" />
+
+    <!-- ═══ Left eye (happy squint) ═══ -->
+    <path
+        android:pathData="M45,34Q48,31,51,34"
+        android:strokeWidth="2"
+        android:strokeColor="#1A1A2E"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000" />
+
+    <!-- ═══ Right eye (happy squint) ═══ -->
+    <path
+        android:pathData="M57,34Q60,31,63,34"
+        android:strokeWidth="2"
+        android:strokeColor="#1A1A2E"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000" />
+
+    <!-- ═══ Mouth (big happy grin) ═══ -->
+    <path
+        android:pathData="M47,40Q54,46,61,40"
+        android:strokeWidth="2"
+        android:strokeColor="#E94560"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000" />
+
+    <!-- ═══ Hands & feet ═══ -->
+    <!-- Left hand -->
+    <path android:pathData="M28,28m-2.5,0a2.5,2.5,0,1,1,5,0a2.5,2.5,0,1,1,-5,0" android:fillColor="#F0ECE6" />
+    <!-- Right hand -->
+    <path android:pathData="M80,28m-2.5,0a2.5,2.5,0,1,1,5,0a2.5,2.5,0,1,1,-5,0" android:fillColor="#F0ECE6" />
+    <!-- Left foot -->
+    <path android:pathData="M40,88m-2.5,0a2.5,2.5,0,1,1,5,0a2.5,2.5,0,1,1,-5,0" android:fillColor="#F0ECE6" />
+    <!-- Right foot -->
+    <path android:pathData="M68,88m-2.5,0a2.5,2.5,0,1,1,5,0a2.5,2.5,0,1,1,-5,0" android:fillColor="#F0ECE6" />
+
+</vector>

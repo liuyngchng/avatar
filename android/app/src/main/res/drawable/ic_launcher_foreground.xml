@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Stick figure launcher icon — waving, on dark gradient background -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- ═══ Body ═══ -->
+    <path
+        android:pathData="M54,49L54,68"
+        android:strokeWidth="4"
+        android:strokeColor="#F0ECE6"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000" />
+
+    <!-- ═══ Left arm (hanging casually) ═══ -->
+    <path
+        android:pathData="M46,49L34,57L28,67"
+        android:strokeWidth="3"
+        android:strokeColor="#F0ECE6"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000" />
+
+    <!-- ═══ Right arm (waving! — raised up) ═══ -->
+    <path
+        android:pathData="M62,49L74,41L80,31"
+        android:strokeWidth="3"
+        android:strokeColor="#F0ECE6"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000" />
+
+    <!-- ═══ Left leg ═══ -->
+    <path
+        android:pathData="M48,68L42,80L40,88"
+        android:strokeWidth="3"
+        android:strokeColor="#F0ECE6"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000" />
+
+    <!-- ═══ Right leg ═══ -->
+    <path
+        android:pathData="M60,68L66,80L68,88"
+        android:strokeWidth="3"
+        android:strokeColor="#F0ECE6"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000" />
+
+    <!-- ═══ Head (filled circle) ═══ -->
+    <path
+        android:pathData="M54,36m-13,0a13,13,0,1,1,26,0a13,13,0,1,1,-26,0"
+        android:fillColor="#FAF8F5" />
+
+    <!-- ═══ Head outline ═══ -->
+    <path
+        android:pathData="M54,36m-13,0a13,13,0,1,1,26,0a13,13,0,1,1,-26,0"
+        android:strokeWidth="1.5"
+        android:strokeColor="#D0CCC6"
+        android:fillColor="#00000000" />
+
+    <!-- ═══ Left eye (dot) ═══ -->
+    <path
+        android:pathData="M48,34m-2,0a2,2,0,1,1,4,0a2,2,0,1,1,-4,0"
+        android:fillColor="#1A1A2E" />
+
+    <!-- ═══ Right eye (dot) ═══ -->
+    <path
+        android:pathData="M60,34m-2,0a2,2,0,1,1,4,0a2,2,0,1,1,-4,0"
+        android:fillColor="#1A1A2E" />
+
+    <!-- ═══ Mouth (cheeky grin) ═══ -->
+    <path
+        android:pathData="M48,40Q54,45,60,40"
+        android:strokeWidth="2"
+        android:strokeColor="#E94560"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000" />
+
+    <!-- ═══ Hands & feet (little dots) ═══ -->
+    <!-- Left hand -->
+    <path android:pathData="M28,67m-2.5,0a2.5,2.5,0,1,1,5,0a2.5,2.5,0,1,1,-5,0" android:fillColor="#F0ECE6" />
+    <!-- Right hand (waving!) -->
+    <path android:pathData="M80,31m-2.5,0a2.5,2.5,0,1,1,5,0a2.5,2.5,0,1,1,-5,0" android:fillColor="#F0ECE6" />
+    <!-- Left foot -->
+    <path android:pathData="M40,88m-2.5,0a2.5,2.5,0,1,1,5,0a2.5,2.5,0,1,1,-5,0" android:fillColor="#F0ECE6" />
+    <!-- Right foot -->
+    <path android:pathData="M68,88m-2.5,0a2.5,2.5,0,1,1,5,0a2.5,2.5,0,1,1,-5,0" android:fillColor="#F0ECE6" />
+
+</vector>
