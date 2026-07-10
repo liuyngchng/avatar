@@ -30,6 +30,13 @@ class SherpaTtsEngine {
 
     var isReady: Bool { isInitialized }
 
+    /// Number of speakers supported by the loaded VITS model.
+    /// Returns 0 if the engine is not initialized. Single-speaker models return 1.
+    var numSpeakers: Int {
+        guard isInitialized, let tts = tts else { return 0 }
+        return Int(SherpaOnnxOfflineTtsNumSpeakers(tts))
+    }
+
     var sampleRate: Int32 {
         guard isInitialized, let tts = tts else { return SherpaTtsEngine.defaultSampleRate }
         return SherpaOnnxOfflineTtsSampleRate(tts)
@@ -83,7 +90,7 @@ class SherpaTtsEngine {
         isInitialized = tts != nil
 
         if isInitialized {
-            os_log(.info, "TTS: initialized OK, sample_rate=%d", sampleRate)
+            os_log(.info, "TTS: initialized OK, sample_rate=%d, num_speakers=%d", sampleRate, numSpeakers)
         } else {
             os_log(.error, "TTS: failed to create engine")
         }

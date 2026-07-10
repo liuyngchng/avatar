@@ -20,7 +20,6 @@ enum StickColors {
     static let headStroke  = UIColor(red: 0.82, green: 0.80, blue: 0.78, alpha: 1.0)  // #D0CCC6
     static let eye         = UIColor(red: 0.10, green: 0.10, blue: 0.18, alpha: 1.0)  // #1A1A2E
     static let mouth       = UIColor(red: 0.91, green: 0.27, blue: 0.38, alpha: 1.0)  // #E94560
-    static let blush       = UIColor(red: 0.91, green: 0.27, blue: 0.38, alpha: 0.25) // #E94560 25%
     static let shadow      = UIColor(red: 0.00, green: 0.00, blue: 0.00, alpha: 0.09) // ground shadow
     static let accent      = UIColor(red: 0.40, green: 0.67, blue: 1.00, alpha: 1.0)  // #66AAFF
     static let tongue      = UIColor(red: 1.00, green: 0.42, blue: 0.54, alpha: 1.0)  // #FF6B8A
@@ -55,8 +54,8 @@ enum StickGeo {
     static let bodyStroke: CGFloat   = 6
     static let limbStroke: CGFloat   = 5
     static let jointRadius: CGFloat  = 6
-    static let eyeRadiusFrac: CGFloat   = 0.012
-    static let mouthWFrac: CGFloat      = 0.04
+    static let eyeRadiusFrac: CGFloat   = 0.018
+    static let mouthWFrac: CGFloat      = 0.045
 }
 
 // MARK: - Stick Pose Data
@@ -659,18 +658,6 @@ final class StickFigureDrawer {
         ctx.setLineWidth(2.5)
         ctx.strokeEllipse(in: headRect)
 
-        // Blush
-        if emotion == .happy || emotion == .shy {
-            let blushR = radius * 0.22
-            let blushY = center.y + radius * 0.25
-            let blushXOff = radius * 0.55
-            ctx.setFillColor(StickColors.blush.cgColor)
-            ctx.fillEllipse(in: CGRect(x: center.x - blushXOff - blushR, y: blushY - blushR,
-                                        width: blushR * 2, height: blushR * 2))
-            ctx.fillEllipse(in: CGRect(x: center.x + blushXOff - blushR, y: blushY - blushR,
-                                        width: blushR * 2, height: blushR * 2))
-        }
-
         ctx.restoreGState()
     }
 
@@ -682,7 +669,7 @@ final class StickFigureDrawer {
                                   eyeRadius: CGFloat, mouthHalfW: CGFloat,
                                   emotion: Emotion, isSpeaking: Bool,
                                   speakAmount: CGFloat, blinkAmount: CGFloat) {
-        let eyeY = headCenter.y - headRadius * 0.15
+        let eyeY = headCenter.y - headRadius * 0.28
         let eyeXOff = headRadius * 0.38
         let leftEyeCenter  = CGPoint(x: headCenter.x - eyeXOff, y: eyeY)
         let rightEyeCenter = CGPoint(x: headCenter.x + eyeXOff, y: eyeY)
@@ -704,10 +691,19 @@ final class StickFigureDrawer {
                     radius: eyeRadius, lidScale: lidScale, emotion: emotion)
         }
 
-        // Eyebrows
-        if emotion != .neutral {
-            let browY = eyeY - eyeRadius * 2.8
-            let browLen = eyeRadius * 2.5
+        // Eyebrows — baseline above eyes, adjusted per emotion for enlarged eyes
+        let browYBase = eyeY - eyeRadius * 2.8
+        let browY: CGFloat = {
+            switch emotion {
+            case .surprised: return browYBase - eyeRadius * 0.8  // eyes 1.6× bigger
+            case .goofy:     return browYBase - eyeRadius * 0.7  // eyes 1.5× bigger
+            default:         return browYBase
+            }
+        }()
+        // Emoji convention: brows only for expressive emotions
+        let emotionsWithBrows: Set<Emotion> = [.sad, .surprised, .curious, .goofy, .shy]
+        if emotionsWithBrows.contains(emotion) {
+            let browLen = eyeRadius * 1.8
             drawEyebrow(ctx: ctx, eyeCx: leftEyeCenter.x, browY: browY,
                         halfLen: browLen, emotion: emotion, left: true)
             drawEyebrow(ctx: ctx, eyeCx: rightEyeCenter.x, browY: browY,
@@ -739,22 +735,21 @@ final class StickFigureDrawer {
                                         width: radius * 0.3, height: radius * 0.3))
 
         case .happy:
-            let p = UIBezierPath()
-            p.move(to: CGPoint(x: pupilCenter.x - radius, y: pupilCenter.y + radius * 0.3))
-            p.addQuadCurve(to: CGPoint(x: pupilCenter.x + radius, y: pupilCenter.y + radius * 0.3),
-                          controlPoint: CGPoint(x: pupilCenter.x, y: pupilCenter.y - radius * 1.3))
-            ctx.setStrokeColor(StickColors.eye.cgColor)
-            ctx.setLineWidth(2.5)
-            ctx.setLineCap(.round)
-            ctx.addPath(p.cgPath)
-            ctx.strokePath()
+            // Emoji style: big dot eyes, smile does the expressing
+            ctx.setFillColor(StickColors.eye.cgColor)
+            ctx.fillEllipse(in: CGRect(x: pupilCenter.x - radius * 1.1, y: pupilCenter.y - radius * 1.1,
+                                        width: radius * 2.2, height: radius * 2.2))
+            ctx.setFillColor(UIColor.white.cgColor)
+            ctx.fillEllipse(in: CGRect(x: pupilCenter.x - radius * 0.3 - radius * 0.125,
+                                        y: pupilCenter.y - radius * 0.4 - radius * 0.125,
+                                        width: radius * 0.3, height: radius * 0.3))
 
         case .sleepy:
             ctx.setStrokeColor(StickColors.eye.cgColor)
-            ctx.setLineWidth(2.5)
+            ctx.setLineWidth(3.5)
             ctx.setLineCap(.round)
-            ctx.move(to: CGPoint(x: pupilCenter.x - radius * 1.3, y: pupilCenter.y))
-            ctx.addLine(to: CGPoint(x: pupilCenter.x + radius * 1.3, y: pupilCenter.y))
+            ctx.move(to: CGPoint(x: pupilCenter.x - radius * 1.0, y: pupilCenter.y))
+            ctx.addLine(to: CGPoint(x: pupilCenter.x + radius * 1.0, y: pupilCenter.y))
             ctx.strokePath()
 
         case .goofy:
@@ -780,13 +775,6 @@ final class StickFigureDrawer {
                                         width: radius * 0.25, height: radius * 0.25))
         }
 
-        // Eyelid overlay
-        if lidScale > 0.01 {
-            let lidH = radius * 3 * lidScale
-            ctx.setFillColor(StickColors.headFill.cgColor)
-            ctx.fill(CGRect(x: center.x - radius * 1.8, y: center.y - radius * 2.2,
-                           width: radius * 3.6, height: lidH + radius * 0.5))
-        }
     }
 
     // MARK: - Eyebrow
@@ -831,16 +819,20 @@ final class StickFigureDrawer {
                 p.addQuadCurve(to: CGPoint(x: x1, y: browY - arch * 1.5),
                               controlPoint: CGPoint(x: eyeCx, y: browY - arch * 2.5))
             } else {
-                p.move(to: CGPoint(x: x0, y: browY + arch * 0.5))
-                p.addQuadCurve(to: CGPoint(x: x1, y: browY + arch * 0.8),
-                              controlPoint: CGPoint(x: eyeCx, y: browY - arch * 0.3))
+                p.move(to: CGPoint(x: x0, y: browY - arch * 0.3))
+                p.addQuadCurve(to: CGPoint(x: x1, y: browY),
+                              controlPoint: CGPoint(x: eyeCx, y: browY - arch * 1.0))
             }
+        case .neutral:
+            p.move(to: CGPoint(x: x0, y: browY - arch * 0.2))
+            p.addQuadCurve(to: CGPoint(x: x1, y: browY - arch * 0.2),
+                          controlPoint: CGPoint(x: eyeCx, y: browY - arch * 0.8))
         default: break
         }
 
         if !p.isEmpty {
-            ctx.setStrokeColor(StickColors.eye.withAlphaComponent(0.7).cgColor)
-            ctx.setLineWidth(2.5)
+            ctx.setStrokeColor(StickColors.eye.withAlphaComponent(0.75).cgColor)
+            ctx.setLineWidth(3.0)
             ctx.setLineCap(.round)
             ctx.addPath(p.cgPath)
             ctx.strokePath()
@@ -858,7 +850,7 @@ final class StickFigureDrawer {
             let scale: CGFloat = 0.7 + speakAmount * 0.3
             let ry = baseRy * scale
             ctx.setStrokeColor(StickColors.mouth.cgColor)
-            ctx.setLineWidth(3)
+            ctx.setLineWidth(4)
             ctx.setLineCap(.round)
             ctx.strokeEllipse(in: CGRect(x: cx - rx, y: mouthY - ry, width: rx * 2, height: ry * 2))
             // Tongue
@@ -880,7 +872,7 @@ final class StickFigureDrawer {
         case .surprised:
             let r = halfWidth * 0.45
             ctx.setStrokeColor(StickColors.mouth.cgColor)
-            ctx.setLineWidth(2.5)
+            ctx.setLineWidth(3.5)
             ctx.setLineCap(.round)
             ctx.strokeEllipse(in: CGRect(x: cx - r, y: mouthY - r * 0.3, width: r * 2, height: r * 1.6))
         case .curious:
@@ -888,9 +880,9 @@ final class StickFigureDrawer {
             ctx.fillEllipse(in: CGRect(x: cx - halfWidth * 0.35, y: mouthY - halfWidth * 0.35,
                                         width: halfWidth * 0.7, height: halfWidth * 0.7))
         case .sleepy:
-            drawCurvedMouth(ctx: ctx, cx: cx, my: mouthY, hw: halfWidth * 0.5, bw: 0.5, cpY: halfWidth * 0.2)
+            drawCurvedMouth(ctx: ctx, cx: cx, my: mouthY, hw: halfWidth * 0.65, bw: 0.65, cpY: halfWidth * 0.2)
         case .shy:
-            drawCurvedMouth(ctx: ctx, cx: cx, my: mouthY, hw: halfWidth * 0.45, bw: 0.45, cpY: halfWidth * 0.15)
+            drawCurvedMouth(ctx: ctx, cx: cx, my: mouthY, hw: halfWidth * 0.6, bw: 0.6, cpY: halfWidth * 0.15)
         case .goofy:
             // Tongue out to the side!
             let tonguePath = UIBezierPath()
@@ -908,12 +900,12 @@ final class StickFigureDrawer {
             mouthLine.addQuadCurve(to: CGPoint(x: cx + halfWidth * 0.1, y: mouthY),
                                   controlPoint: CGPoint(x: cx, y: mouthY + halfWidth * 0.3))
             ctx.setStrokeColor(StickColors.mouth.cgColor)
-            ctx.setLineWidth(3)
+            ctx.setLineWidth(4)
             ctx.setLineCap(.round)
             ctx.addPath(mouthLine.cgPath)
             ctx.strokePath()
         default:
-            drawCurvedMouth(ctx: ctx, cx: cx, my: mouthY, hw: halfWidth * 0.6, bw: 0.6, cpY: halfWidth * 0.08)
+            drawCurvedMouth(ctx: ctx, cx: cx, my: mouthY, hw: halfWidth * 0.8, bw: 0.8, cpY: halfWidth * 0.08)
         }
     }
 
@@ -925,7 +917,7 @@ final class StickFigureDrawer {
         p.move(to: CGPoint(x: x0, y: my))
         p.addQuadCurve(to: CGPoint(x: x1, y: my), controlPoint: CGPoint(x: cx, y: my + cpY))
         ctx.setStrokeColor(StickColors.mouth.cgColor)
-        ctx.setLineWidth(3)
+        ctx.setLineWidth(3.5)
         ctx.setLineCap(.round)
         ctx.addPath(p.cgPath)
         ctx.strokePath()

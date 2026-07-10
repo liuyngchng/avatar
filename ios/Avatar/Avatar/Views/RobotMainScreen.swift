@@ -126,7 +126,10 @@ struct RobotMainScreen: View {
                     },
                     onReadText: { text in
                         viewModel.speakText(text)
-                    }
+                    },
+                    ttsNumSpeakers: viewModel.ttsNumSpeakers,
+                    selectedSid: $viewModel.selectedSid,
+                    onSetSpeaker: { viewModel.setSpeaker($0) }
                 )
             }
             .onAppear {

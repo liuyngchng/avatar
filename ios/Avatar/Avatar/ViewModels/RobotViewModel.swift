@@ -20,6 +20,10 @@ class RobotViewModel: ObservableObject {
     @Published var errorMessage: String?
     @Published var isPaused: Bool = false
     @Published var isInConversation: Bool = false
+    @Published var selectedSid: Int = 0
+    @Published var ttsNumSpeakers: Int = 0
+
+    private let sidKey = "tts_selected_sid"
 
     // MARK: - Services
 
@@ -212,9 +216,12 @@ class RobotViewModel: ObservableObject {
                 self.enginesReady = asrReady && ttsReady
                 self.isInitializingEngines = false
                 if self.enginesReady {
-                    // Engines are ready — clear any stale "not ready" error
-                    // that may have been shown while models were still loading.
                     self.errorMessage = nil
+                    // Discover how many speakers the TTS model supports
+                    self.ttsNumSpeakers = self.ttsEngine.numSpeakers
+                    // Load saved speaker ID, clamp to valid range
+                    let saved = UserDefaults.standard.integer(forKey: self.sidKey)
+                    self.selectedSid = (self.ttsNumSpeakers > 0) ? min(saved, self.ttsNumSpeakers - 1) : 0
                 } else {
                     self.errorMessage = "模型加载失败，请检查模型文件"
                 }
@@ -528,7 +535,7 @@ class RobotViewModel: ObservableObject {
                 if Task.isCancelled { break }
                 let normalized = TextNormalizer.normalize(sentence)
                 guard normalized.isNotBlank else { continue }
-                if let pcm = await self.ttsEngine.synthesize(text: normalized) {
+                if let pcm = await self.ttsEngine.synthesize(text: normalized, sid: self.selectedSid) {
                     results.append(pcm)
                 }
             }
@@ -697,7 +704,7 @@ class RobotViewModel: ObservableObject {
             AudioSessionManager.configure()
 
             if let pcm = await Task.detached(priority: .userInitiated, operation: {
-                await self.ttsEngine.synthesize(text: "哎，我在呢", speed: 1.0)
+                await self.ttsEngine.synthesize(text: "哎，我在呢", speed: 1.0, sid: self.selectedSid)
             }).value {
                 await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
                     self.audioPlayer.play(pcmFloats: pcm, sampleRate: Double(self.ttsEngine.sampleRate)) {
@@ -788,6 +795,13 @@ class RobotViewModel: ObservableObject {
 
     func clearError() {
         errorMessage = nil
+    }
+
+    /// Change the TTS speaker ID and persist the selection.
+    func setSpeaker(_ sid: Int) {
+        let clamped = max(0, min(sid, ttsNumSpeakers - 1))
+        selectedSid = clamped
+        UserDefaults.standard.set(clamped, forKey: sidKey)
     }
 
     private static func rms(_ samples: [Float]) -> Float {
