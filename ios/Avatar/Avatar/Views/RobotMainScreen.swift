@@ -143,7 +143,11 @@ struct RobotMainScreen: View {
                 viewModel.startRobot()
             }
             .onChange(of: showSettings) { newValue in
-                viewModel.isPaused = newValue
+                if newValue {
+                    viewModel.pauseRobot()
+                } else {
+                    viewModel.resumeRobot()
+                }
             }
         }
         .navigationViewStyle(.stack)

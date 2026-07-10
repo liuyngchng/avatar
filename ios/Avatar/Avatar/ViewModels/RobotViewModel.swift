@@ -19,6 +19,7 @@ class RobotViewModel: ObservableObject {
     @Published var enginesReady: Bool = false
     @Published var errorMessage: String?
     @Published var isPaused: Bool = false
+    @Published var isInConversation: Bool = false
 
     // MARK: - Services
 
@@ -44,6 +45,11 @@ class RobotViewModel: ObservableObject {
     private var lastWakeTime: Date = .distantPast
     private var wakeWordTriggered = false
 
+    // Multi-turn conversation
+    private var isMultiTurn = false
+    private var multiTurnBlankCount = 0
+    private let maxMultiTurnBlanks = 2   // ~4 s (2 × ~2 s VAD silence per utterance)
+
     // Recording / TTS tasks
     private var recordingCancellable: AnyCancellable?
     private var faceCancellable: AnyCancellable?
@@ -63,6 +69,14 @@ class RobotViewModel: ObservableObject {
     // Expression smoothing
     private var expressionWindow: [Emotion?] = []
     private let expressionWindowSize = 5
+
+    // Pause/resume tracking
+    private var isRobotRunning = false
+    private var wasWakeWordEnabledBeforePause = false
+    private var isInitializingEngines = false
+    /// Set to `true` when `onTap()` stops KWS to release the mic — signals
+    /// `finishSpeaking()` to resume KWS after the tap-to-talk flow ends.
+    private var resumeKwsAfterVoiceFlow = false
 
     // MARK: - Init
 
@@ -108,7 +122,100 @@ class RobotViewModel: ObservableObject {
     // MARK: - Initialization
 
     func startRobot() {
-        // Initialize engines
+        guard !isRobotRunning else { return }
+        isRobotRunning = true
+
+        initEngines()
+        startFaceDetection()
+        startBlinkTimer()
+        startFaceCheckTimer()
+    }
+
+    // MARK: - Pause / Resume
+
+    /// Deep-freeze all hardware and background activity (camera, mic, speaker,
+    /// wake word, timers, Combine subscriptions). Call when entering settings
+    /// or any screen that should take full system resources.
+    func pauseRobot() {
+        guard isRobotRunning else { return }
+        isPaused = true
+
+        // Remember whether KWS was active so we can restore it on resume
+        wasWakeWordEnabledBeforePause = wakeWordEnabled
+
+        // Stop all audio (recording, playback, wake word)
+        stopAllAudio()
+
+        // Stop camera / face detection
+        faceDetector.stop()
+        faceCancellable?.cancel()
+        faceCancellable = nil
+
+        // Cancel all async tasks
+        blinkTask?.cancel()
+        blinkTask = nil
+        faceCheckTask?.cancel()
+        faceCheckTask = nil
+        recognitionTask?.cancel()
+        recognitionTask = nil
+        vadTask?.cancel()
+        vadTask = nil
+        speakingTask?.cancel()
+        speakingTask = nil
+        streamingCancellable?.cancel()
+        streamingCancellable = nil
+
+        // Reset state to idle
+        robotState.mode = .idle
+        robotState.isSpeaking = false
+        isMultiTurn = false
+        multiTurnBlankCount = 0
+        isInConversation = false
+        expressionWindow.removeAll()
+
+        // Release audio session so other components (or system) can use it
+        AudioSessionManager.deactivate()
+
+        isRobotRunning = false
+    }
+
+    /// Thaw everything that was frozen by `pauseRobot()`.
+    /// Called when the settings sheet is dismissed and the robot
+    /// should resume normal operation.
+    func resumeRobot() {
+        guard !isRobotRunning else { return }
+        isRobotRunning = true
+        isPaused = false
+
+        // If engines haven't finished initializing yet (e.g. user opened
+        // settings before the async model-loading completed), kick off a
+        // new init. initEngines() is safe to call multiple times.
+        if !enginesReady {
+            initEngines()
+        }
+
+        // Restart camera / face detection
+        startFaceDetection()
+
+        // Restart background timers
+        startBlinkTimer()
+        startFaceCheckTimer()
+
+        // Restore audio session
+        AudioSessionManager.configure()
+
+        // Restart wake word if it was on before the pause
+        if wasWakeWordEnabledBeforePause {
+            startWakeWordDetection()
+        }
+    }
+
+    // MARK: - Private: Init helpers
+
+    private func initEngines() {
+        guard !isInitializingEngines else { return }
+        isInitializingEngines = true
+
         Task.detached(priority: .userInitiated) { [weak self] in
             guard let self = self else { return }
 
@@ -117,16 +224,21 @@ class RobotViewModel: ObservableObject {
 
             await MainActor.run {
                 self.enginesReady = asrReady && ttsReady
-                if !self.enginesReady {
+                self.isInitializingEngines = false
+                if self.enginesReady {
+                    // Engines are ready — clear any stale "not ready" error
+                    // that may have been shown while models were still loading.
+                    self.errorMessage = nil
+                } else {
                     self.errorMessage = "模型加载失败，请检查模型文件"
                 }
             }
         }
+    }
 
-        // Start face detection
+    private func startFaceDetection() {
         faceDetector.start()
 
-        // Observe face detection results
         faceCancellable = faceDetector.faces
             .receive(on: DispatchQueue.main)
             .sink { [weak self] result in
@@ -150,8 +262,9 @@ class RobotViewModel: ObservableObject {
                     }
                 }
             }
+    }
 
-        // Start idle wander blink timer
+    private func startBlinkTimer() {
         blinkTask = Task { @MainActor [weak self] in
             while !Task.isCancelled {
                 let delay = UInt64.random(in: 2_000_000_000...5_000_000_000)
@@ -160,8 +273,9 @@ class RobotViewModel: ObservableObject {
                 self.robotState.blinkTrigger += 1
             }
         }
+    }
 
-        // Face presence → mode transitions
+    private func startFaceCheckTimer() {
         faceCheckTask = Task { @MainActor [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 200_000_000)  // 200ms poll
@@ -178,7 +292,12 @@ class RobotViewModel: ObservableObject {
                     self.robotState.responseText = greeting
                     self.expressionWindow.removeAll()   // fresh expression window
                     try? await Task.sleep(nanoseconds: 800_000_000)
-                    self.speakText(greeting)
+                    // Re-check: don't interrupt if the user has already
+                    // engaged in a conversation (tapped to talk, wake word,
+                    // or LLM response in progress).
+                    if self.robotState.mode == .watching || self.robotState.mode == .idle {
+                        self.speakText(greeting)
+                    }
                 }
 
                 // Face disappeared too long → IDLE + remark
@@ -197,6 +316,30 @@ class RobotViewModel: ObservableObject {
         }
     }
 
+    /// Stop all in-progress audio: recording, TTS playback, and wake word.
+    /// Order matters: cancel subscribers & tasks first (stop consumers),
+    /// then tear down hardware engines (stop producers).
+    private func stopAllAudio() {
+        // 1. Cancel subscribers to stop processing new data
+        recordingCancellable?.cancel()
+        recordingCancellable = nil
+
+        // 2. Cancel async tasks
+        speakingTask?.cancel()
+        speakingTask = nil
+
+        // 3. Stop hardware engines (AudioPlayer.stop() sets `terminated`,
+        //    which causes any in-flight playSequence callbacks to bail cleanly)
+        audioPlayer.stop()
+        audioRecorder.stop()
+
+        // 4. Wake word
+        wakeWordEngine.stop()
+        if wakeWordEnabled {
+            wakeWordManager.setRunning(false)
+        }
+    }
+
     // MARK: - Interaction (Tap-to-Talk)
 
     func onTap() {
@@ -207,9 +350,11 @@ class RobotViewModel: ObservableObject {
 
         // If wake word detection is running, stop it to release the mic
         // before starting recording. Same pattern as the wake-word-triggered
-        // flow (handleKwsDetected).
+        // flow (handleKwsDetected). We'll resume KWS after the voice flow
+        // completes (see finishSpeaking).
         if wakeWordEnabled {
             wakeWordEngine.stop()
+            resumeKwsAfterVoiceFlow = true
         }
 
         if case .listening = robotState.mode {
@@ -306,17 +451,29 @@ class RobotViewModel: ObservableObject {
             await MainActor.run {
                 guard !text.isEmpty else {
                     os_log(.info, "RobotVM: ASR returned blank")
-                    self.robotState.mode = self.robotState.faceTargetX != nil ? .watching : .idle
-                    if self.wakeWordTriggered {
-                        self.wakeWordManager.notifyFalseTrigger()
-                        self.wakeWordTriggered = false
-                        self.wakeWordManager.notifyVoiceFlowDone()
+                    if self.isMultiTurn {
+                        self.multiTurnBlankCount += 1
+                        os_log(.info, "RobotVM: multi-turn blank #%d/%d",
+                               self.multiTurnBlankCount, self.maxMultiTurnBlanks)
+                        if self.multiTurnBlankCount >= self.maxMultiTurnBlanks {
+                            self.endMultiTurn()
+                        } else {
+                            self.speakText("嗯？还在吗？")
+                        }
+                    } else {
+                        self.robotState.mode = self.robotState.faceTargetX != nil ? .watching : .idle
+                        if self.wakeWordTriggered {
+                            self.wakeWordManager.notifyFalseTrigger()
+                            self.wakeWordTriggered = false
+                            self.wakeWordManager.notifyVoiceFlowDone()
+                        }
+                        self.speakText("没听清，请再说一遍")
                     }
-                    self.speakText("没听清，请再说一遍")
                     return
                 }
 
                 self.robotState.lastUserText = text
+                self.multiTurnBlankCount = 0   // reset silence counter on valid input
 
                 if self.wakeWordTriggered {
                     self.wakeWordManager.notifyProductiveWake()
@@ -341,36 +498,24 @@ class RobotViewModel: ObservableObject {
                         let (fallback, emotion) = await MainActor.run { self.behaviorEngine.respond(text) }
                         await MainActor.run {
                             self.robotState.responseText = fallback
-                            self.robotState.mode = .speaking
                             self.robotState.emotion = emotion
-                            self.robotState.isSpeaking = true
-                        }
-                        // Skip the success path below
-                        if let responseText = await MainActor.run(body: { self.robotState.responseText }) {
-                            await self.speakAndFinish(responseText, prevMode: .thinking)
+                            self.speakText(fallback)
                         }
                         return
                     }
                 }
                 await MainActor.run {
                     self.robotState.responseText = reply
-                    self.robotState.mode = .speaking
                     self.robotState.emotion = .happy
-                    self.robotState.isSpeaking = true
+                    self.speakText(reply)
                 }
             } else {
                 let (response, emotion) = await MainActor.run { self.behaviorEngine.respond(text) }
                 await MainActor.run {
                     self.robotState.responseText = response
-                    self.robotState.mode = .speaking
                     self.robotState.emotion = emotion
-                    self.robotState.isSpeaking = true
+                    self.speakText(response)
                 }
-            }
-
-            // Speak the response
-            if let responseText = await MainActor.run(body: { self.robotState.responseText }) {
-                await self.speakAndFinish(responseText, prevMode: .thinking)
             }
         }
     }
@@ -403,6 +548,12 @@ class RobotViewModel: ObservableObject {
     // MARK: - TTS
 
     func speakText(_ text: String) {
+        // Stop any in-progress speech to prevent overlapping TTS.
+        // This ensures behavior-engine greetings don't interrupt LLM
+        // responses, and newer user actions always take priority.
+        speakingTask?.cancel()
+        audioPlayer.stop()
+
         let prevMode = robotState.mode
         robotState.mode = .speaking
         robotState.isSpeaking = true
@@ -455,6 +606,14 @@ class RobotViewModel: ObservableObject {
 
     private func finishSpeaking(prevMode: RobotMode) {
         robotState.isSpeaking = false
+
+        if isMultiTurn {
+            // Continue multi-turn: auto-listen for next utterance
+            robotState.mode = .listening
+            startListening()
+            return
+        }
+
         let newMode: RobotMode = (robotState.faceTargetX != nil) ? .watching : .idle
         robotState.mode = newMode
         if newMode == .watching {
@@ -465,16 +624,35 @@ class RobotViewModel: ObservableObject {
             wakeWordTriggered = false
             wakeWordManager.notifyVoiceFlowDone()
         }
+
+        // Resume KWS after a tap-to-talk flow (onTap stops KWS to release
+        // the mic, but the wake-word-triggered flag isn't set for taps).
+        if resumeKwsAfterVoiceFlow {
+            resumeKwsAfterVoiceFlow = false
+            onResumeKws()
+        }
     }
 
     func stopSpeaking() {
         speakingTask?.cancel()
         audioPlayer.stop()
         robotState.isSpeaking = false
+
+        // Manual stop during multi-turn: end the conversation
+        if isMultiTurn {
+            endMultiTurn()
+        }
+
         let newMode: RobotMode = (robotState.faceTargetX != nil) ? .watching : .idle
         robotState.mode = newMode
         if newMode == .watching {
             expressionWindow.removeAll()
+        }
+
+        // Resume KWS if it was stopped by onTap() before this
+        if resumeKwsAfterVoiceFlow {
+            resumeKwsAfterVoiceFlow = false
+            onResumeKws()
         }
     }
 
@@ -568,6 +746,10 @@ class RobotViewModel: ObservableObject {
         }
 
         wakeWordTriggered = true
+        isMultiTurn = true
+        multiTurnBlankCount = 0
+        isInConversation = true
+        os_log(.info, "RobotVM: multi-turn conversation started")
 
         // TTS "哎，我在呢" then auto-listen
         Task { @MainActor [weak self] in
@@ -591,13 +773,17 @@ class RobotViewModel: ObservableObject {
     }
 
     private func onResumeKws() {
-        guard wakeWordEnabled else { return }
         os_log(.info, "RobotVM: resuming KWS")
-
-        AudioSessionManager.configureForKws()
 
         Task { @MainActor [weak self] in
             guard let self = self else { return }
+            guard self.wakeWordEnabled else {
+                os_log(.info, "RobotVM: onResumeKws skipped — wake word disabled")
+                return
+            }
+
+            AudioSessionManager.configureForKws()
+
             if !self.wakeWordEngine.isReady {
                 let modelDir = ModelManager.kwsModelDirURL()
                 guard self.wakeWordEngine.initialize(modelDir: modelDir) else { return }
@@ -617,20 +803,30 @@ class RobotViewModel: ObservableObject {
         }
     }
 
+    private func endMultiTurn() {
+        os_log(.info, "RobotVM: ending multi-turn conversation")
+        isMultiTurn = false
+        multiTurnBlankCount = 0
+        isInConversation = false
+        wakeWordTriggered = false
+        wakeWordManager.notifyVoiceFlowDone()
+    }
+
     // MARK: - Audio Interruptions
 
     private func handleInterruptionBegan() {
         os_log(.info, "RobotVM: audio interruption began")
-        audioRecorder.stop()
+        // Cancel subscribers & tasks first (consumers), then stop engines (producers)
         recordingCancellable?.cancel()
         recordingCancellable = nil
-        recognitionTask?.cancel()
-        recognitionTask = nil
         streamingCancellable?.cancel()
         streamingCancellable = nil
+        recognitionTask?.cancel()
+        recognitionTask = nil
         speakingTask?.cancel()
         speakingTask = nil
         audioPlayer.stop()
+        audioRecorder.stop()
         wakeWordEngine.stop()
         wakeWordManager.setRunning(false)
         robotState.mode = .idle

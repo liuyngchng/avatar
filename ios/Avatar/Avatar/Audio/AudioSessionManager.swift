@@ -69,18 +69,18 @@ enum AudioSessionManager {
     }
 
     /// Configure audio session for continuous wake word detection.
-    /// Uses voice recognition mode for lower power consumption and better
-    /// background behavior.
+    /// Uses `.default` mode (not `.voiceChat`) to avoid routing audio to the
+    /// earpiece when the session is reconfigured during active TTS playback.
     static func configureForKws() {
         let session = AVAudioSession.sharedInstance()
         do {
             try session.setCategory(
                 .playAndRecord,
-                mode: .voiceChat,
+                mode: .default,
                 options: [.defaultToSpeaker, .allowBluetooth, .mixWithOthers]
             )
             try session.setActive(true)
-            os_log(.info, "AudioSession configured: KWS (voiceChat mode)")
+            os_log(.info, "AudioSession configured: KWS")
         } catch {
             os_log(.error, "Failed to configure audio session for KWS: %{public}@",
                    error.localizedDescription)

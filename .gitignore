@@ -68,3 +68,6 @@ android/local.properties
 *.jks
 *.p12
 secrets.properties
+
+# ── Claude Code local settings ────────────────────────
+.claude/settings.local.json

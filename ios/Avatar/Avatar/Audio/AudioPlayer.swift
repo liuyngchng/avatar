@@ -20,6 +20,10 @@ class AudioPlayer {
 
     private var isPlaying = false
     private var engineStarted = false
+    /// Set to `true` when `stop()` is called externally (e.g. pauseRobot).
+    /// Guards against callbacks from an in-flight `playSequence` trying to
+    /// restart a torn-down engine.
+    private var terminated = false
 
     init() {
         engine.attach(playerNode)
@@ -32,6 +36,7 @@ class AudioPlayer {
         sampleRate: Double = 22050.0,
         completion: (() -> Void)? = nil
     ) {
+        terminated = false
         // Stop previous playback and clear any scheduled buffers
         stopNode()
 
@@ -75,6 +80,7 @@ class AudioPlayer {
         sampleRate: Double = 22050.0,
         completion: (() -> Void)? = nil
     ) {
+        terminated = false
         stopNode()
 
         guard let format = AVAudioFormat(
@@ -113,6 +119,10 @@ class AudioPlayer {
         sampleRate: Double,
         completion: (() -> Void)?
     ) {
+        guard !terminated else {
+            completion?()
+            return
+        }
         guard index < chunks.count else {
             // All chunks played — full stop to release engine
             stop()
@@ -143,6 +153,13 @@ class AudioPlayer {
         format: AVAudioFormat,
         completion: (() -> Void)?
     ) {
+        // If stop() was called externally while a playSequence was in flight,
+        // bail out immediately — the engine has already been torn down.
+        guard !terminated else {
+            completion?()
+            return
+        }
+
         let frameLength = AVAudioFrameCount(pcmFloats.count)
         guard let buffer = AVAudioPCMBuffer(
             pcmFormat: format,
@@ -181,6 +198,7 @@ class AudioPlayer {
 
     /// Full stop — tears down engine so other components can start theirs.
     func stop() {
+        terminated = true
         stopNode()
         engine.disconnectNodeOutput(playerNode)
         if engine.isRunning {
