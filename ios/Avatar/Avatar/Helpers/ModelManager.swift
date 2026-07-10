@@ -62,17 +62,20 @@ final class ModelManager: ObservableObject {
     static let kwsModelDir = "kws"
 
     private static let asrRequired = ["model.int8.onnx", "tokens.txt"]
-    private static let ttsRequired = ["model.onnx", "tokens.txt", "lexicon.txt"]
+    /// VITS: model.onnx + tokens.txt + lexicon.txt
+    /// Kokoro: model.onnx + tokens.txt + voices.bin
+    private static let ttsRequiredVits = ["model.onnx", "tokens.txt", "lexicon.txt"]
+    private static let ttsRequiredKokoro = ["model.onnx", "tokens.txt", "voices.bin"]
     private static let kwsRequired = ["encoder.onnx", "decoder.onnx", "joiner.onnx", "tokens.txt"]
 
-    /// TTS model archives from different sources (ModelScope, etc.) may use
-    /// varying file names. Scan the directory and rename to the canonical names
-    /// expected by SherpaTtsEngine: model.onnx, tokens.txt, lexicon.txt.
+    /// TTS model archives (VITS, Kokoro) may use varying file names.
+    /// Scan the directory and rename to the canonical names expected by
+    /// SherpaTtsEngine.
     ///
-    /// Strategy:
-    ///   model.onnx  — prefer *vits*.onnx or *model*.onnx; fall back to any .onnx
-    ///   tokens.txt  — prefer *token* or *vocab*; fall back to any .txt (except lexicon)
-    ///   lexicon.txt — prefer *lexicon* or *lex*; fall back to last .txt
+    /// Kokoro (preferred) — model.int8.onnx → model.onnx (int8 for mobile),
+    ///   lexicon-zh.txt → lexicon.txt.
+    /// VITS (fallback) — *vits*.onnx or *model*.onnx → model.onnx,
+    ///   *token*/*vocab* → tokens.txt, *lexicon*/*lex* → lexicon.txt.
     nonisolated static func applyTtsRenames() {
         let dir = ttsModelDirURL()
         let fm = FileManager.default
@@ -84,8 +87,10 @@ final class ModelManager: ObservableObject {
         // ── model.onnx ──
         if !fm.fileExists(atPath: dir.appendingPathComponent("model.onnx").path) {
             let onnxFiles = contents.filter { $0.pathExtension.lowercased() == "onnx" }
-            // Prefer files whose name suggests it's a VITS model
-            let preferred = onnxFiles.first { name in
+            // Prefer int8 quantized version (smaller, mobile-friendly)
+            let int8 = onnxFiles.first { $0.lastPathComponent.lowercased().contains("int8") }
+            // Then prefer VITS or model-named files
+            let preferred = int8 ?? onnxFiles.first { name in
                 let n = name.lastPathComponent.lowercased()
                 return n.contains("vits") || n.contains("model") || n.contains("generator")
             } ?? onnxFiles.first
@@ -113,15 +118,26 @@ final class ModelManager: ObservableObject {
         }
 
         // ── lexicon.txt ──
-        if !fm.fileExists(atPath: dir.appendingPathComponent("lexicon.txt").path) {
-            let remaining = (try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? []
-            let txtFiles = remaining.filter { $0.pathExtension.lowercased() == "txt" }
-            let preferred = txtFiles.first { name in
-                let n = name.lastPathComponent.lowercased()
-                return n.contains("lexicon") || n.contains("lex")
-            } ?? txtFiles.first
-            if let src = preferred {
-                let dst = dir.appendingPathComponent("lexicon.txt")
+        // Re-read directory in case earlier renames changed things
+        let refreshed = (try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? contents
+        let txtFiles = refreshed.filter { $0.pathExtension.lowercased() == "txt" }
+        // Prefer Chinese lexicon, then any lexicon
+        let preferredLex = txtFiles.first { name in
+            let n = name.lastPathComponent.lowercased()
+            return n.contains("lexicon-zh") || n.contains("lex_zh")
+        } ?? txtFiles.first { name in
+            let n = name.lastPathComponent.lowercased()
+            return n.contains("lexicon") || n.contains("lex")
+        } ?? txtFiles.first
+
+        // If a Kokoro model is present (voices.bin exists), always prefer
+        // the Kokoro lexicon over a stale VITS lexicon.txt.
+        let hasVoices = fm.fileExists(atPath: dir.appendingPathComponent("voices.bin").path)
+        let lexiconExists = fm.fileExists(atPath: dir.appendingPathComponent("lexicon.txt").path)
+
+        if let src = preferredLex, (!lexiconExists || hasVoices) {
+            let dst = dir.appendingPathComponent("lexicon.txt")
+            if src.lastPathComponent != "lexicon.txt" {
                 try? fm.removeItem(at: dst)
                 try? fm.moveItem(at: src, to: dst)
                 modelLog.info("TTS rename: \(src.lastPathComponent) -> lexicon.txt")
@@ -189,7 +205,7 @@ final class ModelManager: ObservableObject {
         string: "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09.tar.bz2"
     )!
     private static let ttsDownloadURL = URL(
-        string: "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-melo-zh.tar.bz2"
+        string: "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-int8-multi-lang-v1_1.tar.bz2"
     )!
     private static let kwsDownloadURL = URL(
         string: "https://github.com/k2-fsa/sherpa-onnx/releases/download/kws-models/sherpa-onnx-kws-zipformer-wenetspeech-3.3M-2024-01-01.tar.bz2"
@@ -227,12 +243,21 @@ final class ModelManager: ObservableObject {
     }
     nonisolated static func checkTtsReady() -> Bool {
         let dir = ttsModelDirURL()
-        return ttsRequired.allSatisfy { FileManager.default.fileExists(atPath: dir.appendingPathComponent($0).path) }
+        let fm = FileManager.default
+        // Auto-detect model type: Kokoro has voices.bin, VITS does not
+        if fm.fileExists(atPath: dir.appendingPathComponent("voices.bin").path) {
+            return ttsRequiredKokoro.allSatisfy { fm.fileExists(atPath: dir.appendingPathComponent($0).path) }
+        }
+        return ttsRequiredVits.allSatisfy { fm.fileExists(atPath: dir.appendingPathComponent($0).path) }
     }
     nonisolated static func checkTtsExtracted() -> Bool {
-        // VITS model: check that at least tokens + lexicon exist after extraction
+        // Check that at least tokens + (lexicon or voices) exist after extraction
         let dir = ttsModelDirURL()
-        return ["tokens.txt", "lexicon.txt"].allSatisfy { FileManager.default.fileExists(atPath: dir.appendingPathComponent($0).path) }
+        let fm = FileManager.default
+        let hasTokens = fm.fileExists(atPath: dir.appendingPathComponent("tokens.txt").path)
+        let hasLexicon = fm.fileExists(atPath: dir.appendingPathComponent("lexicon.txt").path)
+        let hasVoices = fm.fileExists(atPath: dir.appendingPathComponent("voices.bin").path)
+        return hasTokens && (hasLexicon || hasVoices)
     }
     nonisolated static func checkKwsReady() -> Bool {
         let dir = kwsModelDirURL()

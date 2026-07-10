@@ -129,7 +129,8 @@ struct RobotMainScreen: View {
                     },
                     ttsNumSpeakers: viewModel.ttsNumSpeakers,
                     selectedSid: $viewModel.selectedSid,
-                    onSetSpeaker: { viewModel.setSpeaker($0) }
+                    onSetSpeaker: { viewModel.setSpeaker($0) },
+                    speakerName: { viewModel.speakerName(for: $0) }
                 )
             }
             .onAppear {

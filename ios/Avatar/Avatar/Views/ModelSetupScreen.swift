@@ -201,7 +201,7 @@ struct ModelSetupContent: View {
             }
 
             Section(header: Text("TTS 模型")) {
-                slotRow(label: "VITS", subtitle: "语音合成 · 中文",
+                slotRow(label: "Kokoro", subtitle: "多语言语音合成 · int8 量化",
                         isReady: ttsOk, state: modelManager.ttsState,
                         onDownload: { modelManager.downloadTtsModel() },
                         onImport: { sheetTarget = .tts })

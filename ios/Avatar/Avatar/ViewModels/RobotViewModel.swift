@@ -804,6 +804,11 @@ class RobotViewModel: ObservableObject {
         UserDefaults.standard.set(clamped, forKey: sidKey)
     }
 
+    /// Human-readable voice name for the given speaker ID.
+    func speakerName(for sid: Int) -> String {
+        ttsEngine.speakerName(for: sid)
+    }
+
     private static func rms(_ samples: [Float]) -> Float {
         var sum: Float = 0
         for s in samples {

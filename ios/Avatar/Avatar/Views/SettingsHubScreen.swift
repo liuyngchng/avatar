@@ -17,6 +17,7 @@ struct SettingsHubScreen: View {
     var ttsNumSpeakers: Int = 0
     @Binding var selectedSid: Int
     var onSetSpeaker: (Int) -> Void = { _ in }
+    var speakerName: (Int) -> String = { "Voice \($0)" }
 
     @Environment(\.presentationMode) private var presentationMode
 
@@ -70,6 +71,7 @@ struct SettingsHubScreen: View {
                             SpeakerPickerView(
                                 numSpeakers: ttsNumSpeakers,
                                 selectedSid: $selectedSid,
+                                speakerName: speakerName,
                                 onSelect: { onSetSpeaker($0) }
                             )
                         ) {
@@ -77,7 +79,7 @@ struct SettingsHubScreen: View {
                                 HStack {
                                     Text("说话人")
                                     Spacer()
-                                    Text("Voice \(selectedSid)")
+                                    Text(speakerName(selectedSid))
                                         .foregroundColor(.secondary)
                                 }
                             } icon: {
@@ -136,6 +138,7 @@ struct SettingsHubScreen: View {
 private struct SpeakerPickerView: View {
     let numSpeakers: Int
     @Binding var selectedSid: Int
+    let speakerName: (Int) -> String
     let onSelect: (Int) -> Void
 
     var body: some View {
@@ -145,7 +148,7 @@ private struct SpeakerPickerView: View {
                     onSelect(sid)
                 }) {
                     HStack {
-                        Text("Voice \(sid)")
+                        Text(speakerName(sid))
                             .foregroundColor(.primary)
                         Spacer()
                         if sid == selectedSid {

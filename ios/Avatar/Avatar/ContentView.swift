@@ -37,7 +37,8 @@ struct ContentView: View {
                     },
                     ttsNumSpeakers: robotVM.ttsNumSpeakers,
                     selectedSid: $robotVM.selectedSid,
-                    onSetSpeaker: { robotVM.setSpeaker($0) }
+                    onSetSpeaker: { robotVM.setSpeaker($0) },
+                    speakerName: { robotVM.speakerName(for: $0) }
                 )
             } else {
                 RobotMainScreen(
