@@ -327,11 +327,14 @@ fun RobotFaceScreen(
             val effectiveHipY = neckY + bodyLen * (1f - pose.bodyScale)
 
             // ═══════════════════════════════════════════════════════
-            //  GROUND — drawn BEFORE any figure transforms so it
-            //  stays fixed regardless of jump / rotation / etc.
+            //  GROUND — for side walks and idle, draw before transforms
+            //  so it stays fixed. For depth walks (AWAY/TOWARD), drawn
+            //  inside the scale transform so the ground recedes with the figure.
             // ═══════════════════════════════════════════════════════
-            drawGroundLine(cx, feetY, w)
-            drawGroundShadow(cx, feetY)
+            if (walkType != WalkType.AWAY && walkType != WalkType.TOWARD) {
+                drawGroundLine(cx, feetY, w)
+                drawGroundShadow(cx, feetY)
+            }
 
             // ── Auto-zoom: scale rotated figure to fill screen width comfortably ──
             val lieScale = if (pose.figureRotation != 0f) {
@@ -387,6 +390,9 @@ fun RobotFaceScreen(
                     drawContext.transform.translate(cx, feetY)
                     drawContext.transform.scale(scale, scale)
                     drawContext.transform.translate(-cx, -feetY)
+                    // Ground scales with figure so feet stay on the ground line
+                    drawGroundLine(cx, feetY, w)
+                    drawGroundShadow(cx, feetY)
                 }
                 WalkType.TOWARD -> {
                     // Walk out of depth: scale up, feet stay planted on ground
@@ -394,6 +400,9 @@ fun RobotFaceScreen(
                     drawContext.transform.translate(cx, feetY)
                     drawContext.transform.scale(scale, scale)
                     drawContext.transform.translate(-cx, -feetY)
+                    // Ground scales with figure so feet stay on the ground line
+                    drawGroundLine(cx, feetY, w)
+                    drawGroundShadow(cx, feetY)
                 }
                 WalkType.NONE -> { /* no walk transform */ }
             }
