@@ -274,7 +274,9 @@ final class StickFigureDrawer {
         return -sin(t * .pi) * figureHeight * 0.35
     }
 
-    /// CROSS-LEGGED SITTING: hips on ground, legs folded, hands on knees.
+    /// CROSS-LEGGED SITTING: hips on ground, legs folded, lower legs crossed.
+    /// Thighs spread moderately outward; shins angle sharply inward so feet
+    /// cross past each other forming a visible X below the knees.
     private static func sittingPose() -> StickPose {
         StickPose(
             headTilt: deg2rad(4),
@@ -283,15 +285,15 @@ final class StickFigureDrawer {
             bodyScale: 0,                   // no compression
             figureRotation: 0,
             // Arms: hands resting on knees
-            leftUpperArmAngle: deg2rad(-22),
-            leftForearmAngle: deg2rad(-52),
-            rightUpperArmAngle: deg2rad(22),
-            rightForearmAngle: deg2rad(52),
-            // Legs: thighs spread wide and up, shins cross inward (FK — IK skipped for sitting)
-            leftUpperLegAngle: deg2rad(-105),
-            leftLowerLegAngle: deg2rad(48),
-            rightUpperLegAngle: deg2rad(105),
-            rightLowerLegAngle: deg2rad(-48)
+            leftUpperArmAngle: deg2rad(-28),
+            leftForearmAngle: deg2rad(-40),
+            rightUpperArmAngle: deg2rad(28),
+            rightForearmAngle: deg2rad(40),
+            // Legs: thighs moderate spread, shins cross inward forming X (FK — IK skipped for sitting)
+            leftUpperLegAngle: deg2rad(-55),
+            leftLowerLegAngle: deg2rad(82),
+            rightUpperLegAngle: deg2rad(55),
+            rightLowerLegAngle: deg2rad(-82)
         )
     }
 
