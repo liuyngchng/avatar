@@ -289,14 +289,14 @@ final class StickFigureDrawer {
             bodyScale: bob * 0.06,          // micro-compression on step
             figureRotation: 0,
             // Arms: opposite phase to legs (left arm forward when right leg forward)
-            leftUpperArmAngle: deg2rad(-22 - Double(armSwing)),
+            leftUpperArmAngle: deg2rad(-22 + Double(armSwing)),     // opposite to left leg
             leftForearmAngle: deg2rad(14 + Double(armSwing) * 0.5),
             rightUpperArmAngle: deg2rad(22 - Double(armSwing)),
             rightForearmAngle: deg2rad(-14 - Double(armSwing) * 0.5),
             // Legs: alternating stride
             leftUpperLegAngle: deg2rad(-5 - Double(legSwing)),
             leftLowerLegAngle: deg2rad(Double(kneeBend)),
-            rightUpperLegAngle: deg2rad(5 - Double(legSwing)),
+            rightUpperLegAngle: deg2rad(5 + Double(legSwing)),
             rightLowerLegAngle: deg2rad(-Double(kneeBend))
         )
     }
@@ -331,7 +331,7 @@ final class StickFigureDrawer {
             // Legs: alternating stride
             leftUpperLegAngle: deg2rad(-5 - Double(legSwing)),
             leftLowerLegAngle: deg2rad(Double(kneeBend)),
-            rightUpperLegAngle: deg2rad(3 - Double(legSwing)),
+            rightUpperLegAngle: deg2rad(3 + Double(legSwing)),
             rightLowerLegAngle: deg2rad(-Double(kneeBend))
         )
     }
@@ -607,17 +607,17 @@ final class StickFigureDrawer {
             let wrapped = wrapMod(rawOffset + cycleW / 2, cycleW) - cycleW / 2
             ctx.translateBy(x: wrapped, y: 0)
         case .away:
+            // Walk into depth: scale down, feet stay planted on ground
             let scale = 1 - walkPhase * 0.75        // 1 → 0.25
-            let rise = walkPhase * figureH * 0.3    // move up as they recede
             ctx.translateBy(x: cx, y: feetY)
             ctx.scaleBy(x: scale, y: scale)
-            ctx.translateBy(x: -cx, y: -feetY + rise)
+            ctx.translateBy(x: -cx, y: -feetY)
         case .toward:
+            // Walk out of depth: scale up, feet stay planted on ground
             let scale = 0.25 + walkPhase * 0.75     // 0.25 → 1
-            let drop = (1 - walkPhase) * figureH * 0.3
             ctx.translateBy(x: cx, y: feetY)
             ctx.scaleBy(x: scale, y: scale)
-            ctx.translateBy(x: -cx, y: -feetY + drop)
+            ctx.translateBy(x: -cx, y: -feetY)
         case .none: break
         }
 

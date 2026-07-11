@@ -329,20 +329,18 @@ fun RobotFaceScreen(
                     drawContext.transform.translate(wrapped, 0f)
                 }
                 WalkType.AWAY -> {
-                    // Walk into depth: scale down + rise toward horizon (perspective)
+                    // Walk into depth: scale down, feet stay planted on ground
                     val scale = 1f - walkPhase.value * 0.75f   // 1 → 0.25
-                    val rise = walkPhase.value * figureH * 0.3f // move up as they recede
                     drawContext.transform.translate(cx, feetY)
                     drawContext.transform.scale(scale, scale)
-                    drawContext.transform.translate(-cx, -feetY + rise)
+                    drawContext.transform.translate(-cx, -feetY)
                 }
                 WalkType.TOWARD -> {
-                    // Walk out of depth: scale up + descend (perspective)
+                    // Walk out of depth: scale up, feet stay planted on ground
                     val scale = 0.25f + walkPhase.value * 0.75f // 0.25 → 1
-                    val drop = (1f - walkPhase.value) * figureH * 0.3f
                     drawContext.transform.translate(cx, feetY)
                     drawContext.transform.scale(scale, scale)
-                    drawContext.transform.translate(-cx, -feetY + drop)
+                    drawContext.transform.translate(-cx, -feetY)
                 }
                 WalkType.NONE -> { /* no walk transform */ }
             }
@@ -883,13 +881,13 @@ private fun walkingPose(phase: Float): StickPose {
         headShiftX = 0f, headShiftY = -bob * 5f,
         neckShiftX = 0f, hipShiftX = 0f, hipShiftY = 0f,
         bodyScale = bob * 0.06f, figureRotation = 0f,
-        leftUpperArmAngle  = Math.toRadians((-22.0 - armSwing)).toFloat(),
+        leftUpperArmAngle  = Math.toRadians((-22.0 + armSwing)).toFloat(),    // opposite to left leg
         leftForearmAngle   = Math.toRadians((14.0 + armSwing * 0.5)).toFloat(),
-        rightUpperArmAngle = Math.toRadians((22.0 - armSwing)).toFloat(),
+        rightUpperArmAngle = Math.toRadians((22.0 - armSwing)).toFloat(),     // opposite to right leg (original)
         rightForearmAngle  = Math.toRadians((-14.0 - armSwing * 0.5)).toFloat(),
         leftUpperLegAngle  = Math.toRadians((-5.0 - legSwing)).toFloat(),
         leftLowerLegAngle  = Math.toRadians((kneeBend)).toFloat(),
-        rightUpperLegAngle = Math.toRadians((5.0 - legSwing)).toFloat(),
+        rightUpperLegAngle = Math.toRadians((5.0 + legSwing)).toFloat(),    // opposite to left
         rightLowerLegAngle = Math.toRadians((-kneeBend)).toFloat(),
     )
 }
@@ -924,7 +922,7 @@ private fun walkingSidePose(phase: Float, facingLeft: Boolean): StickPose {
         // Legs: alternating stride
         leftUpperLegAngle  = Math.toRadians((-5.0 - legSwing)).toFloat(),
         leftLowerLegAngle  = Math.toRadians((kneeBend)).toFloat(),
-        rightUpperLegAngle = Math.toRadians((3.0 - legSwing)).toFloat(),
+        rightUpperLegAngle = Math.toRadians((3.0 + legSwing)).toFloat(),    // opposite to left
         rightLowerLegAngle = Math.toRadians((-kneeBend)).toFloat(),
     )
 }
