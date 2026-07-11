@@ -51,6 +51,8 @@ enum StickGeo {
     static let lowerLegFrac: CGFloat     = 0.12
     static let shoulderWFrac: CGFloat    = 0.06
     static let hipWFrac: CGFloat         = 0.04
+    static let footSpreadFrac: CGFloat   = 0.015   // normal stance foot spread from hip
+    static let squatFootSpreadFrac: CGFloat = 0.056 // wider stance for squatting
 
     static let bodyStroke: CGFloat   = 6
     static let limbStroke: CGFloat   = 5
@@ -779,7 +781,7 @@ final class StickFigureDrawer {
         let isWakingUp = !enginesReady
         if !isJumping && !isLying && !isWakingUp {
             let isSquatting = mode == .idle && anticTrigger > 0 && anticTrigger % 7 == 3
-            let footSpread: CGFloat = isSquatting ? 22 : 6
+            let footSpread = isSquatting ? w * StickGeo.squatFootSpreadFrac : w * StickGeo.footSpreadFrac
 
             if isStageWalk {
                 // During the talking sway, keep at least one foot planted.
