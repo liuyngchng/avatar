@@ -65,6 +65,9 @@ private const val JOINT_RADIUS   = LIMB_STROKE * 0.8f   // hand/foot end cap
 private const val EYE_RADIUS_FRACTION  = 0.012f
 private const val MOUTH_W_FRACTION     = 0.04f
 
+// ─── Walk direction ─────────────────────────────────────────
+private enum class WalkType { NONE, LEFT, RIGHT, AWAY, TOWARD }
+
 // ─── Main Composable ─────────────────────────────────────────
 
 @Composable
@@ -85,6 +88,8 @@ fun RobotFaceScreen(
     val breatheScale = remember { Animatable(1f) }
     val anticPhase   = remember { Animatable(0f) }  // goofy antic animation
     val jumpPhase    = remember { Animatable(0f) }  // jump animation 0→1
+    val walkPhase    = remember { Animatable(0f) }  // walk progress 0→1
+    var walkType     by remember { mutableStateOf(WalkType.NONE) }
 
     // Idle: eyes wander (always, since no face tracking)
     LaunchedEffect(Unit) {
@@ -132,6 +137,44 @@ fun RobotFaceScreen(
             jumpPhase.animateTo(1f, tween(300, easing = FastOutSlowInEasing))
             // Reset
             jumpPhase.snapTo(0f)
+        }
+    }
+
+    // Walk animation (triggered by specific antic values when idle)
+    LaunchedEffect(state.anticTrigger) {
+        if (state.anticTrigger > 0L && state.mode == RobotMode.IDLE) {
+            // Don't walk if this trigger already handles jump/squat/lie
+            val isJump  = state.anticTrigger % 5L == 4L
+            val isSquat = state.anticTrigger % 7L == 3L
+            val isLie   = state.anticTrigger > 3 && state.anticTrigger % 13L == 7L
+            if (!isJump && !isSquat && !isLie) {
+                when {
+                    state.anticTrigger % 9L == 2L -> {
+                        walkType = WalkType.LEFT
+                        walkPhase.snapTo(0f)
+                        walkPhase.animateTo(1f, tween(2000, easing = LinearEasing))
+                        walkType = WalkType.NONE
+                    }
+                    state.anticTrigger % 9L == 5L -> {
+                        walkType = WalkType.RIGHT
+                        walkPhase.snapTo(0f)
+                        walkPhase.animateTo(1f, tween(2000, easing = LinearEasing))
+                        walkType = WalkType.NONE
+                    }
+                    state.anticTrigger % 11L == 3L -> {
+                        walkType = WalkType.AWAY
+                        walkPhase.snapTo(0f)
+                        walkPhase.animateTo(1f, tween(2500, easing = FastOutSlowInEasing))
+                        walkType = WalkType.NONE
+                    }
+                    state.anticTrigger % 11L == 8L -> {
+                        walkType = WalkType.TOWARD
+                        walkPhase.snapTo(0f)
+                        walkPhase.animateTo(1f, tween(2500, easing = FastOutSlowInEasing))
+                        walkType = WalkType.NONE
+                    }
+                }
+            }
         }
     }
 
@@ -224,7 +267,9 @@ fun RobotFaceScreen(
                 breatheAmount = breatheScale.value,
                 anticTrigger = state.anticTrigger,
                 jumpPhase = jumpPhase.value,
-                enginesReady = enginesReady
+                enginesReady = enginesReady,
+                walkType = walkType,
+                walkPhase = walkPhase.value
             )
 
             val headCenter = Offset(cx, headCY)
@@ -265,6 +310,41 @@ fun RobotFaceScreen(
             } else 0f
             if (jumpDY != 0f) {
                 drawContext.transform.translate(0f, jumpDY)
+            }
+
+            // ── Walk transforms ──
+            when (walkType) {
+                WalkType.LEFT -> {
+                    // Walk left: wrap around screen edges (exit left → appear right)
+                    val cycleW = w
+                    val rawOffset = -walkPhase.value * cycleW
+                    val wrapped = wrapMod(rawOffset + cycleW / 2f, cycleW) - cycleW / 2f
+                    drawContext.transform.translate(wrapped, 0f)
+                }
+                WalkType.RIGHT -> {
+                    // Walk right: wrap around screen edges (exit right → appear left)
+                    val cycleW = w
+                    val rawOffset = walkPhase.value * cycleW
+                    val wrapped = wrapMod(rawOffset + cycleW / 2f, cycleW) - cycleW / 2f
+                    drawContext.transform.translate(wrapped, 0f)
+                }
+                WalkType.AWAY -> {
+                    // Walk into depth: scale down + rise toward horizon (perspective)
+                    val scale = 1f - walkPhase.value * 0.75f   // 1 → 0.25
+                    val rise = walkPhase.value * figureH * 0.3f // move up as they recede
+                    drawContext.transform.translate(cx, feetY)
+                    drawContext.transform.scale(scale, scale)
+                    drawContext.transform.translate(-cx, -feetY + rise)
+                }
+                WalkType.TOWARD -> {
+                    // Walk out of depth: scale up + descend (perspective)
+                    val scale = 0.25f + walkPhase.value * 0.75f // 0.25 → 1
+                    val drop = (1f - walkPhase.value) * figureH * 0.3f
+                    drawContext.transform.translate(cx, feetY)
+                    drawContext.transform.scale(scale, scale)
+                    drawContext.transform.translate(-cx, -feetY + drop)
+                }
+                WalkType.NONE -> { /* no walk transform */ }
             }
 
             // ── Compute joint positions ──
@@ -417,58 +497,62 @@ fun RobotFaceScreen(
                 emotion = state.emotion
             )
 
-            // ── Face ──
-            drawStickFace(
-                headCenter = headCenter + Offset(pose.headShiftX, pose.headShiftY),
-                headRadius = headR,
-                pupilDx = pupilDx,
-                pupilDy = pupilDy,
-                eyeRadius = eyeR,
-                mouthHalfW = mouthHalfW,
-                emotion = state.emotion,
-                isSpeaking = state.isSpeaking,
-                speakAmount = speakMouth.value,
-                blinkAmount = blinkProgress.value
-            )
+            // ── Face (skip for back view when walking AWAY) ──
+            if (walkType != WalkType.AWAY) {
+                drawStickFace(
+                    headCenter = headCenter + Offset(pose.headShiftX, pose.headShiftY),
+                    headRadius = headR,
+                    pupilDx = pupilDx,
+                    pupilDy = pupilDy,
+                    eyeRadius = eyeR,
+                    mouthHalfW = mouthHalfW,
+                    emotion = state.emotion,
+                    isSpeaking = state.isSpeaking,
+                    speakAmount = speakMouth.value,
+                    blinkAmount = blinkProgress.value,
+                    isSideView = walkType == WalkType.LEFT || walkType == WalkType.RIGHT,
+                    facingRight = walkType == WalkType.RIGHT
+                )
 
-            // ── Mode indicators ──
-            when (state.mode) {
-                RobotMode.LISTENING -> drawListenWaves(
-                    leftHand.x - jointR, leftHand.y, listenPulse.value
-                )
-                RobotMode.THINKING -> drawThinkDots(
-                    headCenter.x + pose.headShiftX,
-                    headCenter.y + pose.headShiftY - headR - 20f,
-                    thinkPhase.value
-                )
-                RobotMode.LOOKING -> drawLookingIndicator(
-                    headCenter.x + pose.headShiftX,
-                    headCenter.y + pose.headShiftY - headR
-                )
-                else -> {}
-            }
+                // ── Mode indicators ──
+                when (state.mode) {
+                    RobotMode.LISTENING -> drawListenWaves(
+                        leftHand.x - jointR, leftHand.y, listenPulse.value
+                    )
+                    RobotMode.THINKING -> drawThinkDots(
+                        headCenter.x + pose.headShiftX,
+                        headCenter.y + pose.headShiftY - headR - 20f,
+                        thinkPhase.value
+                    )
+                    RobotMode.LOOKING -> drawLookingIndicator(
+                        headCenter.x + pose.headShiftX,
+                        headCenter.y + pose.headShiftY - headR
+                    )
+                    else -> {}
+                }
 
-            // ── Status ring (pulse when active) ──
-            if (state.mode == RobotMode.THINKING || state.mode == RobotMode.SPEAKING) {
-                val alpha = if (state.mode == RobotMode.THINKING) 0.35f else 0.8f
-                val color = if (state.mode == RobotMode.THINKING) ColorAccent
-                    else ColorMouth
-                drawCircle(
-                    color = color.copy(alpha = alpha),
-                    radius = headR + 10f,
-                    center = headCenter + Offset(pose.headShiftX, pose.headShiftY),
-                    style = Stroke(width = 2.5f)
-                )
-            }
+                // ── Status ring (pulse when active) ──
+                if (state.mode == RobotMode.THINKING || state.mode == RobotMode.SPEAKING) {
+                    val alpha = if (state.mode == RobotMode.THINKING) 0.35f else 0.8f
+                    val color = if (state.mode == RobotMode.THINKING) ColorAccent
+                        else ColorMouth
+                    drawCircle(
+                        color = color.copy(alpha = alpha),
+                        radius = headR + 10f,
+                        center = headCenter + Offset(pose.headShiftX, pose.headShiftY),
+                        style = Stroke(width = 2.5f)
+                    )
+                }
 
-            // ── LOOKING ring ──
-            if (state.mode == RobotMode.LOOKING) {
-                drawCircle(
-                    color = Color(0xFF66DD66).copy(alpha = 0.6f),
-                    radius = headR + 10f,
-                    center = headCenter + Offset(pose.headShiftX, pose.headShiftY),
-                    style = Stroke(width = 2.5f)
-                )
+                // ── LOOKING ring ──
+                if (state.mode == RobotMode.LOOKING) {
+                    drawCircle(
+                        color = Color(0xFF66DD66).copy(alpha = 0.6f),
+                        radius = headR + 10f,
+                        center = headCenter + Offset(pose.headShiftX, pose.headShiftY),
+                        style = Stroke(width = 2.5f)
+                    )
+                }
             }
         }
 
@@ -784,6 +868,67 @@ private fun wakingUpPose(): StickPose = StickPose(
     rightLowerLegAngle = Math.toRadians(0.0).toFloat(),
 )
 
+/** WALKING front-facing: alternating limb swing. Used for depth walks (away/toward). */
+private fun walkingPose(phase: Float): StickPose {
+    val gaitCycles = 3f
+    val gaitPhase = phase * gaitCycles * 2f * PI.toFloat()
+    val swing = sin(gaitPhase)
+    val bob = abs(swing)
+    val legSwing = swing * 32f
+    val armSwing = swing * 28f
+    val kneeBend = bob * 10f
+
+    return StickPose(
+        headTilt = Math.toRadians((swing * 3.0)).toFloat(),
+        headShiftX = 0f, headShiftY = -bob * 5f,
+        neckShiftX = 0f, hipShiftX = 0f, hipShiftY = 0f,
+        bodyScale = bob * 0.06f, figureRotation = 0f,
+        leftUpperArmAngle  = Math.toRadians((-22.0 - armSwing)).toFloat(),
+        leftForearmAngle   = Math.toRadians((14.0 + armSwing * 0.5)).toFloat(),
+        rightUpperArmAngle = Math.toRadians((22.0 - armSwing)).toFloat(),
+        rightForearmAngle  = Math.toRadians((-14.0 - armSwing * 0.5)).toFloat(),
+        leftUpperLegAngle  = Math.toRadians((-5.0 - legSwing)).toFloat(),
+        leftLowerLegAngle  = Math.toRadians((kneeBend)).toFloat(),
+        rightUpperLegAngle = Math.toRadians((5.0 - legSwing)).toFloat(),
+        rightLowerLegAngle = Math.toRadians((-kneeBend)).toFloat(),
+    )
+}
+
+/** WALKING side-profile: both arms on walking side, body leans forward. Used for LEFT/RIGHT. */
+private fun walkingSidePose(phase: Float, facingLeft: Boolean): StickPose {
+    val gaitCycles = 3f
+    val gaitPhase = phase * gaitCycles * 2f * PI.toFloat()
+    val swing = sin(gaitPhase)
+    val bob = abs(swing)
+
+    val sign = if (facingLeft) -1f else 1f    // direction multiplier
+    val legSwing = swing * 38f                // stronger stride in side view
+    val armSwing = swing * 32f
+    val kneeBend = bob * 12f
+    val armBase: Float = sign * 8f            // slight forward arm bias
+
+    return StickPose(
+        headTilt = Math.toRadians((swing * 2.0 + sign * 8.0)).toFloat(),  // slight turn
+        headShiftX = sign * 4f,             // shift face toward walking direction
+        headShiftY = -bob * 5f,
+        neckShiftX = sign * 2.5f,           // body lean forward
+        hipShiftX = sign * 2f,
+        hipShiftY = 0f,
+        bodyScale = bob * 0.06f,
+        figureRotation = 0f,
+        // Both arms on the same side, swinging together like pendulums
+        leftUpperArmAngle  = Math.toRadians(((-22.0 * sign) - armSwing + armBase)).toFloat(),
+        leftForearmAngle   = Math.toRadians(((14.0 * sign) + armSwing * 0.4)).toFloat(),
+        rightUpperArmAngle = Math.toRadians(((-18.0 * sign) - armSwing + armBase)).toFloat(),
+        rightForearmAngle  = Math.toRadians(((10.0 * sign) + armSwing * 0.4)).toFloat(),
+        // Legs: alternating stride
+        leftUpperLegAngle  = Math.toRadians((-5.0 - legSwing)).toFloat(),
+        leftLowerLegAngle  = Math.toRadians((kneeBend)).toFloat(),
+        rightUpperLegAngle = Math.toRadians((3.0 - legSwing)).toFloat(),
+        rightLowerLegAngle = Math.toRadians((-kneeBend)).toFloat(),
+    )
+}
+
 /** Emotion overlay: modifies the base pose */
 private fun emotionModifier(emotion: Emotion): StickPose {
     return when (emotion) {
@@ -904,6 +1049,13 @@ private fun lerpAngle(a: Float, b: Float, t: Float): Float {
     return a + diff * t
 }
 
+/** Float modulo that always returns a non-negative remainder */
+private fun wrapMod(value: Float, range: Float): Float {
+    var v = value % range
+    if (v < 0) v += range
+    return v
+}
+
 /**
  * Compute the final pose for the current state.
  */
@@ -916,10 +1068,17 @@ private fun computePose(
     breatheAmount: Float,
     anticTrigger: Long = 0L,
     jumpPhase: Float = 0f,
-    enginesReady: Boolean = true
+    enginesReady: Boolean = true,
+    walkType: WalkType = WalkType.NONE,
+    walkPhase: Float = 0f
 ): StickPose {
     // Engines not ready → waking up animation (overrides everything)
     if (!enginesReady) return wakingUpPose()
+
+    // Walking animation (overrides mode/emotion during walk)
+    if (walkType == WalkType.LEFT)  return walkingSidePose(walkPhase, facingLeft = true)
+    if (walkType == WalkType.RIGHT) return walkingSidePose(walkPhase, facingLeft = false)
+    if (walkType == WalkType.AWAY || walkType == WalkType.TOWARD) return walkingPose(walkPhase)
 
     // Base pose from mode
     val modePose = when (mode) {
@@ -1074,15 +1233,46 @@ private fun DrawScope.drawStickFace(
     emotion: Emotion,
     isSpeaking: Boolean,
     speakAmount: Float,
-    blinkAmount: Float
+    blinkAmount: Float,
+    isSideView: Boolean = false,
+    facingRight: Boolean = false
 ) {
-    // Eye positions (relative to head center)
+    // ── Side profile: single eye + shifted mouth ──
+    if (isSideView) {
+        val sign = if (facingRight) 1f else -1f
+        val eyeXOff = headRadius * 0.3f
+        val eyeY = headCenter.y - headRadius * 0.12f
+        val sideEyeCenter = Offset(headCenter.x + sign * eyeXOff, eyeY)
+
+        val lidScale = when (emotion) {
+            Emotion.SLEEPY -> 0.4f + blinkAmount * 0.6f
+            Emotion.SHY    -> 0.35f + blinkAmount * 0.65f
+            Emotion.HAPPY  -> 0.2f + blinkAmount * 0.8f
+            else -> blinkAmount
+        }
+        if (lidScale < 0.95f) {
+            drawStickEye(sideEyeCenter, pupilDx, pupilDy, eyeRadius * 1.15f, lidScale, emotion)
+        }
+
+        // Small profile mouth line on the near side
+        val mouthY = headCenter.y + headRadius * 0.35f
+        val mouthCx = headCenter.x + sign * headRadius * 0.18f
+        drawStickMouth(
+            cx = mouthCx, mouthY = mouthY,
+            halfWidth = mouthHalfW * 0.6f,
+            emotion = emotion,
+            isSpeaking = isSpeaking,
+            speakAmount = speakAmount
+        )
+        return
+    }
+
+    // ── Front view: two eyes ──
     val eyeY = headCenter.y - headRadius * 0.15f
     val eyeXOff = headRadius * 0.38f
     val leftEyeCenter  = Offset(headCenter.x - eyeXOff, eyeY)
     val rightEyeCenter = Offset(headCenter.x + eyeXOff, eyeY)
 
-    // ── Eyes ──
     val lidScale = when (emotion) {
         Emotion.SLEEPY -> 0.4f + blinkAmount * 0.6f
         Emotion.SHY    -> 0.35f + blinkAmount * 0.65f

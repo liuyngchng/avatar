@@ -29,7 +29,7 @@ class ChatSession: ObservableObject {
     private let maxHistory: Int
     private var cancellables = Set<AnyCancellable>()
 
-    init(llmClient: LlmClient, maxHistory: Int = 5, maxScreenMessages: Int = 20) {
+    init(llmClient: LlmClient, maxHistory: Int = 20, maxScreenMessages: Int = 20) {
         self.llmClient = llmClient
         self.maxHistory = maxHistory
         self.maxScreenMessages = maxScreenMessages

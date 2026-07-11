@@ -32,6 +32,8 @@ final class FaceDisplayView: UIView {
     var breatheScale: CGFloat = 1.0
     var anticPhase: CGFloat = 0       // goofy antic animation 0→1
     var jumpPhase: CGFloat = 0        // jump animation 0→1
+    var walkPhase: CGFloat = 0        // walk progress 0→1
+    var walkType: WalkType = .none    // current walk direction
 
     // Timers
     private var displayLink: CADisplayLink?
@@ -47,6 +49,7 @@ final class FaceDisplayView: UIView {
     private var breatheTimer: Timer?
     private var anticTimer: Timer?
     private var jumpTimer: Timer?
+    private var walkTimer: Timer?
 
     // Track previous state for trigger detection
     private var lastAnticTrigger: Int = 0
@@ -101,7 +104,9 @@ final class FaceDisplayView: UIView {
             anticTrigger: robotState.anticTrigger,
             jumpPhase: jumpPhase,
             isSpeaking: robotState.isSpeaking,
-            enginesReady: robotState.enginesReady
+            enginesReady: robotState.enginesReady,
+            walkType: walkType,
+            walkPhase: walkPhase
         )
     }
 
@@ -278,6 +283,28 @@ final class FaceDisplayView: UIView {
         }
     }
 
+    // MARK: - Walk
+
+    func triggerWalk(_ type: WalkType) {
+        walkTimer?.invalidate()
+        walkType = type
+        walkPhase = 0
+        let tick = 1.0 / Double(Self.targetFPS)
+        let duration: TimeInterval = (type == .left || type == .right) ? 2.0 : 2.5
+        let steps = max(1, Int(duration / tick))
+        var i = 0
+        walkTimer = Timer.scheduledTimer(withTimeInterval: tick, repeats: true) { [weak self] timer in
+            i += 1
+            let progress = CGFloat(i) / CGFloat(steps)
+            self?.walkPhase = min(progress, 1.0)
+            if progress >= 1.0 {
+                timer.invalidate()
+                self?.walkType = .none
+                self?.walkPhase = 0
+            }
+        }
+    }
+
     // MARK: - Pause / Resume
 
     func setPaused(_ paused: Bool) {
@@ -308,6 +335,7 @@ final class FaceDisplayView: UIView {
         breatheTimer?.invalidate()
         anticTimer?.invalidate()
         jumpTimer?.invalidate()
+        walkTimer?.invalidate()
     }
 }
 
@@ -348,6 +376,21 @@ struct RobotFaceView: UIViewRepresentable {
                 // ~20% of antics trigger a jump
                 if robotState.anticTrigger % 5 == 4 {
                     uiView.triggerJump()
+                }
+                // Walk antics (only when no jump/squat/lie)
+                let isJump  = robotState.anticTrigger % 5 == 4
+                let isSquat = robotState.anticTrigger % 7 == 3
+                let isLie   = robotState.anticTrigger > 3 && robotState.anticTrigger % 13 == 7
+                if !isJump && !isSquat && !isLie {
+                    if robotState.anticTrigger % 9 == 2 {
+                        uiView.triggerWalk(.left)
+                    } else if robotState.anticTrigger % 9 == 5 {
+                        uiView.triggerWalk(.right)
+                    } else if robotState.anticTrigger % 11 == 3 {
+                        uiView.triggerWalk(.away)
+                    } else if robotState.anticTrigger % 11 == 8 {
+                        uiView.triggerWalk(.toward)
+                    }
                 }
             }
         }

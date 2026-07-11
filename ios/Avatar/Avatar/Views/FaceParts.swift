@@ -59,6 +59,12 @@ enum StickGeo {
     static let mouthWFrac: CGFloat      = 0.045
 }
 
+// MARK: - Walk Direction
+
+enum WalkType {
+    case none, left, right, away, toward
+}
+
 // MARK: - Stick Pose Data
 
 struct StickPose {
@@ -266,6 +272,70 @@ final class StickFigureDrawer {
         )
     }
 
+    /// WALKING: alternating limb swing driven by gait phase. Phase 0→1 maps to multiple gait cycles.
+    private static func walkingPose(_ phase: CGFloat) -> StickPose {
+        let gaitCycles: CGFloat = 3
+        let gaitPhase = phase * gaitCycles * 2 * .pi
+        let swing = sin(gaitPhase)         // -1..1, drives limb alternation
+        let bob = abs(swing)               // 0..1, body bounce
+
+        let legSwing = swing * 32          // ±32° leg arc
+        let armSwing = swing * 28          // ±28° arm arc (opposite to legs — natural gait)
+        let kneeBend = bob * 10            // knee flex during stride
+
+        return StickPose(
+            headTilt: deg2rad(Double(swing) * 3),
+            headShiftY: -bob * 5,           // slight up-bounce each step
+            bodyScale: bob * 0.06,          // micro-compression on step
+            figureRotation: 0,
+            // Arms: opposite phase to legs (left arm forward when right leg forward)
+            leftUpperArmAngle: deg2rad(-22 - Double(armSwing)),
+            leftForearmAngle: deg2rad(14 + Double(armSwing) * 0.5),
+            rightUpperArmAngle: deg2rad(22 - Double(armSwing)),
+            rightForearmAngle: deg2rad(-14 - Double(armSwing) * 0.5),
+            // Legs: alternating stride
+            leftUpperLegAngle: deg2rad(-5 - Double(legSwing)),
+            leftLowerLegAngle: deg2rad(Double(kneeBend)),
+            rightUpperLegAngle: deg2rad(5 - Double(legSwing)),
+            rightLowerLegAngle: deg2rad(-Double(kneeBend))
+        )
+    }
+
+    /// WALKING side-profile: both arms on walking side, body leans forward. Used for LEFT/RIGHT.
+    private static func walkingSidePose(_ phase: CGFloat, facingLeft: Bool) -> StickPose {
+        let gaitCycles: CGFloat = 3
+        let gaitPhase = phase * gaitCycles * 2 * .pi
+        let swing = sin(gaitPhase)
+        let bob = abs(swing)
+
+        let sign: CGFloat = facingLeft ? -1 : 1
+        let legSwing = swing * 38
+        let armSwing = swing * 32
+        let kneeBend = bob * 12
+        let armBase: CGFloat = sign * 8
+
+        return StickPose(
+            headTilt: deg2rad(Double(swing) * 2 + Double(sign) * 8),
+            headShiftX: sign * 4,
+            headShiftY: -bob * 5,
+            neckShiftX: sign * 2.5,
+            hipShiftX: sign * 2,
+            hipShiftY: 0,
+            bodyScale: bob * 0.06,
+            figureRotation: 0,
+            // Both arms on the same side, swinging together like pendulums
+            leftUpperArmAngle: deg2rad(Double(-22 * sign) - Double(armSwing) + Double(armBase)),
+            leftForearmAngle: deg2rad(Double(14 * sign) + Double(armSwing) * 0.4),
+            rightUpperArmAngle: deg2rad(Double(-18 * sign) - Double(armSwing) + Double(armBase)),
+            rightForearmAngle: deg2rad(Double(10 * sign) + Double(armSwing) * 0.4),
+            // Legs: alternating stride
+            leftUpperLegAngle: deg2rad(-5 - Double(legSwing)),
+            leftLowerLegAngle: deg2rad(Double(kneeBend)),
+            rightUpperLegAngle: deg2rad(3 - Double(legSwing)),
+            rightLowerLegAngle: deg2rad(-Double(kneeBend))
+        )
+    }
+
     // ── Emotion Modifiers ────────────────────────────────────
 
     private static func emotionModifier(_ emotion: Emotion) -> StickPose {
@@ -365,10 +435,17 @@ final class StickFigureDrawer {
         breatheAmount: CGFloat,
         anticTrigger: Int = 0,
         jumpPhase: CGFloat = 0,
-        enginesReady: Bool = true
+        enginesReady: Bool = true,
+        walkType: WalkType = .none,
+        walkPhase: CGFloat = 0
     ) -> StickPose {
         // Engines not ready → waking up animation (overrides everything)
         if !enginesReady { return wakingUpPose() }
+
+        // Walking animation (overrides mode/emotion during walk)
+        if walkType == .left  { return walkingSidePose(walkPhase, facingLeft: true) }
+        if walkType == .right { return walkingSidePose(walkPhase, facingLeft: false) }
+        if walkType == .away || walkType == .toward { return walkingPose(walkPhase) }
 
         let modePose: StickPose
         switch mode {
@@ -431,7 +508,9 @@ final class StickFigureDrawer {
         anticTrigger: Int,
         jumpPhase: CGFloat,
         isSpeaking: Bool,
-        enginesReady: Bool = true
+        enginesReady: Bool = true,
+        walkType: WalkType = .none,
+        walkPhase: CGFloat = 0
     ) {
         guard let ctx = UIGraphicsGetCurrentContext() else { return }
 
@@ -459,7 +538,8 @@ final class StickFigureDrawer {
             speakAmount: speakAmount, thinkPhase: thinkPhase,
             listenPulse: listenPulse, breatheAmount: breatheAmount,
             anticTrigger: anticTrigger, jumpPhase: jumpPhase,
-            enginesReady: enginesReady
+            enginesReady: enginesReady,
+            walkType: walkType, walkPhase: walkPhase
         )
 
         let headCenter = CGPoint(x: cx, y: headCY)
@@ -510,6 +590,35 @@ final class StickFigureDrawer {
             if jdy != 0 {
                 ctx.translateBy(x: 0, y: jdy)
             }
+        }
+
+        // ── Walk transforms ──
+        switch walkType {
+        case .left:
+            // Walk left: wrap around screen edges (exit left → appear right)
+            let cycleW = w
+            let rawOffset = -walkPhase * cycleW
+            let wrapped = wrapMod(rawOffset + cycleW / 2, cycleW) - cycleW / 2
+            ctx.translateBy(x: wrapped, y: 0)
+        case .right:
+            // Walk right: wrap around screen edges (exit right → appear left)
+            let cycleW = w
+            let rawOffset = walkPhase * cycleW
+            let wrapped = wrapMod(rawOffset + cycleW / 2, cycleW) - cycleW / 2
+            ctx.translateBy(x: wrapped, y: 0)
+        case .away:
+            let scale = 1 - walkPhase * 0.75        // 1 → 0.25
+            let rise = walkPhase * figureH * 0.3    // move up as they recede
+            ctx.translateBy(x: cx, y: feetY)
+            ctx.scaleBy(x: scale, y: scale)
+            ctx.translateBy(x: -cx, y: -feetY + rise)
+        case .toward:
+            let scale = 0.25 + walkPhase * 0.75     // 0.25 → 1
+            let drop = (1 - walkPhase) * figureH * 0.3
+            ctx.translateBy(x: cx, y: feetY)
+            ctx.scaleBy(x: scale, y: scale)
+            ctx.translateBy(x: -cx, y: -feetY + drop)
+        case .none: break
         }
 
         // ── Joint positions ──
@@ -656,46 +765,50 @@ final class StickFigureDrawer {
         // Head
         drawHead(ctx: ctx, center: adjustedHeadCenter, radius: headR, emotion: emotion)
 
-        // Face
-        drawFace(ctx: ctx,
-                 headCenter: adjustedHeadCenter, headRadius: headR,
-                 pupilDx: pupilDx, pupilDy: pupilDy, eyeRadius: eyeR,
-                 mouthHalfW: mouthHalfW, emotion: emotion,
-                 isSpeaking: isSpeaking, speakAmount: speakAmount,
-                 blinkAmount: blinkProgress)
+        // Face + indicators (skip for back view when walking AWAY)
+        if walkType != .away {
+            drawFace(ctx: ctx,
+                     headCenter: adjustedHeadCenter, headRadius: headR,
+                     pupilDx: pupilDx, pupilDy: pupilDy, eyeRadius: eyeR,
+                     mouthHalfW: mouthHalfW, emotion: emotion,
+                     isSpeaking: isSpeaking, speakAmount: speakAmount,
+                     blinkAmount: blinkProgress,
+                     isSideView: walkType == .left || walkType == .right,
+                     facingRight: walkType == .right)
 
-        // Mode indicators
-        switch mode {
-        case .listening:
-            drawListenWaves(ctx: ctx, x: leftHand.x - jointR, y: leftHand.y, pulse: listenPulse)
-        case .thinking:
-            drawThinkDots(ctx: ctx, cx: adjustedHeadCenter.x,
-                          y: adjustedHeadCenter.y - headR - 20, phase: thinkPhase)
-        case .looking:
-            drawLookingIndicator(ctx: ctx, cx: adjustedHeadCenter.x,
-                                 y: adjustedHeadCenter.y - headR)
-        default: break
-        }
+            // Mode indicators
+            switch mode {
+            case .listening:
+                drawListenWaves(ctx: ctx, x: leftHand.x - jointR, y: leftHand.y, pulse: listenPulse)
+            case .thinking:
+                drawThinkDots(ctx: ctx, cx: adjustedHeadCenter.x,
+                              y: adjustedHeadCenter.y - headR - 20, phase: thinkPhase)
+            case .looking:
+                drawLookingIndicator(ctx: ctx, cx: adjustedHeadCenter.x,
+                                     y: adjustedHeadCenter.y - headR)
+            default: break
+            }
 
-        // Status ring
-        if mode == .thinking || mode == .speaking {
-            let alpha: CGFloat = mode == .thinking ? 0.35 : 0.8
-            let color = mode == .thinking ? StickColors.accent : StickColors.mouth
-            ctx.setStrokeColor(color.withAlphaComponent(alpha).cgColor)
-            ctx.setLineWidth(2.5)
-            let ringRect = CGRect(x: adjustedHeadCenter.x - headR - 10,
-                                  y: adjustedHeadCenter.y - headR - 10,
-                                  width: (headR + 10) * 2, height: (headR + 10) * 2)
-            ctx.strokeEllipse(in: ringRect)
-        }
+            // Status ring
+            if mode == .thinking || mode == .speaking {
+                let alpha: CGFloat = mode == .thinking ? 0.35 : 0.8
+                let color = mode == .thinking ? StickColors.accent : StickColors.mouth
+                ctx.setStrokeColor(color.withAlphaComponent(alpha).cgColor)
+                ctx.setLineWidth(2.5)
+                let ringRect = CGRect(x: adjustedHeadCenter.x - headR - 10,
+                                      y: adjustedHeadCenter.y - headR - 10,
+                                      width: (headR + 10) * 2, height: (headR + 10) * 2)
+                ctx.strokeEllipse(in: ringRect)
+            }
 
-        if mode == .looking {
-            ctx.setStrokeColor(StickColors.lookingColor.withAlphaComponent(0.6).cgColor)
-            ctx.setLineWidth(2.5)
-            let ringRect = CGRect(x: adjustedHeadCenter.x - headR - 10,
-                                  y: adjustedHeadCenter.y - headR - 10,
-                                  width: (headR + 10) * 2, height: (headR + 10) * 2)
-            ctx.strokeEllipse(in: ringRect)
+            if mode == .looking {
+                ctx.setStrokeColor(StickColors.lookingColor.withAlphaComponent(0.6).cgColor)
+                ctx.setLineWidth(2.5)
+                let ringRect = CGRect(x: adjustedHeadCenter.x - headR - 10,
+                                      y: adjustedHeadCenter.y - headR - 10,
+                                      width: (headR + 10) * 2, height: (headR + 10) * 2)
+                ctx.strokeEllipse(in: ringRect)
+            }
         }
 
         ctx.restoreGState()
@@ -770,7 +883,39 @@ final class StickFigureDrawer {
                                   pupilDx: CGFloat, pupilDy: CGFloat,
                                   eyeRadius: CGFloat, mouthHalfW: CGFloat,
                                   emotion: Emotion, isSpeaking: Bool,
-                                  speakAmount: CGFloat, blinkAmount: CGFloat) {
+                                  speakAmount: CGFloat, blinkAmount: CGFloat,
+                                  isSideView: Bool = false,
+                                  facingRight: Bool = false) {
+        // ── Side profile: single eye + shifted mouth ──
+        if isSideView {
+            let sign: CGFloat = facingRight ? 1 : -1
+            let eyeXOff = headRadius * 0.3
+            let eyeY = headCenter.y - headRadius * 0.12
+            let sideEyeCenter = CGPoint(x: headCenter.x + sign * eyeXOff, y: eyeY)
+
+            let lidScale: CGFloat = {
+                switch emotion {
+                case .sleepy: return 0.4 + blinkAmount * 0.6
+                case .shy:    return 0.35 + blinkAmount * 0.65
+                case .happy:  return 0.2 + blinkAmount * 0.8
+                default:      return blinkAmount
+                }
+            }()
+            if lidScale < 0.95 {
+                drawEye(ctx: ctx, center: sideEyeCenter, pupilDx: pupilDx, pupilDy: pupilDy,
+                        radius: eyeRadius * 1.15, lidScale: lidScale, emotion: emotion)
+            }
+
+            // Small profile mouth line on the near side
+            let mouthY = headCenter.y + headRadius * 0.35
+            let mouthCx = headCenter.x + sign * headRadius * 0.18
+            drawMouth(ctx: ctx, cx: mouthCx, mouthY: mouthY,
+                      halfWidth: mouthHalfW * 0.6, emotion: emotion,
+                      isSpeaking: isSpeaking, speakAmount: speakAmount)
+            return
+        }
+
+        // ── Front view: two eyes ──
         let eyeY = headCenter.y - headRadius * 0.28
         let eyeXOff = headRadius * 0.38
         let leftEyeCenter  = CGPoint(x: headCenter.x - eyeXOff, y: eyeY)
@@ -785,7 +930,6 @@ final class StickFigureDrawer {
             }
         }()
 
-        // Eyes
         if lidScale < 0.95 {
             drawEye(ctx: ctx, center: leftEyeCenter, pupilDx: pupilDx, pupilDy: pupilDy,
                     radius: eyeRadius, lidScale: lidScale, emotion: emotion)
@@ -793,16 +937,15 @@ final class StickFigureDrawer {
                     radius: eyeRadius, lidScale: lidScale, emotion: emotion)
         }
 
-        // Eyebrows — baseline above eyes, adjusted per emotion for enlarged eyes
+        // Eyebrows
         let browYBase = eyeY - eyeRadius * 2.8
         let browY: CGFloat = {
             switch emotion {
-            case .surprised: return browYBase - eyeRadius * 0.8  // eyes 1.6× bigger
-            case .goofy:     return browYBase - eyeRadius * 0.7  // eyes 1.5× bigger
+            case .surprised: return browYBase - eyeRadius * 0.8
+            case .goofy:     return browYBase - eyeRadius * 0.7
             default:         return browYBase
             }
         }()
-        // Emoji convention: brows for most emotions; happy/sleepy let eyes do the work
         let emotionsWithBrows: Set<Emotion> = [.neutral, .sad, .surprised, .curious, .goofy, .shy]
         if emotionsWithBrows.contains(emotion) {
             let browLen = eyeRadius * 1.3
@@ -1177,6 +1320,13 @@ final class StickFigureDrawer {
 }
 
 // MARK: - Utility
+
+/// Float modulo that always returns a non-negative remainder
+private func wrapMod(_ value: CGFloat, _ range: CGFloat) -> CGFloat {
+    var v = value.truncatingRemainder(dividingBy: range)
+    if v < 0 { v += range }
+    return v
+}
 
 private func deg2rad(_ degrees: Double) -> CGFloat {
     return CGFloat(degrees * .pi / 180.0)
