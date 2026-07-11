@@ -351,38 +351,44 @@ final class StickFigureDrawer {
         )
     }
 
-    /// WALKING side-profile: both arms on walking side, body leans forward. Used for LEFT/RIGHT.
+    /// WALKING side-profile: cross-swing arms with fixed elbow, alternating straight/bent legs. Used for LEFT/RIGHT.
     private static func walkingSidePose(_ phase: CGFloat, facingLeft: Bool) -> StickPose {
         let gaitCycles: CGFloat = 3
         let gaitPhase = phase * gaitCycles * 2 * .pi
-        let swing = sin(gaitPhase)
-        let bob = abs(swing)
+        let swing = sin(gaitPhase)         // -1..1, drives limb alternation
+        let bob = abs(swing)               // 0..1, body bounce
 
         let sign: CGFloat = facingLeft ? -1 : 1
-        let legSwing = swing * 38
-        let armSwing = swing * 32
-        let kneeBend = bob * 12
-        let armBase: CGFloat = sign * 8
+
+        // Leg: one straight (planted), one bent (swinging), alternating
+        let legArc: CGFloat = 28           // max leg swing in degrees
+        let kneeFlex: CGFloat = 22         // max knee bend when swinging
+
+        // Arm: upper arms cross-swing (opposite to legs), forearms keep fixed angle
+        let armSwing: CGFloat = 24
+        let fixedElbow: CGFloat = 18
 
         return StickPose(
-            headTilt: deg2rad(Double(swing) * 2 + Double(sign) * 8),
-            headShiftX: sign * 4,
+            headTilt: deg2rad(Double(swing) * 2 + Double(sign) * 4),
+            headShiftX: sign * 3,
             headShiftY: -bob * 5,
-            neckShiftX: sign * 2.5,
+            neckShiftX: sign * 2,
             hipShiftX: sign * 2,
             hipShiftY: 0,
-            bodyScale: bob * 0.06,
+            bodyScale: bob * 0.04,
             figureRotation: 0,
-            // Both arms on the same side, swinging together like pendulums
-            leftUpperArmAngle: deg2rad(Double(-22 * sign) - Double(armSwing) + Double(armBase)),
-            leftForearmAngle: deg2rad(Double(14 * sign) + Double(armSwing) * 0.4),
-            rightUpperArmAngle: deg2rad(Double(-18 * sign) - Double(armSwing) + Double(armBase)),
-            rightForearmAngle: deg2rad(Double(10 * sign) + Double(armSwing) * 0.4),
-            // Legs: alternating stride
-            leftUpperLegAngle: deg2rad(-5 - Double(legSwing)),
-            leftLowerLegAngle: deg2rad(Double(kneeBend)),
-            rightUpperLegAngle: deg2rad(3 + Double(legSwing)),
-            rightLowerLegAngle: deg2rad(-Double(kneeBend))
+            // Arms: cross-swing with fixed elbow angle
+            leftUpperArmAngle: deg2rad(Double(-armSwing * swing)),
+            leftForearmAngle: deg2rad(Double(-fixedElbow)),
+            rightUpperArmAngle: deg2rad(Double(armSwing * swing)),
+            rightForearmAngle: deg2rad(Double(fixedElbow)),
+            // Legs: one straight (planted back), one bent (swinging forward)
+            // swing > 0 → right forward/bent, left back/straight
+            // swing < 0 → left forward/bent, right back/straight
+            leftUpperLegAngle: deg2rad(-Double(swing) * legArc),
+            leftLowerLegAngle: deg2rad(max(0, -swing) * kneeFlex),
+            rightUpperLegAngle: deg2rad(Double(swing) * legArc),
+            rightLowerLegAngle: deg2rad(-max(0, swing) * kneeFlex)
         )
     }
 
@@ -773,32 +779,34 @@ final class StickFigureDrawer {
         // IK for legs: lock feet on ground (all standing poses)
         // Skip during jumps (feet leave ground), lying (figure rotated),
         // and waking up (spread legs).
-        // NOTE: during stage walk we still apply IK to the planted foot to
-        // prevent both feet from leaving the ground (floating appearance).
+        // During stage walk and left/right walking we apply IK only to the
+        // planted foot — the swinging foot uses FK so it can lift naturally.
         let isJumping = jumpPhase > 0.01
         let isLying = pose.figureRotation != 0
         let isStageWalk = mode == .speaking && stageWalkPhase > 0.01
+        let isWalking = (walkType == .left || walkType == .right) && walkPhase > 0.01
         let isWakingUp = !enginesReady
         if !isJumping && !isLying && !isWakingUp {
             let isSquatting = mode == .idle && anticTrigger > 0 && anticTrigger % 7 == 3
             let footSpread = isSquatting ? w * StickGeo.squatFootSpreadFrac : w * StickGeo.footSpreadFrac
 
-            if isStageWalk {
-                // During the talking sway, keep at least one foot planted.
-                // Planted foot = opposite to sway direction:
-                //   sway right → left foot planted; sway left → right foot planted.
-                // A small overlap zone (±0.05) plants both feet during transition.
-                let stageSwing = sin(stageWalkPhase * 2 * .pi)
+            if isStageWalk || isWalking {
+                // Keep the planted foot on the ground; the swinging foot lifts via FK.
+                // Planted foot = opposite to swing direction (trailing leg).
+                let phase = isWalking ? walkPhase : stageWalkPhase
+                let cycles: CGFloat = isWalking ? 3 : 1
+                let gaitPhase = phase * cycles * 2 * .pi
+                let refSwing = sin(gaitPhase)
 
-                if stageSwing >= -0.05 {
-                    // Swaying right or centered: left foot is the anchor
+                if refSwing >= -0.05 {
+                    // Left foot planted (swing ≥ -0.05 → left leg is trailing)
                     if let ik = solve2BoneIK(root: leftHip, len1: upperLegLen, len2: lowerLegLen,
                                              target: CGPoint(x: leftHip.x - footSpread, y: feetY), bendCCW: true) {
                         llUA = ik.angle1; llLA = ik.angle2
                     }
                 }
-                if stageSwing <= 0.05 {
-                    // Swaying left or centered: right foot is the anchor
+                if refSwing <= 0.05 {
+                    // Right foot planted (swing ≤ 0.05 → right leg is trailing)
                     if let ik = solve2BoneIK(root: rightHip, len1: upperLegLen, len2: lowerLegLen,
                                              target: CGPoint(x: rightHip.x + footSpread, y: feetY), bendCCW: false) {
                         rlUA = ik.angle1; rlLA = ik.angle2
