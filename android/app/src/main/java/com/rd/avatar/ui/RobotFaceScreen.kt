@@ -13,7 +13,9 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -63,8 +65,8 @@ private const val HIP_W_FRACTION         = 0.04f   // hip half-width / canvas wi
 private const val BODY_STROKE    = 6f
 private const val LIMB_STROKE    = 5f
 private const val JOINT_RADIUS   = LIMB_STROKE * 0.8f   // hand/foot end cap
-private const val EYE_RADIUS_FRACTION  = 0.012f
-private const val MOUTH_W_FRACTION     = 0.04f
+private const val EYE_RADIUS_FRACTION  = 0.018f
+private const val MOUTH_W_FRACTION     = 0.045f
 
 // ─── Walk direction ─────────────────────────────────────────
 private enum class WalkType { NONE, LEFT, RIGHT, AWAY, TOWARD }
@@ -480,14 +482,14 @@ fun RobotFaceScreen(
                     state.anticTrigger > 0 && state.anticTrigger % 7L == 3L
                 // Wider stance for squatting, narrow for normal standing
                 val footSpread = if (isSquatting) 22f else 6f
-                solve2BoneIK(leftHip, upperLegLen, lowerLegLen,
-                    Offset(leftHip.x - footSpread, feetY), bendCCW = true)?.let {
-                    llUA = it.angle1; llLA = it.angle2
-                }
-                solve2BoneIK(rightHip, upperLegLen, lowerLegLen,
-                    Offset(rightHip.x + footSpread, feetY), bendCCW = false)?.let {
-                    rlUA = it.angle1; rlLA = it.angle2
-                }
+                // Solve leg IK preferring outward knee bend — prevents knock-kneed
+                // look on devices where the aspect ratio causes compensation > |targetAngle|
+                val leftFootTarget  = Offset(leftHip.x - footSpread, feetY)
+                val rightFootTarget = Offset(rightHip.x + footSpread, feetY)
+                solveLegIK(leftHip, upperLegLen, lowerLegLen, leftFootTarget,
+                    outwardKneeLeft = true)?.let { llUA = it.angle1; llLA = it.angle2 }
+                solveLegIK(rightHip, upperLegLen, lowerLegLen, rightFootTarget,
+                    outwardKneeLeft = false)?.let { rlUA = it.angle1; rlLA = it.angle2 }
             }
 
             // ── Final limb positions (FK with possibly-IK-overridden angles) ──
@@ -760,6 +762,35 @@ private fun solve2BoneIK(
     val angle2 = atan2(target.x - elbowX, target.y - elbowY)
 
     return IkResult(angle1, angle2)
+}
+
+/**
+ * Leg-specific IK: tries both bend directions and picks the one where the knee
+ * stays on the outward side of the hip (left knee left of left hip, right knee
+ * right of right hip).  This prevents the knock-kneed / pigeon-toed look that
+ * can appear on devices whose aspect ratio causes a large compensation angle.
+ */
+private fun solveLegIK(
+    root: Offset, len1: Float, len2: Float,
+    target: Offset, outwardKneeLeft: Boolean
+): IkResult? {
+    val ccw = solve2BoneIK(root, len1, len2, target, bendCCW = true)
+    val cw  = solve2BoneIK(root, len1, len2, target, bendCCW = false)
+
+    // Prefer the solution whose knee is on the outward side of the root
+    val ccwKneeX = ccw?.let { root.x + len1 * sin(it.angle1) }
+    val cwKneeX  = cw?.let  { root.x + len1 * sin(it.angle1) }
+
+    val ccwOutward = ccwKneeX != null && if (outwardKneeLeft) ccwKneeX < root.x else ccwKneeX > root.x
+    val cwOutward  = cwKneeX  != null && if (outwardKneeLeft) cwKneeX  < root.x else cwKneeX  > root.x
+
+    return when {
+        ccw != null && ccwOutward -> ccw
+        cw  != null && cwOutward  -> cw
+        // Fallback: prefer the non-null result, or ccw over cw
+        ccw != null -> ccw
+        else -> cw
+    }
 }
 
 /** IDLE: relaxed standing with visible elbow/knee bends */
@@ -1403,7 +1434,7 @@ private fun DrawScope.drawStickFace(
     }
 
     // ── Front view: two eyes ──
-    val eyeY = headCenter.y - headRadius * 0.15f
+    val eyeY = headCenter.y - headRadius * 0.28f
     val eyeXOff = headRadius * 0.38f
     val leftEyeCenter  = Offset(headCenter.x - eyeXOff, eyeY)
     val rightEyeCenter = Offset(headCenter.x + eyeXOff, eyeY)
@@ -1421,9 +1452,15 @@ private fun DrawScope.drawStickFace(
     }
 
     // ── Eyebrows (simple curved lines) ──
-    if (emotion != Emotion.NEUTRAL) {
-        val browY = eyeY - eyeRadius * 2.8f
-        val browLen = eyeRadius * 1.8f
+    // Match iOS: draw brows for all emotions except HAPPY (squint eyes carry expression)
+    if (emotion != Emotion.HAPPY) {
+        val browYBase = eyeY - eyeRadius * 2.8f
+        val browY = when (emotion) {
+            Emotion.SURPRISED -> browYBase - eyeRadius * 0.8f
+            Emotion.GOOFY     -> browYBase - eyeRadius * 0.7f
+            else              -> browYBase
+        }
+        val browLen = eyeRadius * 1.3f
         drawStickEyebrow(leftEyeCenter.x, browY, browLen, emotion, left = true)
         drawStickEyebrow(rightEyeCenter.x, browY, browLen, emotion, left = false)
     }
@@ -1449,13 +1486,13 @@ private fun DrawScope.drawStickEye(
     // Eye shape varies by emotion
     when (emotion) {
         Emotion.SURPRISED -> {
-            // Wide open circle
+            // Emoji 😮: wide-open round eyes with catchlights (matching iOS)
             drawCircle(color = ColorEye, radius = radius * 1.6f, center = pupilCenter)
-            // Small highlight
+            // Large catchlight upper-left
             drawCircle(
                 color = Color.White,
-                radius = radius * 0.3f,
-                center = Offset(pupilCenter.x - radius * 0.3f, pupilCenter.y - radius * 0.4f)
+                radius = radius * 0.45f,
+                center = Offset(pupilCenter.x - radius * 0.5f, pupilCenter.y - radius * 0.7f)
             )
         }
         Emotion.HAPPY -> {
@@ -1470,39 +1507,41 @@ private fun DrawScope.drawStickEye(
             drawPath(arcPath, ColorEye, style = Stroke(width = 2.5f, cap = StrokeCap.Round))
         }
         Emotion.SLEEPY -> {
-            // Heavy eyelid: horizontal line
-            drawLine(
-                color = ColorEye,
-                start = Offset(pupilCenter.x - radius * 1.3f, pupilCenter.y),
-                end = Offset(pupilCenter.x + radius * 1.3f, pupilCenter.y),
-                strokeWidth = 2.5f,
-                cap = StrokeCap.Round
-            )
+            // Downward arcs = relaxed closed eyes (matching iOS)
+            val arcW = radius * 1.1f
+            val arcPath = Path().apply {
+                moveTo(pupilCenter.x - arcW, pupilCenter.y - arcW * 0.15f)
+                quadraticBezierTo(
+                    pupilCenter.x, pupilCenter.y + arcW * 0.55f,
+                    pupilCenter.x + arcW, pupilCenter.y - arcW * 0.15f
+                )
+            }
+            drawPath(arcPath, ColorEye, style = Stroke(width = 3.0f, cap = StrokeCap.Round))
         }
         Emotion.GOOFY -> {
-            // Derp eyes: different sizes + one looking elsewhere
-            // Big circle + tiny pupil
+            // Emoji 😜: derp eyes — big circle + tiny off-center pupil (matching iOS)
             drawCircle(color = ColorEye, radius = radius * 1.5f, center = pupilCenter)
-            // Tiny off-center pupil
+            // White circle (sclera catchlight)
             drawCircle(
                 color = Color.White,
                 radius = radius * 0.4f,
-                center = Offset(pupilCenter.x + radius * 0.6f, pupilCenter.y - radius * 0.3f)
+                center = Offset(pupilCenter.x + radius * 0.4f, pupilCenter.y - radius * 0.5f)
             )
+            // Tiny pupil
             drawCircle(
                 color = ColorEye,
                 radius = radius * 0.25f,
-                center = Offset(pupilCenter.x + radius * 0.55f, pupilCenter.y - radius * 0.3f)
+                center = Offset(pupilCenter.x + radius * 0.425f, pupilCenter.y - radius * 0.425f)
             )
         }
         else -> {
-            // Normal: filled circle
+            // Neutral/sad/shy/curious: filled circles with catchlight (matching iOS)
             drawCircle(color = ColorEye, radius = radius, center = pupilCenter)
-            // Tiny highlight
+            // Catchlight
             drawCircle(
                 color = Color.White,
-                radius = radius * 0.25f,
-                center = Offset(pupilCenter.x - radius * 0.25f, pupilCenter.y - radius * 0.35f)
+                radius = radius * 0.35f,
+                center = Offset(pupilCenter.x - radius * 0.3f, pupilCenter.y - radius * 0.4f)
             )
         }
     }
@@ -1529,9 +1568,11 @@ private fun DrawScope.drawStickEyebrow(
     val arch = halfLen * 0.4f
 
     when (emotion) {
-        Emotion.HAPPY -> {
-            path.moveTo(x0, browY)
-            path.quadraticBezierTo(eyeCx, browY - arch * 1.5f, x1, browY)
+        Emotion.NEUTRAL -> {
+            // Emoji 😐: subtle flat brows, slight downward angle toward center
+            val innerY = browY + halfLen * 0.15f
+            path.moveTo(x0, browY - halfLen * 0.1f)
+            path.quadraticBezierTo(eyeCx, browY - halfLen * 0.05f, x1, innerY)
         }
         Emotion.SAD -> {
             val sign = if (left) 1f else -1f
@@ -1564,8 +1605,8 @@ private fun DrawScope.drawStickEyebrow(
                 path.moveTo(x0, browY - arch * 2f)
                 path.quadraticBezierTo(eyeCx, browY - arch * 2.5f, x1, browY - arch * 1.5f)
             } else {
-                path.moveTo(x0, browY + arch * 0.5f)
-                path.quadraticBezierTo(eyeCx, browY - arch * 0.3f, x1, browY + arch * 0.8f)
+                path.moveTo(x0, browY - arch * 0.3f)
+                path.quadraticBezierTo(eyeCx, browY - arch * 1.0f, x1, browY)
             }
         }
         else -> {}
@@ -1626,12 +1667,14 @@ private fun DrawScope.drawStickMouth(
     val path = Path()
     when (emotion) {
         Emotion.HAPPY -> {
-            path.moveTo(cx - halfWidth, mouthY)
-            path.quadraticBezierTo(cx, mouthY + halfWidth * 0.8f, cx + halfWidth, mouthY)
+            // Emoji-style filled D-shaped open grin (matching iOS)
+            drawOpenGrin(cx, mouthY, halfWidth * 1.05f, halfWidth * 0.7f)
+            return
         }
         Emotion.SAD -> {
-            path.moveTo(cx - halfWidth * 0.7f, mouthY)
-            path.quadraticBezierTo(cx, mouthY - halfWidth * 0.4f, cx + halfWidth * 0.7f, mouthY)
+            // Downturned corners, wider than neutral (matching iOS: hw=0.85, bw=0.85, cpY=-0.45)
+            path.moveTo(cx - halfWidth * 0.7225f, mouthY)
+            path.quadraticBezierTo(cx, mouthY - halfWidth * 0.45f, cx + halfWidth * 0.7225f, mouthY)
         }
         Emotion.SURPRISED -> {
             val r = halfWidth * 0.45f
@@ -1649,13 +1692,13 @@ private fun DrawScope.drawStickMouth(
             return
         }
         Emotion.SLEEPY -> {
-            path.moveTo(cx - halfWidth * 0.5f, mouthY)
-            path.quadraticBezierTo(cx, mouthY + halfWidth * 0.2f, cx + halfWidth * 0.5f, mouthY)
+            path.moveTo(cx - halfWidth * 0.4225f, mouthY)
+            path.quadraticBezierTo(cx, mouthY + halfWidth * 0.2f, cx + halfWidth * 0.4225f, mouthY)
         }
         Emotion.SHY -> {
             // Tiny wavy smile
-            path.moveTo(cx - halfWidth * 0.45f, mouthY)
-            path.quadraticBezierTo(cx, mouthY + halfWidth * 0.15f, cx + halfWidth * 0.45f, mouthY)
+            path.moveTo(cx - halfWidth * 0.36f, mouthY)
+            path.quadraticBezierTo(cx, mouthY + halfWidth * 0.15f, cx + halfWidth * 0.36f, mouthY)
         }
         Emotion.GOOFY -> {
             // Tongue out to the side! (≧▽≦)
@@ -1683,9 +1726,9 @@ private fun DrawScope.drawStickMouth(
             return
         }
         else -> {
-            // Neutral: subtle straight/slight curve
-            path.moveTo(cx - halfWidth * 0.6f, mouthY)
-            path.quadraticBezierTo(cx, mouthY + halfWidth * 0.08f, cx + halfWidth * 0.6f, mouthY)
+            // Neutral: subtle straight/slight curve (matching iOS: hw=0.8, bw=0.8, cpY=0.08)
+            path.moveTo(cx - halfWidth * 0.64f, mouthY)
+            path.quadraticBezierTo(cx, mouthY + halfWidth * 0.08f, cx + halfWidth * 0.64f, mouthY)
         }
     }
 
@@ -1693,6 +1736,32 @@ private fun DrawScope.drawStickMouth(
         path = path,
         color = ColorMouth,
         style = Stroke(width = 3f, cap = StrokeCap.Round)
+    )
+}
+
+/** Emoji-style filled semi-ellipse grin with white tooth bar.
+ *  Ported from iOS FaceParts.drawOpenGrin. */
+private fun DrawScope.drawOpenGrin(cx: Float, mouthY: Float, rx: Float, ry: Float) {
+    // Mouth cavity: semi-ellipse with flat top at mouthY, curved bottom
+    // (matches standard emoji 😄 open-mouth grin convention, matching iOS)
+    val cavityRect = Rect(cx - rx, mouthY - ry, cx + rx, mouthY + ry)
+    val cavityPath = Path().apply {
+        addArc(cavityRect, 0f, 180f)  // CW: right → bottom → left (bottom half)
+        close()  // flat line at top (y=mouthY) — the tooth line
+    }
+
+    // Dark mouth cavity
+    drawPath(cavityPath, ColorMouth)
+
+    // White tooth bar — rests at the flat top of the cavity (y=mouthY).
+    // Narrow enough to stay within the curved cavity sides without clipping.
+    val barW = rx * 1.5f
+    val barH = ry * 0.45f
+    drawRoundRect(
+        color = Color.White,
+        topLeft = Offset(cx - barW / 2f, mouthY),
+        size = Size(barW, barH),
+        cornerRadius = CornerRadius(barH * 0.35f, barH * 0.35f)
     )
 }
 
