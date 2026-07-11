@@ -59,6 +59,9 @@ struct RobotState {
     /// Current emotion
     var emotion: Emotion = .neutral
 
+    /// Whether engines (ASR + TTS) are initialized and ready
+    var enginesReady: Bool = false
+
     /// Whether TTS is currently producing audio
     var isSpeaking: Bool = false
 

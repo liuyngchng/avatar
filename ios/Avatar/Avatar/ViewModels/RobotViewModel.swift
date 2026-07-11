@@ -221,6 +221,7 @@ class RobotViewModel: ObservableObject {
 
             await MainActor.run {
                 self.enginesReady = asrReady && ttsReady
+                self.robotState.enginesReady = asrReady && ttsReady
                 self.isInitializingEngines = false
                 if self.enginesReady {
                     self.errorMessage = nil

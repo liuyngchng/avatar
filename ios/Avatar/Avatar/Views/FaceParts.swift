@@ -44,7 +44,7 @@ enum StickGeo {
     static let figureHeightFrac: CGFloat = 0.52
     static let feetYFrac: CGFloat        = 0.82
     static let headRadiusFrac: CGFloat   = 0.085
-    static let bodyLengthFrac: CGFloat   = 0.17
+    static let bodyLengthFrac: CGFloat   = 0.19  // neck→hip (tuned so legs reach ground)
     static let upperArmFrac: CGFloat     = 0.10
     static let forearmFrac: CGFloat      = 0.09
     static let upperLegFrac: CGFloat     = 0.13
@@ -222,22 +222,47 @@ final class StickFigureDrawer {
 
     private static func squattingPose() -> StickPose {
         StickPose(
-            headShiftY: 12, bodyScale: 0.55,
+            headShiftY: 8, bodyScale: 0,  // no compress — IK places feet; squat from knee bend
             leftUpperArmAngle: deg2rad(-20), leftForearmAngle: deg2rad(-80),
             rightUpperArmAngle: deg2rad(20), rightForearmAngle: deg2rad(80),
-            leftUpperLegAngle: deg2rad(-78), leftLowerLegAngle: deg2rad(82),
-            rightUpperLegAngle: deg2rad(78), rightLowerLegAngle: deg2rad(-82)
+            leftUpperLegAngle: deg2rad(-55), leftLowerLegAngle: deg2rad(50),
+            rightUpperLegAngle: deg2rad(55), rightLowerLegAngle: deg2rad(-50)
         )
     }
 
+    /// LOUNGING: leaning against left screen edge like a wall. Body at ~18° above horizontal, hips and knees bent for a natural relaxed look.
     private static func lyingPose() -> StickPose {
         StickPose(
-            headTilt: deg2rad(-15), headShiftY: -10,
-            figureRotation: -90,
-            leftUpperArmAngle: deg2rad(-30), leftForearmAngle: deg2rad(-10),
-            rightUpperArmAngle: deg2rad(5), rightForearmAngle: deg2rad(20),
-            leftUpperLegAngle: deg2rad(-10), leftLowerLegAngle: deg2rad(-5),
-            rightUpperLegAngle: deg2rad(15), rightLowerLegAngle: deg2rad(10)
+            headTilt: deg2rad(-22),                    // head resting on "wall"
+            figureRotation: -72,                        // lean against left edge (~18° above flat)
+            // Left arm: propping body up, elbow planted
+            leftUpperArmAngle: deg2rad(-105),           // reach back to prop
+            leftForearmAngle: deg2rad(-65),             // forearm planted
+            // Right arm: relaxed across body
+            rightUpperArmAngle: deg2rad(25),
+            rightForearmAngle: deg2rad(-30),
+            // Legs: hips bent so legs hang more downward, knees bent naturally
+            leftUpperLegAngle: deg2rad(-48),            // thigh angled down from hip
+            leftLowerLegAngle: deg2rad(62),             // shin hangs near vertical
+            rightUpperLegAngle: deg2rad(48),            // thigh angled down from hip
+            rightLowerLegAngle: deg2rad(-62)            // shin hangs near vertical
+        )
+    }
+
+    /// WAKING UP: both hands rubbing eyes, groggy head tilt, relaxed stance
+    private static func wakingUpPose() -> StickPose {
+        StickPose(
+            headTilt: deg2rad(-8),          // groggy tilt
+            headShiftY: 3,                  // head slightly tucked
+            bodyScale: 0, figureRotation: 0,
+            // Arms: elbows out to sides, hands reaching toward face (IK fine-tunes to eyes)
+            leftUpperArmAngle: deg2rad(-72),
+            leftForearmAngle: deg2rad(-35),
+            rightUpperArmAngle: deg2rad(72),
+            rightForearmAngle: deg2rad(35),
+            // Legs: relaxed standing
+            leftUpperLegAngle: deg2rad(-2), leftLowerLegAngle: deg2rad(0),
+            rightUpperLegAngle: deg2rad(2), rightLowerLegAngle: deg2rad(0)
         )
     }
 
@@ -339,8 +364,12 @@ final class StickFigureDrawer {
         listenPulse: CGFloat,
         breatheAmount: CGFloat,
         anticTrigger: Int = 0,
-        jumpPhase: CGFloat = 0
+        jumpPhase: CGFloat = 0,
+        enginesReady: Bool = true
     ) -> StickPose {
+        // Engines not ready → waking up animation (overrides everything)
+        if !enginesReady { return wakingUpPose() }
+
         let modePose: StickPose
         switch mode {
         case .idle:
@@ -401,7 +430,8 @@ final class StickFigureDrawer {
         blinkProgress: CGFloat,
         anticTrigger: Int,
         jumpPhase: CGFloat,
-        isSpeaking: Bool
+        isSpeaking: Bool,
+        enginesReady: Bool = true
     ) {
         guard let ctx = UIGraphicsGetCurrentContext() else { return }
 
@@ -428,19 +458,47 @@ final class StickFigureDrawer {
             mode: mode, emotion: emotion,
             speakAmount: speakAmount, thinkPhase: thinkPhase,
             listenPulse: listenPulse, breatheAmount: breatheAmount,
-            anticTrigger: anticTrigger, jumpPhase: jumpPhase
+            anticTrigger: anticTrigger, jumpPhase: jumpPhase,
+            enginesReady: enginesReady
         )
 
         let headCenter = CGPoint(x: cx, y: headCY)
         let neckY = headCY + headR
         let effectiveHipY = neckY + bodyLen * (1 - pose.bodyScale)
 
-        // Save context for transforms
+        // ═══════════════════════════════════════════════════════
+        //  GROUND — drawn BEFORE any figure transforms so it
+        //  stays fixed regardless of jump / rotation / etc.
+        // ═══════════════════════════════════════════════════════
+        drawGroundLine(ctx: ctx, cx: cx, feetY: feetY, canvasW: w)
+        drawGroundShadow(ctx: ctx, cx: cx, feetY: feetY)
+
+        // ── Auto-zoom: if rotated figure extends beyond canvas, scale down ──
+        let lieScale: CGFloat
+        if pose.figureRotation != 0 {
+            let absAngleRad = abs(pose.figureRotation) * .pi / 180
+            let horizontalReach = sin(absAngleRad) * figureH + headR * 2.5
+            let availableW = w / 2 - 20  // margin from edge
+            if horizontalReach > availableW {
+                lieScale = max((availableW / horizontalReach), 0.25)
+            } else {
+                lieScale = 1
+            }
+        } else {
+            lieScale = 1
+        }
+        if lieScale < 1 {
+            ctx.translateBy(x: cx, y: feetY)
+            ctx.scaleBy(x: lieScale, y: lieScale)
+            ctx.translateBy(x: -cx, y: -feetY)
+        }
+
+        // Save context for figure transforms (rotation / jump)
         ctx.saveGState()
 
-        // Whole-body rotation (lying down)
+        // Whole-body rotation (lying down) — pivot around feet so body rests on ground
         if pose.figureRotation != 0 {
-            let rotCenter = CGPoint(x: cx, y: feetY - figureH / 2)
+            let rotCenter = CGPoint(x: cx, y: feetY)
             ctx.translateBy(x: rotCenter.x, y: rotCenter.y)
             ctx.rotate(by: pose.figureRotation * .pi / 180)
             ctx.translateBy(x: -rotCenter.x, y: -rotCenter.y)
@@ -497,16 +555,33 @@ final class StickFigureDrawer {
             }
         }
 
-        // IK for squatting
-        let isSquatting = mode == .idle && anticTrigger > 0 && anticTrigger % 7 == 3
-        if isSquatting {
-            let groundY = feetY + 6
+        // Waking up: both hands IK → eyes (rub eyes)
+        if !enginesReady {
+            let leftEyeTarget = CGPoint(x: headForIK.x - headR * 0.5, y: headForIK.y - headR * 0.05)
+            if let ik = solve2BoneIK(root: leftShoulder, len1: upperArmLen, len2: forearmLen,
+                                     target: leftEyeTarget, bendCCW: true) {
+                laUA = ik.angle1; laFA = ik.angle2
+            }
+            let rightEyeTarget = CGPoint(x: headForIK.x + headR * 0.5, y: headForIK.y - headR * 0.05)
+            if let ik = solve2BoneIK(root: rightShoulder, len1: upperArmLen, len2: forearmLen,
+                                     target: rightEyeTarget, bendCCW: false) {
+                raUA = ik.angle1; raFA = ik.angle2
+            }
+        }
+
+        // IK for legs: lock feet on ground (all standing poses)
+        // Skip during jumps (feet leave ground) and lying (figure rotated)
+        let isJumping = jumpPhase > 0.01
+        let isLying = pose.figureRotation != 0
+        if !isJumping && !isLying {
+            let isSquatting = mode == .idle && anticTrigger > 0 && anticTrigger % 7 == 3
+            let footSpread: CGFloat = isSquatting ? 22 : 6
             if let ik = solve2BoneIK(root: leftHip, len1: upperLegLen, len2: lowerLegLen,
-                                     target: CGPoint(x: leftHip.x - 12, y: groundY), bendCCW: true) {
+                                     target: CGPoint(x: leftHip.x - footSpread, y: feetY), bendCCW: true) {
                 llUA = ik.angle1; llLA = ik.angle2
             }
             if let ik = solve2BoneIK(root: rightHip, len1: upperLegLen, len2: lowerLegLen,
-                                     target: CGPoint(x: rightHip.x + 12, y: groundY), bendCCW: false) {
+                                     target: CGPoint(x: rightHip.x + footSpread, y: feetY), bendCCW: false) {
                 rlUA = ik.angle1; rlLA = ik.angle2
             }
         }
@@ -550,11 +625,8 @@ final class StickFigureDrawer {
         )
 
         // ═══════════════════════════════════════════════════════
-        //  DRAW ORDER
+        //  DRAW ORDER (ground already drawn above transforms)
         // ═══════════════════════════════════════════════════════
-
-        // Ground shadow
-        drawGroundShadow(ctx: ctx, cx: cx, feetY: feetY)
 
         // Legs
         drawLimb(ctx: ctx, j1: leftHip, j2: leftKnee, j3: leftFoot, endR: jointR)
@@ -1044,6 +1116,26 @@ final class StickFigureDrawer {
         ctx.setFillColor(StickColors.shadow.cgColor)
         ctx.fillEllipse(in: CGRect(x: cx - shadowW / 2, y: feetY - shadowH / 2,
                                     width: shadowW, height: shadowH))
+    }
+
+    /// Ground line across the view at foot level
+    private static func drawGroundLine(ctx: CGContext, cx: CGFloat, feetY: CGFloat, canvasW: CGFloat) {
+        let groundW = canvasW * 0.7
+        let x0 = cx - groundW / 2
+        let x1 = cx + groundW / 2
+        // Subtle center-weighted line
+        ctx.setStrokeColor(StickColors.stickBody.withAlphaComponent(0.1).cgColor)
+        ctx.setLineWidth(2)
+        ctx.setLineCap(.round)
+        ctx.move(to: CGPoint(x: x0, y: feetY))
+        ctx.addLine(to: CGPoint(x: x1, y: feetY))
+        ctx.strokePath()
+        // Thin shadow line just below
+        ctx.setStrokeColor(StickColors.shadow.cgColor)
+        ctx.setLineWidth(8)
+        ctx.move(to: CGPoint(x: x0, y: feetY + 3))
+        ctx.addLine(to: CGPoint(x: x1, y: feetY + 3))
+        ctx.strokePath()
     }
 
     private static func drawListenWaves(ctx: CGContext, x: CGFloat, y: CGFloat, pulse: CGFloat) {

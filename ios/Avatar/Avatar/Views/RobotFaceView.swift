@@ -100,7 +100,8 @@ final class FaceDisplayView: UIView {
             blinkProgress: blinkProgress,
             anticTrigger: robotState.anticTrigger,
             jumpPhase: jumpPhase,
-            isSpeaking: robotState.isSpeaking
+            isSpeaking: robotState.isSpeaking,
+            enginesReady: robotState.enginesReady
         )
     }
 

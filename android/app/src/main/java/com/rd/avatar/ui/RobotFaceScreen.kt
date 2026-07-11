@@ -50,7 +50,7 @@ private val ColorAccent    = Color(0xFF66AAFF)       // mode accent
 private const val FIGURE_HEIGHT_FRACTION = 0.52f   // total figure height / canvas height
 private const val FEET_Y_FRACTION        = 0.82f   // where feet touch ground
 private const val HEAD_RADIUS_FRACTION   = 0.085f  // head radius / canvas width
-private const val BODY_LENGTH_FRACTION   = 0.17f   // neck→hip / canvas height
+private const val BODY_LENGTH_FRACTION   = 0.19f   // neck→hip / canvas height (tuned so legs reach ground)
 private const val UPPER_ARM_FRACTION     = 0.10f   // shoulder→elbow / canvas height
 private const val FOREARM_FRACTION       = 0.09f   // elbow→hand / canvas height
 private const val UPPER_LEG_FRACTION     = 0.13f   // hip→knee / canvas height
@@ -223,7 +223,8 @@ fun RobotFaceScreen(
                 listenPulse = listenPulse.value,
                 breatheAmount = breatheScale.value,
                 anticTrigger = state.anticTrigger,
-                jumpPhase = jumpPhase.value
+                jumpPhase = jumpPhase.value,
+                enginesReady = enginesReady
             )
 
             val headCenter = Offset(cx, headCY)
@@ -231,11 +232,30 @@ fun RobotFaceScreen(
             // Body length compressed by bodyScale (for squatting)
             val effectiveHipY = neckY + bodyLen * (1f - pose.bodyScale)
 
+            // ═══════════════════════════════════════════════════════
+            //  GROUND — drawn BEFORE any figure transforms so it
+            //  stays fixed regardless of jump / rotation / etc.
+            // ═══════════════════════════════════════════════════════
+            drawGroundLine(cx, feetY, w)
+            drawGroundShadow(cx, feetY)
+
+            // ── Auto-zoom: if rotated figure extends beyond canvas, scale down ──
+            val lieScale = if (pose.figureRotation != 0f) {
+                val absAngleRad = abs(pose.figureRotation) * PI.toFloat() / 180f
+                val horizontalReach = sin(absAngleRad) * figureH + headR * 2.5f
+                val availableW = w / 2f - 20f  // margin from edge
+                if (horizontalReach > availableW) (availableW / horizontalReach).coerceIn(0.25f, 1f) else 1f
+            } else 1f
+            if (lieScale < 1f) {
+                drawContext.transform.scale(lieScale, lieScale, Offset(cx, feetY))
+            }
+
             // ── Whole-body rotation (for lying down) ──
+            // Pivot around feet so the body rests on the ground after rotation.
             if (pose.figureRotation != 0f) {
                 drawContext.transform.rotate(
                     pose.figureRotation,
-                    Offset(cx, feetY - figureH / 2f)
+                    Offset(cx, feetY)
                 )
             }
 
@@ -288,17 +308,33 @@ fun RobotFaceScreen(
                 else -> { /* FK only */ }
             }
 
-            // ── IK for squatting: feet exact on ground ──
-            val isSquatting = state.mode == RobotMode.IDLE &&
-                state.anticTrigger > 0 && state.anticTrigger % 7L == 3L
-            if (isSquatting) {
-                val groundY = feetY + 6f
+            // ── Waking up: both hands IK → eyes (rub eyes) ──
+            if (!enginesReady) {
+                val leftEyeTarget = Offset(headForIK.x - headR * 0.5f, headForIK.y - headR * 0.05f)
+                solve2BoneIK(leftShoulder, upperArmLen, forearmLen, leftEyeTarget, bendCCW = true)?.let {
+                    laUA = it.angle1; laFA = it.angle2
+                }
+                val rightEyeTarget = Offset(headForIK.x + headR * 0.5f, headForIK.y - headR * 0.05f)
+                solve2BoneIK(rightShoulder, upperArmLen, forearmLen, rightEyeTarget, bendCCW = false)?.let {
+                    raUA = it.angle1; raFA = it.angle2
+                }
+            }
+
+            // ── IK for legs: lock feet on ground (all standing poses) ──
+            // Skip during jumps (feet leave ground) and lying (figure rotated)
+            val isJumping = jumpPhase.value > 0.01f
+            val isLying = pose.figureRotation != 0f
+            if (!isJumping && !isLying) {
+                val isSquatting = state.mode == RobotMode.IDLE &&
+                    state.anticTrigger > 0 && state.anticTrigger % 7L == 3L
+                // Wider stance for squatting, narrow for normal standing
+                val footSpread = if (isSquatting) 22f else 6f
                 solve2BoneIK(leftHip, upperLegLen, lowerLegLen,
-                    Offset(leftHip.x - 12f, groundY), bendCCW = true)?.let {
+                    Offset(leftHip.x - footSpread, feetY), bendCCW = true)?.let {
                     llUA = it.angle1; llLA = it.angle2
                 }
                 solve2BoneIK(rightHip, upperLegLen, lowerLegLen,
-                    Offset(rightHip.x + 12f, groundY), bendCCW = false)?.let {
+                    Offset(rightHip.x + footSpread, feetY), bendCCW = false)?.let {
                     rlUA = it.angle1; rlLA = it.angle2
                 }
             }
@@ -323,11 +359,8 @@ fun RobotFaceScreen(
             }
 
             // ═══════════════════════════════════════════════════════
-            //  DRAW ORDER: back to front
+            //  DRAW ORDER: back to front (ground already drawn above)
             // ═══════════════════════════════════════════════════════
-
-            // ── Ground shadow ──
-            drawGroundShadow(cx, feetY)
 
             // ── Legs ──
             drawLimb(leftHip, leftKnee, leftFoot, jointR)
@@ -696,38 +729,59 @@ private fun jumpOffsetY(phase: Float, figureHeight: Float): Float {
     return -sin(t * PI.toFloat()) * figureHeight * 0.35f
 }
 
-/** SQUATTING: knees bent deep, body compressed, hands on knees */
+/** SQUATTING: knees bent deep, hands on knees, feet planted (IK) */
 private fun squattingPose(): StickPose = StickPose(
     headTilt = 0f,
-    headShiftX = 0f, headShiftY = 12f,
+    headShiftX = 0f, headShiftY = 8f,
     neckShiftX = 0f, hipShiftX = 0f, hipShiftY = 0f,
-    bodyScale = 0.55f,   // compress body by 55%
+    bodyScale = 0f,         // no compress — IK places feet; squat comes from knee bend
     figureRotation = 0f,
     leftUpperArmAngle  = Math.toRadians((-20.0)).toFloat(),
     leftForearmAngle   = Math.toRadians((-80.0)).toFloat(),  // hands to knees
     rightUpperArmAngle = Math.toRadians(20.0).toFloat(),
     rightForearmAngle  = Math.toRadians(80.0).toFloat(),     // hands to knees
-    leftUpperLegAngle  = Math.toRadians((-78.0)).toFloat(),  // thigh far out
-    leftLowerLegAngle  = Math.toRadians(82.0).toFloat(),     // calf back to center
-    rightUpperLegAngle = Math.toRadians(78.0).toFloat(),     // thigh far out
-    rightLowerLegAngle = Math.toRadians((-82.0)).toFloat(),  // calf back to center
+    leftUpperLegAngle  = Math.toRadians((-55.0)).toFloat(),  // thigh bent (IK override)
+    leftLowerLegAngle  = Math.toRadians(50.0).toFloat(),     // calf angled back
+    rightUpperLegAngle = Math.toRadians(55.0).toFloat(),     // thigh bent (IK override)
+    rightLowerLegAngle = Math.toRadians((-50.0)).toFloat(),  // calf angled back
 )
 
-/** LYING DOWN: figure rotated 90° clockwise, relaxed pose */
+/** LOUNGING: leaning against left screen edge like a wall. Body at ~18° above horizontal, hips and knees bent for a natural relaxed look. */
 private fun lyingPose(): StickPose = StickPose(
-    headTilt = Math.toRadians((-15.0)).toFloat(),  // head resting
-    headShiftX = 0f, headShiftY = -10f,
+    headTilt = Math.toRadians((-22.0)).toFloat(),     // head resting on "wall"
+    headShiftX = 0f, headShiftY = 0f,
     neckShiftX = 0f, hipShiftX = 0f, hipShiftY = 0f,
     bodyScale = 0f,
-    figureRotation = -90f,   // rotate whole figure 90° CW (lying on side)
-    leftUpperArmAngle  = Math.toRadians((-30.0)).toFloat(),   // arm stretched
-    leftForearmAngle   = Math.toRadians((-10.0)).toFloat(),
-    rightUpperArmAngle = Math.toRadians(5.0).toFloat(),       // arm relaxed
-    rightForearmAngle  = Math.toRadians(20.0).toFloat(),
-    leftUpperLegAngle  = Math.toRadians((-10.0)).toFloat(),   // legs relaxed
-    leftLowerLegAngle  = Math.toRadians((-5.0)).toFloat(),
-    rightUpperLegAngle = Math.toRadians(15.0).toFloat(),
-    rightLowerLegAngle = Math.toRadians(10.0).toFloat(),
+    figureRotation = -72f,                              // lean against left edge (~18° above flat)
+    // Left arm: propping body up, elbow planted
+    leftUpperArmAngle  = Math.toRadians((-105.0)).toFloat(),  // reach back to prop
+    leftForearmAngle   = Math.toRadians((-65.0)).toFloat(),   // forearm planted
+    // Right arm: relaxed across body
+    rightUpperArmAngle = Math.toRadians(25.0).toFloat(),
+    rightForearmAngle  = Math.toRadians((-30.0)).toFloat(),
+    // Legs: hips bent so legs hang more downward, knees bent naturally
+    leftUpperLegAngle  = Math.toRadians((-48.0)).toFloat(),   // thigh angled down from hip
+    leftLowerLegAngle  = Math.toRadians(62.0).toFloat(),      // shin hangs near vertical
+    rightUpperLegAngle = Math.toRadians(48.0).toFloat(),      // thigh angled down from hip
+    rightLowerLegAngle = Math.toRadians((-62.0)).toFloat(),   // shin hangs near vertical
+)
+
+/** WAKING UP: both hands rubbing eyes, groggy head tilt, relaxed stance */
+private fun wakingUpPose(): StickPose = StickPose(
+    headTilt = Math.toRadians((-8.0)).toFloat(),      // groggy tilt
+    headShiftX = 0f, headShiftY = 3f,                 // head slightly tucked
+    neckShiftX = 0f, hipShiftX = 0f, hipShiftY = 0f,
+    bodyScale = 0f, figureRotation = 0f,
+    // Arms: elbows out to sides, hands reaching toward face (IK fine-tunes to eyes)
+    leftUpperArmAngle  = Math.toRadians((-72.0)).toFloat(),
+    leftForearmAngle   = Math.toRadians((-35.0)).toFloat(),
+    rightUpperArmAngle = Math.toRadians(72.0).toFloat(),
+    rightForearmAngle  = Math.toRadians(35.0).toFloat(),
+    // Legs: relaxed standing
+    leftUpperLegAngle  = Math.toRadians((-2.0)).toFloat(),
+    leftLowerLegAngle  = Math.toRadians(0.0).toFloat(),
+    rightUpperLegAngle = Math.toRadians(2.0).toFloat(),
+    rightLowerLegAngle = Math.toRadians(0.0).toFloat(),
 )
 
 /** Emotion overlay: modifies the base pose */
@@ -861,8 +915,12 @@ private fun computePose(
     listenPulse: Float,
     breatheAmount: Float,
     anticTrigger: Long = 0L,
-    jumpPhase: Float = 0f
+    jumpPhase: Float = 0f,
+    enginesReady: Boolean = true
 ): StickPose {
+    // Engines not ready → waking up animation (overrides everything)
+    if (!enginesReady) return wakingUpPose()
+
     // Base pose from mode
     val modePose = when (mode) {
         RobotMode.IDLE -> {
@@ -1321,6 +1379,29 @@ private fun DrawScope.drawGroundShadow(cx: Float, feetY: Float) {
         color = ColorShadow,
         topLeft = Offset(cx - shadowW / 2f, feetY - shadowH / 2f),
         size = Size(shadowW, shadowH)
+    )
+}
+
+/** Ground line across the canvas at foot level */
+private fun DrawScope.drawGroundLine(cx: Float, feetY: Float, canvasW: Float) {
+    val groundW = canvasW * 0.7f
+    val x0 = cx - groundW / 2f
+    val x1 = cx + groundW / 2f
+    // Subtle center-weighted fade: bright in the middle, fading to edges
+    drawLine(
+        color = ColorStickBody.copy(alpha = 0.1f),
+        start = Offset(x0, feetY),
+        end = Offset(x1, feetY),
+        strokeWidth = 2f,
+        cap = StrokeCap.Round
+    )
+    // Thin shadow line just below
+    drawLine(
+        color = ColorShadow,
+        start = Offset(x0, feetY + 3f),
+        end = Offset(x1, feetY + 3f),
+        strokeWidth = 8f,
+        cap = StrokeCap.Round
     )
 }
 
