@@ -2,7 +2,10 @@
   "permissions": {
     "allow": [
       "Bash(./gradlew lintDebug *)",
-      "Bash(./gradlew assembleDebug *)"
+      "Bash(./gradlew assembleDebug *)",
+      "Bash(lsusb)",
+      "Read(//etc/udev/rules.d/**)",
+      "Bash(sudo tee /etc/udev/rules.d/51-android.rules)"
     ]
   }
 }

@@ -888,9 +888,9 @@ private fun walkingPose(phase: Float): StickPose {
         rightUpperArmAngle = Math.toRadians((22.0 - armSwing)).toFloat(),
         rightForearmAngle  = Math.toRadians((-14.0 - armSwing * 0.5)).toFloat(),
         leftUpperLegAngle  = Math.toRadians((-5.0 - legSwing)).toFloat(),
-        leftLowerLegAngle  = Math.toRadians((kneeBend)).toFloat(),
+        leftLowerLegAngle  = Math.toRadians(kneeBend.toDouble()).toFloat(),
         rightUpperLegAngle = Math.toRadians((5.0 - legSwing)).toFloat(),
-        rightLowerLegAngle = Math.toRadians((-kneeBend)).toFloat(),
+        rightLowerLegAngle = Math.toRadians((-kneeBend).toDouble()).toFloat(),
     )
 }
 
@@ -923,9 +923,9 @@ private fun walkingSidePose(phase: Float, facingLeft: Boolean): StickPose {
         rightForearmAngle  = Math.toRadians(((10.0 * sign) + armSwing * 0.4)).toFloat(),
         // Legs: alternating stride
         leftUpperLegAngle  = Math.toRadians((-5.0 - legSwing)).toFloat(),
-        leftLowerLegAngle  = Math.toRadians((kneeBend)).toFloat(),
+        leftLowerLegAngle  = Math.toRadians(kneeBend.toDouble()).toFloat(),
         rightUpperLegAngle = Math.toRadians((3.0 - legSwing)).toFloat(),
-        rightLowerLegAngle = Math.toRadians((-kneeBend)).toFloat(),
+        rightLowerLegAngle = Math.toRadians((-kneeBend).toDouble()).toFloat(),
     )
 }
 
