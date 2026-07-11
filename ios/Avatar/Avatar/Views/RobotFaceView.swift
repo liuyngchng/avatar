@@ -34,6 +34,10 @@ final class FaceDisplayView: UIView {
     var jumpPhase: CGFloat = 0        // jump animation 0→1
     var walkPhase: CGFloat = 0        // walk progress 0→1
     var walkType: WalkType = .none    // current walk direction
+    var stageWalkPhase: CGFloat = 0   // stage walk during speaking
+    var gesturePhase: CGFloat = 0     // arm gesture variety during speaking
+    var emphasisArm: Int = -1         // -1=none, 0=left, 1=right
+    var emphasisPhase: CGFloat = 0    // 0→1 raise progress
 
     // Timers
     private var displayLink: CADisplayLink?
@@ -50,6 +54,10 @@ final class FaceDisplayView: UIView {
     private var anticTimer: Timer?
     private var jumpTimer: Timer?
     private var walkTimer: Timer?
+    private var isStageWalkActive = false
+    private var stageWalkStartTime: CFTimeInterval = 0
+    private var emphasisTimer: Timer?
+    private var emphasisAnimTimer: Timer?
 
     // Track previous state for trigger detection
     private var lastAnticTrigger: Int = 0
@@ -87,6 +95,16 @@ final class FaceDisplayView: UIView {
         let t = CGFloat(elapsed / wanderPeriod)
         idleWander = wanderTargetStart + (wanderTargetEnd - wanderTargetStart) * t
 
+        // Stage walk: continuous pacing cycle (~5s per full left-right-left)
+        if isStageWalkActive {
+            let stageElapsed = now - stageWalkStartTime
+            let cycleDuration: CFTimeInterval = 5.0   // human speaker pacing speed
+            stageWalkPhase = CGFloat(stageElapsed.truncatingRemainder(dividingBy: cycleDuration) / cycleDuration)
+            // Gesture variety: independent slower cycle for arm pattern changes
+            let gestureCycle: CFTimeInterval = 3.2
+            gesturePhase = CGFloat(stageElapsed.truncatingRemainder(dividingBy: gestureCycle) / gestureCycle)
+        }
+
         setNeedsDisplay()
     }
 
@@ -106,7 +124,11 @@ final class FaceDisplayView: UIView {
             isSpeaking: robotState.isSpeaking,
             enginesReady: robotState.enginesReady,
             walkType: walkType,
-            walkPhase: walkPhase
+            walkPhase: walkPhase,
+            stageWalkPhase: stageWalkPhase,
+            gesturePhase: gesturePhase,
+            emphasisArm: emphasisArm,
+            emphasisPhase: emphasisPhase
         )
     }
 
@@ -151,12 +173,75 @@ final class FaceDisplayView: UIView {
             isOpen.toggle()
             self?.speakAmount = isOpen ? 1.0 : 0.15
         }
+        // Stage walk: driven by CADisplayLink animateStep() for vsync-smooth pacing
+        isStageWalkActive = true
+        stageWalkStartTime = CACurrentMediaTime()
+        stageWalkPhase = 0
+        // Emphasis gestures: random arm raises during speech
+        emphasisArm = -1
+        emphasisPhase = 0
+        scheduleNextEmphasis()
     }
 
     func stopSpeakingAnimation() {
         speakTimer?.invalidate()
         speakTimer = nil
         speakAmount = 0
+        isStageWalkActive = false
+        stageWalkPhase = 0
+        gesturePhase = 0
+        emphasisTimer?.invalidate()
+        emphasisTimer = nil
+        emphasisAnimTimer?.invalidate()
+        emphasisAnimTimer = nil
+        emphasisArm = -1
+        emphasisPhase = 0
+    }
+
+    // MARK: - Emphasis Gestures
+
+    private func scheduleNextEmphasis() {
+        emphasisTimer?.invalidate()
+        let delay = TimeInterval.random(in: 3...8)  // random interval between raises
+        emphasisTimer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
+            self?.triggerEmphasis()
+        }
+    }
+
+    private func triggerEmphasis() {
+        guard isStageWalkActive else { return }
+        // Pick a random arm
+        emphasisArm = Int.random(in: 0...1)  // 0=left, 1=right
+        emphasisPhase = 0
+        // Animate: raise 0→1 over 0.4s, hold 0.3s, lower 1→0 over 0.4s
+        let raiseDuration: TimeInterval = 0.4
+        let holdDuration: TimeInterval = 0.3
+        let lowerDuration: TimeInterval = 0.4
+        let totalDuration = raiseDuration + holdDuration + lowerDuration
+        let startTime = CACurrentMediaTime()
+
+        emphasisAnimTimer?.invalidate()
+        emphasisAnimTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / Double(Self.targetFPS), repeats: true) { [weak self] timer in
+            guard let self = self else { timer.invalidate(); return }
+            let elapsed = CACurrentMediaTime() - startTime
+            if elapsed < raiseDuration {
+                self.emphasisPhase = CGFloat(elapsed / raiseDuration)       // 0→1
+            } else if elapsed < raiseDuration + holdDuration {
+                self.emphasisPhase = 1.0                                     // hold
+            } else if elapsed < totalDuration {
+                let lowerElapsed = elapsed - raiseDuration - holdDuration
+                self.emphasisPhase = CGFloat(1.0 - lowerElapsed / lowerDuration)  // 1→0
+            } else {
+                self.emphasisPhase = 0
+                self.emphasisArm = -1
+                timer.invalidate()
+            }
+        }
+        // Schedule next emphasis after this one completes
+        emphasisTimer?.invalidate()
+        emphasisTimer = Timer.scheduledTimer(withTimeInterval: totalDuration + TimeInterval.random(in: 2...6), repeats: false) { [weak self] _ in
+            self?.triggerEmphasis()
+        }
     }
 
     // MARK: - Think
@@ -299,8 +384,15 @@ final class FaceDisplayView: UIView {
             self?.walkPhase = min(progress, 1.0)
             if progress >= 1.0 {
                 timer.invalidate()
-                self?.walkType = .none
-                self?.walkPhase = 0
+                if type == .away {
+                    // Pause briefly at far distance, then walk back toward camera
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                        self?.triggerWalk(.toward)
+                    }
+                } else {
+                    self?.walkType = .none
+                    self?.walkPhase = 0
+                }
             }
         }
     }
@@ -336,6 +428,8 @@ final class FaceDisplayView: UIView {
         anticTimer?.invalidate()
         jumpTimer?.invalidate()
         walkTimer?.invalidate()
+        emphasisTimer?.invalidate()
+        emphasisAnimTimer?.invalidate()
     }
 }
 

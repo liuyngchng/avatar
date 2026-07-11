@@ -67,11 +67,14 @@ class MainActivity : ComponentActivity() {
         private const val VAD_SILENCE_THRESHOLD = 0.022f
         // Consecutive silent chunks to auto-stop (~80ms/chunk)
         private const val VAD_MAX_SILENT_CHUNKS = 20
-        // Chunks used to calibrate ambient noise floor (~1.2s)
-        private const val NOISE_CALIBRATION_CHUNKS = 15
+        // Chunks used to calibrate ambient noise floor (~1.6s)
+        private const val NOISE_CALIBRATION_CHUNKS = 20
         // Max recording duration before force-stop
         private const val MAX_RECORD_SECONDS = 10f
     }
+
+    // Calibrated once at startup, used for all subsequent VAD
+    private var calibratedNoiseThreshold: Float = VAD_SILENCE_THRESHOLD
 
     // LLM integration
     private val configRepository by lazy { ConfigRepository(this) }
@@ -123,6 +126,8 @@ class MainActivity : ComponentActivity() {
                         mode = RobotMode.IDLE,
                         emotion = Emotion.NEUTRAL
                     )
+                    // One-time ambient noise calibration for VAD
+                    calibrateNoiseOnce()
                 } else if (asrReady && ttsReady) {
                     // Already initialized (fast phone, or modelsReady was cached)
                     enginesReady = true
@@ -361,11 +366,45 @@ class MainActivity : ComponentActivity() {
 
     // ── ASR recording ─────────────────────────────────────────────────
 
+    /** Calibrate noise threshold once at startup. */
+    private fun calibrateNoiseOnce() {
+        Log.i("MainActivity", "Starting one-time noise calibration")
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                var noiseFloor = Float.MAX_VALUE
+                var chunkCount = 0
+                val job = launch {
+                    audioRecorder.startRecording().collect { samples ->
+                        var sumSq = 0f
+                        for (s in samples) sumSq += s * s
+                        val rms = kotlin.math.sqrt(sumSq / samples.size)
+                        noiseFloor = minOf(noiseFloor, rms)
+                        chunkCount++
+                        if (chunkCount >= NOISE_CALIBRATION_CHUNKS) {
+                            calibratedNoiseThreshold = maxOf(VAD_SILENCE_THRESHOLD, noiseFloor * 1.8f)
+                            Log.i("MainActivity",
+                                "Noise calibration done: noiseFloor=${"%.4f".format(noiseFloor)}, " +
+                                "threshold=${"%.4f".format(calibratedNoiseThreshold)}")
+                            audioRecorder.stopRecording()
+                            cancel()
+                        }
+                    }
+                }
+                // Safety timeout: stop calibration after 3s
+                delay(3000)
+                job.cancel()
+            } catch (_: Exception) {
+                Log.w("MainActivity", "Noise calibration failed, using default threshold")
+            }
+        }
+    }
+
     private fun startRecording(onResult: (String?) -> Unit) {
         if (!asrReady) return
         isRecording = true
         onSpeechEnd = onResult
         var silentChunks = 0
+        val effectiveThreshold = calibratedNoiseThreshold
 
         recordingJob = CoroutineScope(Dispatchers.IO).launch {
             try {
@@ -376,34 +415,12 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
-                // Adaptive noise floor: measure ambient RMS over first ~1.2s,
-                // then use max(baseThreshold, noiseFloor × 2.0) as actual threshold.
-                var noiseFloor = Float.MAX_VALUE
-                var calibrationDone = false
-                var chunkIndex = 0
-
                 audioRecorder.startRecording().collect { samples ->
                     asrEngine.acceptWaveform(samples)
 
                     var sumSq = 0f
                     for (s in samples) sumSq += s * s
                     val rms = kotlin.math.sqrt(sumSq / samples.size)
-
-                    // ── Noise floor calibration ──
-                    if (!calibrationDone) {
-                        noiseFloor = minOf(noiseFloor, rms)
-                        chunkIndex++
-                        if (chunkIndex >= NOISE_CALIBRATION_CHUNKS) {
-                            calibrationDone = true
-                            val effectiveThreshold = maxOf(VAD_SILENCE_THRESHOLD, noiseFloor * 1.8f)
-                            Log.i("MainActivity",
-                                "VAD calibrated: noiseFloor=${"%.4f".format(noiseFloor)}, " +
-                                "threshold=${"%.4f".format(effectiveThreshold)}")
-                        }
-                        return@collect  // skip VAD during calibration
-                    }
-
-                    val effectiveThreshold = maxOf(VAD_SILENCE_THRESHOLD, noiseFloor * 1.8f)
 
                     if (rms < effectiveThreshold) {
                         silentChunks++

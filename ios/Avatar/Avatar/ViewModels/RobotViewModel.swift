@@ -69,6 +69,7 @@ class RobotViewModel: ObservableObject {
     // VAD
     private var latestRms: Float = 0
     private var vadTask: Task<Void, Never>?
+    private var calibratedNoiseThreshold: Float = 0.012  // calibrated once at startup
 
     // Pause/resume tracking
     private var isRobotRunning = false
@@ -232,6 +233,8 @@ class RobotViewModel: ObservableObject {
                     // Load saved speaker ID, clamp to valid range
                     let saved = UserDefaults.standard.integer(forKey: self.sidKey)
                     self.selectedSid = (self.ttsNumSpeakers > 0) ? min(saved, self.ttsNumSpeakers - 1) : 0
+                    // One-time ambient noise calibration for VAD
+                    self.calibrateNoiseOnce()
                 } else {
                     self.errorMessage = "模型加载失败，请检查模型文件"
                 }
@@ -340,6 +343,37 @@ class RobotViewModel: ObservableObject {
 
     // MARK: - Recording
 
+    /// Calibrate noise threshold once at startup. Records ~1.5s of ambient audio,
+    /// computes the minimum RMS energy, and stores a threshold for future VAD.
+    func calibrateNoiseOnce() {
+        os_log(.info, "RobotVM: starting one-time noise calibration")
+        AudioSessionManager.configure()
+
+        let baseSilenceThreshold: Float = 0.012
+        let calibrationChunks = 20   // ~1.6s at ~80ms/chunk
+        var noiseFloor = Float.greatestFiniteMagnitude
+        var chunkCount = 0
+
+        let cancellable = audioRecorder.startRecordingPublisher()
+            .sink { [weak self] samples in
+                guard let self = self else { return }
+                let rms = Self.rms(samples)
+                noiseFloor = min(noiseFloor, rms)
+                chunkCount += 1
+                if chunkCount >= calibrationChunks {
+                    self.calibratedNoiseThreshold = max(baseSilenceThreshold, noiseFloor * 1.8)
+                    os_log(.info, "RobotVM: noise calibration done — noiseFloor=%.5f threshold=%.5f",
+                           noiseFloor, self.calibratedNoiseThreshold)
+                    self.audioRecorder.stop()
+                }
+            }
+
+        // Keep a reference so it doesn't get cancelled before calibration completes
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [cancellable] in
+            _ = cancellable  // retain until timeout
+        }
+    }
+
     private func startListening() {
         AudioSessionManager.configure()
 
@@ -350,10 +384,10 @@ class RobotViewModel: ObservableObject {
 
         latestRms = 0
         var silentChunks = 0
-        let silenceThreshold: Float = 0.012   // RMS below this = silence
-        let maxSilentChunks = 25               // ~2 seconds at ~80ms/chunk
+        let maxSilentChunks = 25                   // ~2 seconds at ~80ms/chunk
         let maxRecordSeconds: TimeInterval = 10
         let startTime = Date()
+        let effectiveThreshold = calibratedNoiseThreshold
 
         recordingCancellable = audioRecorder.startRecordingPublisher()
             .sink { [weak self] samples in
@@ -364,7 +398,7 @@ class RobotViewModel: ObservableObject {
                 let rms = Self.rms(samples)
                 self.latestRms = rms
 
-                if rms < silenceThreshold {
+                if rms < effectiveThreshold {
                     silentChunks += 1
                     if silentChunks >= maxSilentChunks {
                         self.audioRecorder.stop()

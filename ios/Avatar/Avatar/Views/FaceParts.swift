@@ -164,16 +164,63 @@ final class StickFigureDrawer {
         )
     }
 
-    private static func speakingPose(_ speakAmount: CGFloat) -> StickPose {
-        let gestureAmp: CGFloat = 25
-        let rightAngle = sin(speakAmount * .pi * 2) * gestureAmp
-        let leftAngle  = cos(speakAmount * .pi * 2) * gestureAmp * 0.6
+    /// Speaking pose with varied, natural arm gestures driven by a slow gesture phase.
+    /// - Parameters:
+    ///   - speakAmount: 0.15..1.0 mouth-open signal (toggles at speech rate, ~3Hz)
+    ///   - gesturePhase: 0→1 continuous slow cycle (~3s period) for arm variety
+    ///   - emphasisArm: -1=none, 0=left arm raise, 1=right arm raise
+    ///   - emphasisPhase: 0→1 raise progress (sin-eased)
+    private static func speakingPose(_ speakAmount: CGFloat, gesturePhase: CGFloat = 0,
+                                      emphasisArm: Int = -1, emphasisPhase: CGFloat = 0) -> StickPose {
+        let gp = gesturePhase * 2 * .pi   // gesture phase in radians
+
+        // Multiple slow oscillators at incommensurate frequencies → complex non-repeating patterns
+        let slow1 = sin(gp * 0.7)         // ~4.3s period
+        let slow2 = cos(gp * 1.1)         // ~2.7s period
+        let slow3 = sin(gp * 1.5)         // ~2.0s period
+
+        // Gesture energy envelope: slowly fades gestures in and out for natural rest periods
+        let energy = slow1 * 0.5 + 0.5    // 0..1 smooth fade
+
+        // Right arm: blend of two oscillators + mouth-sync for emphasis on open mouth
+        let mouthKick = (speakAmount > 0.5 ? 1.0 : 0.3)  // bigger gestures when "mouth open"
+        var rightSwing = (sin(gp * 2.3) * 0.7 + slow2 * 0.3) * 22 * energy * mouthKick
+
+        // Left arm: different rhythm — sometimes mirrors right, sometimes independent
+        var leftSwing = (cos(gp * 1.9) * 0.6 + slow3 * 0.4) * 16 * energy * mouthKick
+
+        // ── Emphasis gesture: occasional arm raise like a speaker making a point ──
+        if emphasisArm >= 0 && emphasisPhase > 0.01 {
+            let ease = sin(emphasisPhase * .pi)   // sin curve: 0→1→0, smooth raise & lower
+            if emphasisArm == 0 {
+                // Left arm raise: blend from current swing toward raised position (-80°)
+                leftSwing = leftSwing * (1 - ease) + (-80 - (-18)) * ease
+            } else {
+                // Right arm raise: blend toward +80°
+                rightSwing = rightSwing * (1 - ease) + (80 - 18) * ease
+            }
+        }
+
+        // Head follows the more active arm + subtle independent tilt
+        let headFollow = (abs(rightSwing) > abs(leftSwing) ? rightSwing : leftSwing) * 0.12
+
+        // Compute forearm angles with emphasis override
+        var leftFore = -20 - leftSwing * 0.5
+        var rightFore = 25 + rightSwing * 0.6
+        if emphasisArm == 0 && emphasisPhase > 0.01 {
+            let ease = sin(emphasisPhase * .pi)
+            leftFore = leftFore * (1 - ease) + (-25) * ease
+        } else if emphasisArm == 1 && emphasisPhase > 0.01 {
+            let ease = sin(emphasisPhase * .pi)
+            rightFore = rightFore * (1 - ease) + 25 * ease
+        }
+
         return StickPose(
-            headTilt: deg2rad(Double(rightAngle) * 0.15),
-            leftUpperArmAngle: deg2rad(-18 - Double(leftAngle)),
-            leftForearmAngle: deg2rad(-20 - Double(leftAngle) * 0.5),
-            rightUpperArmAngle: deg2rad(18 + Double(rightAngle)),
-            rightForearmAngle: deg2rad(25 + Double(rightAngle) * 0.6),
+            headTilt: deg2rad(Double(headFollow)),
+            leftUpperArmAngle: deg2rad(-18 - Double(leftSwing)),
+            leftForearmAngle: deg2rad(Double(leftFore)),
+            rightUpperArmAngle: deg2rad(18 + Double(rightSwing)),
+            rightForearmAngle: deg2rad(Double(rightFore)),
             leftUpperLegAngle: deg2rad(-2), leftLowerLegAngle: 0,
             rightUpperLegAngle: deg2rad(2), rightLowerLegAngle: 0
         )
@@ -240,6 +287,7 @@ final class StickFigureDrawer {
     private static func lyingPose() -> StickPose {
         StickPose(
             headTilt: deg2rad(-22),                    // head resting on "wall"
+            hipShiftY: -25,                             // raise hips so legs stay above ground after rotation
             figureRotation: -72,                        // lean against left edge (~18° above flat)
             // Left arm: propping body up, elbow planted
             leftUpperArmAngle: deg2rad(-105),           // reach back to prop
@@ -247,11 +295,11 @@ final class StickFigureDrawer {
             // Right arm: relaxed across body
             rightUpperArmAngle: deg2rad(25),
             rightForearmAngle: deg2rad(-30),
-            // Legs: hips bent so legs hang more downward, knees bent naturally
-            leftUpperLegAngle: deg2rad(-48),            // thigh angled down from hip
-            leftLowerLegAngle: deg2rad(62),             // shin hangs near vertical
-            rightUpperLegAngle: deg2rad(48),            // thigh angled down from hip
-            rightLowerLegAngle: deg2rad(-62)            // shin hangs near vertical
+            // Legs: relaxed bent-knee lounging
+            leftUpperLegAngle: deg2rad(-35),            // thigh angled down from hip
+            leftLowerLegAngle: deg2rad(42),             // shin toward feet
+            rightUpperLegAngle: deg2rad(35),            // thigh angled down from hip
+            rightLowerLegAngle: deg2rad(-42)            // shin toward feet
         )
     }
 
@@ -288,15 +336,15 @@ final class StickFigureDrawer {
             headShiftY: -bob * 5,           // slight up-bounce each step
             bodyScale: bob * 0.06,          // micro-compression on step
             figureRotation: 0,
-            // Arms: opposite phase to legs (left arm forward when right leg forward)
+            // Arms: cross-crawl — opposite to same-side leg (natural human walking)
             leftUpperArmAngle: deg2rad(-22 - Double(armSwing)),
-            leftForearmAngle: deg2rad(14 + Double(armSwing) * 0.5),
+            leftForearmAngle: deg2rad(14 - Double(armSwing) * 0.5),
             rightUpperArmAngle: deg2rad(22 - Double(armSwing)),
             rightForearmAngle: deg2rad(-14 - Double(armSwing) * 0.5),
             // Legs: alternating stride
             leftUpperLegAngle: deg2rad(-5 - Double(legSwing)),
             leftLowerLegAngle: deg2rad(Double(kneeBend)),
-            rightUpperLegAngle: deg2rad(5 - Double(legSwing)),
+            rightUpperLegAngle: deg2rad(5 + Double(legSwing)),
             rightLowerLegAngle: deg2rad(-Double(kneeBend))
         )
     }
@@ -331,7 +379,7 @@ final class StickFigureDrawer {
             // Legs: alternating stride
             leftUpperLegAngle: deg2rad(-5 - Double(legSwing)),
             leftLowerLegAngle: deg2rad(Double(kneeBend)),
-            rightUpperLegAngle: deg2rad(3 - Double(legSwing)),
+            rightUpperLegAngle: deg2rad(3 + Double(legSwing)),
             rightLowerLegAngle: deg2rad(-Double(kneeBend))
         )
     }
@@ -437,7 +485,11 @@ final class StickFigureDrawer {
         jumpPhase: CGFloat = 0,
         enginesReady: Bool = true,
         walkType: WalkType = .none,
-        walkPhase: CGFloat = 0
+        walkPhase: CGFloat = 0,
+        stageWalkPhase: CGFloat = 0,
+        gesturePhase: CGFloat = 0,
+        emphasisArm: Int = -1,
+        emphasisPhase: CGFloat = 0
     ) -> StickPose {
         // Engines not ready → waking up animation (overrides everything)
         if !enginesReady { return wakingUpPose() }
@@ -462,7 +514,8 @@ final class StickFigureDrawer {
         case .listening:
             modePose = listeningPose(listenPulse)
         case .speaking:
-            modePose = speakingPose(speakAmount)
+            modePose = speakingPose(speakAmount, gesturePhase: gesturePhase,
+                                    emphasisArm: emphasisArm, emphasisPhase: emphasisPhase)
         case .thinking:
             modePose = thinkingPose(thinkPhase)
         case .looking:
@@ -484,6 +537,23 @@ final class StickFigureDrawer {
         }()
 
         var result = blendPose(modePose, emotionPose, emotionWeight)
+
+        // Stage walk during speaking: blend walking legs + body sway into speaking pose
+        if mode == .speaking && stageWalkPhase > 0.01 {
+            let stageSwing = sin(stageWalkPhase * 2 * .pi)   // -1..1
+            let legSwing = stageSwing * 22                   // ±22° gentle stride
+            let bodySway = stageSwing * 8                    // ±8px hip sway
+            let bob = abs(stageSwing)                        // 0..1 bounce
+
+            result.hipShiftX += bodySway
+            result.neckShiftX += bodySway * 0.6
+            result.headShiftY += -bob * 3
+            result.bodyScale += bob * 0.04
+            result.leftUpperLegAngle = deg2rad(-2 - Double(legSwing))
+            result.leftLowerLegAngle = deg2rad(Double(bob * 6))
+            result.rightUpperLegAngle = deg2rad(2 + Double(legSwing))
+            result.rightLowerLegAngle = deg2rad(-Double(bob * 6))
+        }
 
         if mode == .idle {
             result.headShiftY += (1 - breatheAmount) * 8
@@ -510,7 +580,11 @@ final class StickFigureDrawer {
         isSpeaking: Bool,
         enginesReady: Bool = true,
         walkType: WalkType = .none,
-        walkPhase: CGFloat = 0
+        walkPhase: CGFloat = 0,
+        stageWalkPhase: CGFloat = 0,
+        gesturePhase: CGFloat = 0,
+        emphasisArm: Int = -1,
+        emphasisPhase: CGFloat = 0
     ) {
         guard let ctx = UIGraphicsGetCurrentContext() else { return }
 
@@ -539,7 +613,11 @@ final class StickFigureDrawer {
             listenPulse: listenPulse, breatheAmount: breatheAmount,
             anticTrigger: anticTrigger, jumpPhase: jumpPhase,
             enginesReady: enginesReady,
-            walkType: walkType, walkPhase: walkPhase
+            walkType: walkType, walkPhase: walkPhase,
+            stageWalkPhase: stageWalkPhase,
+            gesturePhase: gesturePhase,
+            emphasisArm: emphasisArm,
+            emphasisPhase: emphasisPhase
         )
 
         let headCenter = CGPoint(x: cx, y: headCY)
@@ -553,21 +631,25 @@ final class StickFigureDrawer {
         drawGroundLine(ctx: ctx, cx: cx, feetY: feetY, canvasW: w)
         drawGroundShadow(ctx: ctx, cx: cx, feetY: feetY)
 
-        // ── Auto-zoom: if rotated figure extends beyond canvas, scale down ──
+        // ── Auto-zoom: scale rotated figure to fill screen width comfortably ──
         let lieScale: CGFloat
         if pose.figureRotation != 0 {
             let absAngleRad = abs(pose.figureRotation) * .pi / 180
             let horizontalReach = sin(absAngleRad) * figureH + headR * 2.5
             let availableW = w / 2 - 20  // margin from edge
             if horizontalReach > availableW {
+                // Scale down to fit within canvas
                 lieScale = max((availableW / horizontalReach), 0.25)
+            } else if horizontalReach > 0 {
+                // Scale up to fill more of the screen (cap at 2.5x)
+                lieScale = min((availableW / horizontalReach), 2.5)
             } else {
                 lieScale = 1
             }
         } else {
             lieScale = 1
         }
-        if lieScale < 1 {
+        if lieScale != 1 {
             ctx.translateBy(x: cx, y: feetY)
             ctx.scaleBy(x: lieScale, y: lieScale)
             ctx.translateBy(x: -cx, y: -feetY)
@@ -607,18 +689,26 @@ final class StickFigureDrawer {
             let wrapped = wrapMod(rawOffset + cycleW / 2, cycleW) - cycleW / 2
             ctx.translateBy(x: wrapped, y: 0)
         case .away:
+            // Walk into depth: scale down, feet stay planted on ground
             let scale = 1 - walkPhase * 0.75        // 1 → 0.25
-            let rise = walkPhase * figureH * 0.3    // move up as they recede
             ctx.translateBy(x: cx, y: feetY)
             ctx.scaleBy(x: scale, y: scale)
-            ctx.translateBy(x: -cx, y: -feetY + rise)
+            ctx.translateBy(x: -cx, y: -feetY)
         case .toward:
+            // Walk out of depth: scale up, feet stay planted on ground
             let scale = 0.25 + walkPhase * 0.75     // 0.25 → 1
-            let drop = (1 - walkPhase) * figureH * 0.3
             ctx.translateBy(x: cx, y: feetY)
             ctx.scaleBy(x: scale, y: scale)
-            ctx.translateBy(x: -cx, y: -feetY + drop)
+            ctx.translateBy(x: -cx, y: -feetY)
         case .none: break
+        }
+
+        // ── Stage walk horizontal translation (bounded oscillation, no screen wrap) ──
+        if mode == .speaking && stageWalkPhase > 0.01 {
+            let amplitude = w * 0.18                    // ±18% of screen width
+            let gaitPhase = stageWalkPhase * 2 * .pi
+            let offset = -sin(gaitPhase) * amplitude    // shift opposite to leg stride
+            ctx.translateBy(x: offset, y: 0)
         }
 
         // ── Joint positions ──
@@ -679,10 +769,11 @@ final class StickFigureDrawer {
         }
 
         // IK for legs: lock feet on ground (all standing poses)
-        // Skip during jumps (feet leave ground) and lying (figure rotated)
+        // Skip during jumps (feet leave ground), lying (figure rotated), and stage walk (explicit walking angles)
         let isJumping = jumpPhase > 0.01
         let isLying = pose.figureRotation != 0
-        if !isJumping && !isLying {
+        let isStageWalk = mode == .speaking && stageWalkPhase > 0.01
+        if !isJumping && !isLying && !isStageWalk {
             let isSquatting = mode == .idle && anticTrigger > 0 && anticTrigger % 7 == 3
             let footSpread: CGFloat = isSquatting ? 22 : 6
             if let ik = solve2BoneIK(root: leftHip, len1: upperLegLen, len2: lowerLegLen,

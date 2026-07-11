@@ -90,6 +90,10 @@ fun RobotFaceScreen(
     val jumpPhase    = remember { Animatable(0f) }  // jump animation 0→1
     val walkPhase    = remember { Animatable(0f) }  // walk progress 0→1
     var walkType     by remember { mutableStateOf(WalkType.NONE) }
+    val stageWalkPhase = remember { Animatable(0f) }  // stage walk during speaking
+    val gesturePhase   = remember { Animatable(0f) }  // arm gesture variety during speaking
+    val emphasisPhase  = remember { Animatable(0f) }  // arm raise 0→1→0
+    var emphasisArm    by remember { mutableIntStateOf(-1) }  // -1=none, 0=left, 1=right
 
     // Idle: eyes wander (always, since no face tracking)
     LaunchedEffect(Unit) {
@@ -162,7 +166,12 @@ fun RobotFaceScreen(
                         walkType = WalkType.NONE
                     }
                     state.anticTrigger % 11L == 3L -> {
+                        // Walk away into screen, pause, then walk back
                         walkType = WalkType.AWAY
+                        walkPhase.snapTo(0f)
+                        walkPhase.animateTo(1f, tween(5000, easing = FastOutSlowInEasing))
+                        delay(800)  // pause at far distance
+                        walkType = WalkType.TOWARD
                         walkPhase.snapTo(0f)
                         walkPhase.animateTo(1f, tween(5000, easing = FastOutSlowInEasing))
                         walkType = WalkType.NONE
@@ -188,15 +197,50 @@ fun RobotFaceScreen(
         }
     }
 
-    // Speaking mouth
+    // Speaking mouth + stage walk + gesture variety
     LaunchedEffect(state.isSpeaking) {
         if (state.isSpeaking) {
+            // Stage walk: continuous pacing cycle (~5s per full left-right-left)
+            launch {
+                while (isActive) {
+                    stageWalkPhase.animateTo(1f, tween(5000, easing = LinearEasing))
+                    stageWalkPhase.snapTo(0f)
+                }
+            }
+            // Gesture variety: independent slower cycle for arm pattern changes
+            launch {
+                while (isActive) {
+                    gesturePhase.animateTo(1f, tween(3200, easing = LinearEasing))
+                    gesturePhase.snapTo(0f)
+                }
+            }
+            // Emphasis gestures: random arm raises during speech
+            launch {
+                while (isActive) {
+                    delay((3000L..8000L).random())  // random interval 3-8s
+                    if (!isActive) break
+                    // Pick a random arm
+                    emphasisArm = (0..1).random()
+                    // Raise: 0→1 over 0.4s
+                    emphasisPhase.snapTo(0f)
+                    emphasisPhase.animateTo(1f, tween(400))
+                    delay(300)  // hold
+                    // Lower: 1→0 over 0.4s
+                    emphasisPhase.animateTo(0f, tween(400))
+                    emphasisArm = -1
+                }
+            }
+            // Mouth open/close
             while (isActive) {
                 speakMouth.animateTo(1f, tween(160))
                 speakMouth.animateTo(0.15f, tween(160))
             }
         } else {
             speakMouth.snapTo(0f)
+            stageWalkPhase.snapTo(0f)
+            gesturePhase.snapTo(0f)
+            emphasisPhase.snapTo(0f)
+            emphasisArm = -1
         }
     }
 
@@ -269,7 +313,11 @@ fun RobotFaceScreen(
                 jumpPhase = jumpPhase.value,
                 enginesReady = enginesReady,
                 walkType = walkType,
-                walkPhase = walkPhase.value
+                walkPhase = walkPhase.value,
+                stageWalkPhase = stageWalkPhase.value,
+                gesturePhase = gesturePhase.value,
+                emphasisArm = emphasisArm,
+                emphasisPhase = emphasisPhase.value
             )
 
             val headCenter = Offset(cx, headCY)
@@ -284,14 +332,18 @@ fun RobotFaceScreen(
             drawGroundLine(cx, feetY, w)
             drawGroundShadow(cx, feetY)
 
-            // ── Auto-zoom: if rotated figure extends beyond canvas, scale down ──
+            // ── Auto-zoom: scale rotated figure to fill screen width comfortably ──
             val lieScale = if (pose.figureRotation != 0f) {
                 val absAngleRad = abs(pose.figureRotation) * PI.toFloat() / 180f
                 val horizontalReach = sin(absAngleRad) * figureH + headR * 2.5f
                 val availableW = w / 2f - 20f  // margin from edge
-                if (horizontalReach > availableW) (availableW / horizontalReach).coerceIn(0.25f, 1f) else 1f
+                if (horizontalReach > availableW)
+                    (availableW / horizontalReach).coerceIn(0.25f, 1f)   // scale down to fit
+                else if (horizontalReach > 0f)
+                    (availableW / horizontalReach).coerceIn(1f, 2.5f)    // scale up to fill
+                else 1f
             } else 1f
-            if (lieScale < 1f) {
+            if (lieScale != 1f) {
                 drawContext.transform.scale(lieScale, lieScale, Offset(cx, feetY))
             }
 
@@ -329,22 +381,28 @@ fun RobotFaceScreen(
                     drawContext.transform.translate(wrapped, 0f)
                 }
                 WalkType.AWAY -> {
-                    // Walk into depth: scale down + rise toward horizon (perspective)
+                    // Walk into depth: scale down, feet stay planted on ground
                     val scale = 1f - walkPhase.value * 0.75f   // 1 → 0.25
-                    val rise = walkPhase.value * figureH * 0.3f // move up as they recede
                     drawContext.transform.translate(cx, feetY)
                     drawContext.transform.scale(scale, scale)
-                    drawContext.transform.translate(-cx, -feetY + rise)
+                    drawContext.transform.translate(-cx, -feetY)
                 }
                 WalkType.TOWARD -> {
-                    // Walk out of depth: scale up + descend (perspective)
+                    // Walk out of depth: scale up, feet stay planted on ground
                     val scale = 0.25f + walkPhase.value * 0.75f // 0.25 → 1
-                    val drop = (1f - walkPhase.value) * figureH * 0.3f
                     drawContext.transform.translate(cx, feetY)
                     drawContext.transform.scale(scale, scale)
-                    drawContext.transform.translate(-cx, -feetY + drop)
+                    drawContext.transform.translate(-cx, -feetY)
                 }
                 WalkType.NONE -> { /* no walk transform */ }
+            }
+
+            // ── Stage walk horizontal translation (bounded oscillation, no screen wrap) ──
+            if (state.mode == RobotMode.SPEAKING && stageWalkPhase.value > 0.01f) {
+                val amplitude = w * 0.18f                        // ±18% of screen width
+                val gaitPhase = stageWalkPhase.value * 2f * PI.toFloat()
+                val offset = -sin(gaitPhase) * amplitude         // shift opposite to leg stride
+                drawContext.transform.translate(offset, 0f)
             }
 
             // ── Compute joint positions ──
@@ -401,10 +459,11 @@ fun RobotFaceScreen(
             }
 
             // ── IK for legs: lock feet on ground (all standing poses) ──
-            // Skip during jumps (feet leave ground) and lying (figure rotated)
+            // Skip during jumps (feet leave ground), lying (figure rotated), and stage walk (explicit walking angles)
             val isJumping = jumpPhase.value > 0.01f
             val isLying = pose.figureRotation != 0f
-            if (!isJumping && !isLying) {
+            val isStageWalk = state.mode == RobotMode.SPEAKING && stageWalkPhase.value > 0.01f
+            if (!isJumping && !isLying && !isStageWalk) {
                 val isSquatting = state.mode == RobotMode.IDLE &&
                     state.anticTrigger > 0 && state.anticTrigger % 7L == 3L
                 // Wider stance for squatting, narrow for normal standing
@@ -725,19 +784,58 @@ private fun listeningPose(pulse: Float): StickPose {
     )
 }
 
-/** SPEAKING: gesturing arms */
-private fun speakingPose(speakAmount: Float): StickPose {
-    // Arms gesture more when speaking; right arm waves more
-    val gestureAmp = 25f
-    val rightAngle = sin(speakAmount * PI.toFloat() * 2f) * gestureAmp
-    val leftAngle  = cos(speakAmount * PI.toFloat() * 2f) * gestureAmp * 0.6f
+/** SPEAKING: varied, natural arm gestures driven by slow gesture phase,
+ *  with occasional emphasis arm raises (like a speaker making a point). */
+private fun speakingPose(speakAmount: Float, gesturePhase: Float = 0f,
+                          emphasisArm: Int = -1, emphasisPhase: Float = 0f): StickPose {
+    val gp = gesturePhase * 2f * PI.toFloat()
+
+    // Multiple slow oscillators at incommensurate frequencies → complex non-repeating patterns
+    val slow1 = sin(gp * 0.7f)        // ~4.3s period
+    val slow2 = cos(gp * 1.1f)        // ~2.7s period
+    val slow3 = sin(gp * 1.5f)        // ~2.0s period
+
+    // Gesture energy envelope: slowly fades gestures in and out for natural rest periods
+    val energy = slow1 * 0.5f + 0.5f  // 0..1 smooth fade
+
+    // Right arm: blend of two oscillators + mouth-sync for emphasis on open mouth
+    val mouthKick = if (speakAmount > 0.5f) 1.0f else 0.3f
+    var rightSwing = (sin(gp * 2.3f) * 0.7f + slow2 * 0.3f) * 22f * energy * mouthKick
+
+    // Left arm: different rhythm — sometimes mirrors right, sometimes independent
+    var leftSwing = (cos(gp * 1.9f) * 0.6f + slow3 * 0.4f) * 16f * energy * mouthKick
+
+    // ── Emphasis gesture: occasional arm raise like a speaker making a point ──
+    if (emphasisArm >= 0 && emphasisPhase > 0.01f) {
+        val ease = sin(emphasisPhase * PI.toFloat())
+        if (emphasisArm == 0) {
+            leftSwing = leftSwing * (1f - ease) + (-80f - (-18f)) * ease
+        } else {
+            rightSwing = rightSwing * (1f - ease) + (80f - 18f) * ease
+        }
+    }
+
+    // Head follows the more active arm
+    val headFollow = (if (abs(rightSwing) > abs(leftSwing)) rightSwing else leftSwing) * 0.12f
+
+    // Compute forearm angles with emphasis override
+    var leftFore = -20f - leftSwing * 0.5f
+    var rightFore = 25f + rightSwing * 0.6f
+    if (emphasisArm == 0 && emphasisPhase > 0.01f) {
+        val ease = sin(emphasisPhase * PI.toFloat())
+        leftFore = leftFore * (1f - ease) + (-25f) * ease
+    } else if (emphasisArm == 1 && emphasisPhase > 0.01f) {
+        val ease = sin(emphasisPhase * PI.toFloat())
+        rightFore = rightFore * (1f - ease) + 25f * ease
+    }
+
     return StickPose(
-        headTilt = Math.toRadians((rightAngle * 0.15).toDouble()).toFloat(),
+        headTilt = Math.toRadians(headFollow.toDouble()).toFloat(),
         headShiftX = 0f, headShiftY = 0f, neckShiftX = 0f, hipShiftX = 0f,
-        leftUpperArmAngle  = Math.toRadians((-18.0 - leftAngle)).toFloat(),
-        leftForearmAngle   = Math.toRadians((-20.0 - leftAngle * 0.5)).toFloat(),
-        rightUpperArmAngle = Math.toRadians((18.0 + rightAngle)).toFloat(),
-        rightForearmAngle  = Math.toRadians((25.0 + rightAngle * 0.6)).toFloat(),
+        leftUpperArmAngle  = Math.toRadians((-18.0 - leftSwing).toDouble()).toFloat(),
+        leftForearmAngle   = Math.toRadians(leftFore.toDouble()).toFloat(),
+        rightUpperArmAngle = Math.toRadians((18.0 + rightSwing).toDouble()).toFloat(),
+        rightForearmAngle  = Math.toRadians(rightFore.toDouble()).toFloat(),
         leftUpperLegAngle  = Math.toRadians((-2.0)).toFloat(),
         leftLowerLegAngle  = 0f,
         rightUpperLegAngle = Math.toRadians(2.0).toFloat(),
@@ -834,7 +932,7 @@ private fun squattingPose(): StickPose = StickPose(
 private fun lyingPose(): StickPose = StickPose(
     headTilt = Math.toRadians((-22.0)).toFloat(),     // head resting on "wall"
     headShiftX = 0f, headShiftY = 0f,
-    neckShiftX = 0f, hipShiftX = 0f, hipShiftY = 0f,
+    neckShiftX = 0f, hipShiftX = 0f, hipShiftY = -25f, // raise hips so legs stay above ground after rotation
     bodyScale = 0f,
     figureRotation = -72f,                              // lean against left edge (~18° above flat)
     // Left arm: propping body up, elbow planted
@@ -843,11 +941,11 @@ private fun lyingPose(): StickPose = StickPose(
     // Right arm: relaxed across body
     rightUpperArmAngle = Math.toRadians(25.0).toFloat(),
     rightForearmAngle  = Math.toRadians((-30.0)).toFloat(),
-    // Legs: hips bent so legs hang more downward, knees bent naturally
-    leftUpperLegAngle  = Math.toRadians((-48.0)).toFloat(),   // thigh angled down from hip
-    leftLowerLegAngle  = Math.toRadians(62.0).toFloat(),      // shin hangs near vertical
-    rightUpperLegAngle = Math.toRadians(48.0).toFloat(),      // thigh angled down from hip
-    rightLowerLegAngle = Math.toRadians((-62.0)).toFloat(),   // shin hangs near vertical
+    // Legs: relaxed bent-knee lounging
+    leftUpperLegAngle  = Math.toRadians((-35.0)).toFloat(),   // thigh angled down from hip
+    leftLowerLegAngle  = Math.toRadians(42.0).toFloat(),      // shin toward feet
+    rightUpperLegAngle = Math.toRadians(35.0).toFloat(),      // thigh angled down from hip
+    rightLowerLegAngle = Math.toRadians((-42.0)).toFloat(),   // shin toward feet
 )
 
 /** WAKING UP: both hands rubbing eyes, groggy head tilt, relaxed stance */
@@ -883,13 +981,14 @@ private fun walkingPose(phase: Float): StickPose {
         headShiftX = 0f, headShiftY = -bob * 5f,
         neckShiftX = 0f, hipShiftX = 0f, hipShiftY = 0f,
         bodyScale = bob * 0.06f, figureRotation = 0f,
+        // Arms: cross-crawl — opposite to same-side leg (natural human walking)
         leftUpperArmAngle  = Math.toRadians((-22.0 - armSwing)).toFloat(),
-        leftForearmAngle   = Math.toRadians((14.0 + armSwing * 0.5)).toFloat(),
+        leftForearmAngle   = Math.toRadians((14.0 - armSwing * 0.5)).toFloat(),
         rightUpperArmAngle = Math.toRadians((22.0 - armSwing)).toFloat(),
         rightForearmAngle  = Math.toRadians((-14.0 - armSwing * 0.5)).toFloat(),
         leftUpperLegAngle  = Math.toRadians((-5.0 - legSwing)).toFloat(),
         leftLowerLegAngle  = Math.toRadians(kneeBend.toDouble()).toFloat(),
-        rightUpperLegAngle = Math.toRadians((5.0 - legSwing)).toFloat(),
+        rightUpperLegAngle = Math.toRadians((5.0 + legSwing)).toFloat(),    // opposite to left
         rightLowerLegAngle = Math.toRadians((-kneeBend).toDouble()).toFloat(),
     )
 }
@@ -924,7 +1023,7 @@ private fun walkingSidePose(phase: Float, facingLeft: Boolean): StickPose {
         // Legs: alternating stride
         leftUpperLegAngle  = Math.toRadians((-5.0 - legSwing)).toFloat(),
         leftLowerLegAngle  = Math.toRadians(kneeBend.toDouble()).toFloat(),
-        rightUpperLegAngle = Math.toRadians((3.0 - legSwing)).toFloat(),
+        rightUpperLegAngle = Math.toRadians((3.0 + legSwing)).toFloat(),    // opposite to left
         rightLowerLegAngle = Math.toRadians((-kneeBend).toDouble()).toFloat(),
     )
 }
@@ -1070,7 +1169,11 @@ private fun computePose(
     jumpPhase: Float = 0f,
     enginesReady: Boolean = true,
     walkType: WalkType = WalkType.NONE,
-    walkPhase: Float = 0f
+    walkPhase: Float = 0f,
+    stageWalkPhase: Float = 0f,
+    gesturePhase: Float = 0f,
+    emphasisArm: Int = -1,
+    emphasisPhase: Float = 0f
 ): StickPose {
     // Engines not ready → waking up animation (overrides everything)
     if (!enginesReady) return wakingUpPose()
@@ -1093,7 +1196,8 @@ private fun computePose(
             }
         }
         RobotMode.LISTENING -> listeningPose(listenPulse)
-        RobotMode.SPEAKING  -> speakingPose(speakAmount)
+        RobotMode.SPEAKING  -> speakingPose(speakAmount, gesturePhase,
+                                              emphasisArm, emphasisPhase)
         RobotMode.THINKING  -> thinkingPose(thinkPhase)
         RobotMode.LOOKING   -> lookingPose()
     }
@@ -1112,6 +1216,25 @@ private fun computePose(
     }
 
     val result = blendPose(modePose, emotionPose, emotionWeight)
+
+    // Stage walk during speaking: blend walking legs + body sway into speaking pose
+    if (mode == RobotMode.SPEAKING && stageWalkPhase > 0.01f) {
+        val stageSwing = sin(stageWalkPhase * 2f * PI.toFloat())  // -1..1
+        val legSwing = stageSwing * 22f                           // ±22° gentle stride
+        val bodySway = stageSwing * 8f                            // ±8px hip sway
+        val bob = abs(stageSwing)                                  // 0..1 bounce
+
+        return result.copy(
+            hipShiftX = result.hipShiftX + bodySway,
+            neckShiftX = result.neckShiftX + bodySway * 0.6f,
+            headShiftY = result.headShiftY - bob * 3f,
+            bodyScale = result.bodyScale + bob * 0.04f,
+            leftUpperLegAngle  = Math.toRadians((-2.0 - legSwing)).toFloat(),
+            leftLowerLegAngle  = Math.toRadians((bob * 6.0)).toFloat(),
+            rightUpperLegAngle = Math.toRadians((2.0 + legSwing)).toFloat(),
+            rightLowerLegAngle = Math.toRadians((-bob * 6.0)).toFloat()
+        )
+    }
 
     // Apply breathing scale (IDLE only — no more WATCHING)
     if (mode == RobotMode.IDLE) {
@@ -1177,7 +1300,7 @@ private fun DrawScope.drawStickHead(
     // Subtle radial gradient for depth
     drawCircle(
         brush = Brush.radialGradient(
-            colors = listOf(ColorHeadFill, Color(0xFFE8E4DE)),
+            colors = listOf(ColorHeadFill, Color(0xFFE8BF2E)),  // light yellow → golden yellow
             center = Offset(center.x - radius * 0.2f, center.y - radius * 0.35f),
             radius = radius * 1.1f
         ),
