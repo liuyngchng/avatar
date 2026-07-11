@@ -770,21 +770,48 @@ final class StickFigureDrawer {
 
         // IK for legs: lock feet on ground (all standing poses)
         // Skip during jumps (feet leave ground), lying (figure rotated),
-        // stage walk (explicit walking angles), and waking up (spread legs)
+        // and waking up (spread legs).
+        // NOTE: during stage walk we still apply IK to the planted foot to
+        // prevent both feet from leaving the ground (floating appearance).
         let isJumping = jumpPhase > 0.01
         let isLying = pose.figureRotation != 0
         let isStageWalk = mode == .speaking && stageWalkPhase > 0.01
         let isWakingUp = !enginesReady
-        if !isJumping && !isLying && !isStageWalk && !isWakingUp {
+        if !isJumping && !isLying && !isWakingUp {
             let isSquatting = mode == .idle && anticTrigger > 0 && anticTrigger % 7 == 3
             let footSpread: CGFloat = isSquatting ? 22 : 6
-            if let ik = solve2BoneIK(root: leftHip, len1: upperLegLen, len2: lowerLegLen,
-                                     target: CGPoint(x: leftHip.x - footSpread, y: feetY), bendCCW: true) {
-                llUA = ik.angle1; llLA = ik.angle2
-            }
-            if let ik = solve2BoneIK(root: rightHip, len1: upperLegLen, len2: lowerLegLen,
-                                     target: CGPoint(x: rightHip.x + footSpread, y: feetY), bendCCW: false) {
-                rlUA = ik.angle1; rlLA = ik.angle2
+
+            if isStageWalk {
+                // During the talking sway, keep at least one foot planted.
+                // Planted foot = opposite to sway direction:
+                //   sway right → left foot planted; sway left → right foot planted.
+                // A small overlap zone (±0.05) plants both feet during transition.
+                let stageSwing = sin(stageWalkPhase * 2 * .pi)
+
+                if stageSwing >= -0.05 {
+                    // Swaying right or centered: left foot is the anchor
+                    if let ik = solve2BoneIK(root: leftHip, len1: upperLegLen, len2: lowerLegLen,
+                                             target: CGPoint(x: leftHip.x - footSpread, y: feetY), bendCCW: true) {
+                        llUA = ik.angle1; llLA = ik.angle2
+                    }
+                }
+                if stageSwing <= 0.05 {
+                    // Swaying left or centered: right foot is the anchor
+                    if let ik = solve2BoneIK(root: rightHip, len1: upperLegLen, len2: lowerLegLen,
+                                             target: CGPoint(x: rightHip.x + footSpread, y: feetY), bendCCW: false) {
+                        rlUA = ik.angle1; rlLA = ik.angle2
+                    }
+                }
+            } else {
+                // Non-stage-walk standing poses: lock both feet on ground
+                if let ik = solve2BoneIK(root: leftHip, len1: upperLegLen, len2: lowerLegLen,
+                                         target: CGPoint(x: leftHip.x - footSpread, y: feetY), bendCCW: true) {
+                    llUA = ik.angle1; llLA = ik.angle2
+                }
+                if let ik = solve2BoneIK(root: rightHip, len1: upperLegLen, len2: lowerLegLen,
+                                         target: CGPoint(x: rightHip.x + footSpread, y: feetY), bendCCW: false) {
+                    rlUA = ik.angle1; rlLA = ik.angle2
+                }
             }
         }
 
