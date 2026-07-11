@@ -52,7 +52,6 @@ enum StickGeo {
     static let shoulderWFrac: CGFloat    = 0.06
     static let hipWFrac: CGFloat         = 0.04
     static let footSpreadFrac: CGFloat   = 0.015   // normal stance foot spread from hip
-    static let squatFootSpreadFrac: CGFloat = 0.056 // wider stance for squatting
 
     static let bodyStroke: CGFloat   = 6
     static let limbStroke: CGFloat   = 5
@@ -275,13 +274,24 @@ final class StickFigureDrawer {
         return -sin(t * .pi) * figureHeight * 0.35
     }
 
-    private static func squattingPose() -> StickPose {
+    /// CROSS-LEGGED SITTING: hips on ground, legs folded, hands on knees.
+    private static func sittingPose() -> StickPose {
         StickPose(
-            headShiftY: 8, bodyScale: 0,  // no compress — IK places feet; squat from knee bend
-            leftUpperArmAngle: deg2rad(-20), leftForearmAngle: deg2rad(-80),
-            rightUpperArmAngle: deg2rad(20), rightForearmAngle: deg2rad(80),
-            leftUpperLegAngle: deg2rad(-55), leftLowerLegAngle: deg2rad(50),
-            rightUpperLegAngle: deg2rad(55), rightLowerLegAngle: deg2rad(-50)
+            headTilt: deg2rad(4),
+            headShiftY: 165,                // lower entire body so hips reach ground
+            hipShiftY: 165,                 // same — body shifts down as a unit
+            bodyScale: 0,                   // no compression
+            figureRotation: 0,
+            // Arms: hands resting on knees
+            leftUpperArmAngle: deg2rad(-22),
+            leftForearmAngle: deg2rad(-52),
+            rightUpperArmAngle: deg2rad(22),
+            rightForearmAngle: deg2rad(52),
+            // Legs: thighs spread wide, shins cross inward (FK — IK skipped for sitting)
+            leftUpperLegAngle: deg2rad(-72),
+            leftLowerLegAngle: deg2rad(52),
+            rightUpperLegAngle: deg2rad(72),
+            rightLowerLegAngle: deg2rad(-52)
         )
     }
 
@@ -513,7 +523,7 @@ final class StickFigureDrawer {
             if jumpPhase > 0.01 {
                 modePose = jumpingPose(jumpPhase)
             } else if anticTrigger > 0 && anticTrigger % 7 == 3 {
-                modePose = squattingPose()
+                modePose = sittingPose()
             } else if anticTrigger > 3 && anticTrigger % 13 == 7 {
                 modePose = lyingPose()
             } else {
@@ -632,24 +642,26 @@ final class StickFigureDrawer {
         let neckY = headCY + headR
         let effectiveHipY = neckY + bodyLen * (1 - pose.bodyScale)
 
+        // Lying: feet anchored at right side so body extends leftward across screen
+        let rotCenterX = w - w * 0.12                 // feet near right edge (12% margin)
+        let groundCX = pose.figureRotation != 0 ? rotCenterX : cx
+
         // ═══════════════════════════════════════════════════════
         //  GROUND — drawn BEFORE any figure transforms so it
         //  stays fixed regardless of jump / rotation / etc.
         // ═══════════════════════════════════════════════════════
-        drawGroundLine(ctx: ctx, cx: cx, feetY: feetY, canvasW: w)
-        drawGroundShadow(ctx: ctx, cx: cx, feetY: feetY)
+        drawGroundLine(ctx: ctx, cx: groundCX, feetY: feetY, canvasW: w)
+        drawGroundShadow(ctx: ctx, cx: groundCX, feetY: feetY)
 
-        // ── Auto-zoom: scale rotated (lying) figure to fill screen width ──
+        // Auto-zoom: scale rotated figure to fill available horizontal space
         let lieScale: CGFloat
         if pose.figureRotation != 0 {
             let absAngleRad = abs(pose.figureRotation) * .pi / 180
             let horizontalReach = sin(absAngleRad) * figureH + headR * 2.5
-            let availableW = w - 40                 // full screen width minus margins
+            let availableW = rotCenterX - 20           // space from pivot to left margin
             if horizontalReach > availableW {
-                // Scale down to fit within canvas
                 lieScale = max((availableW / horizontalReach), 0.5)
             } else if horizontalReach > 0 {
-                // Scale up to fill screen (cap at 2.5x)
                 lieScale = min((availableW / horizontalReach), 2.5)
             } else {
                 lieScale = 1
@@ -658,9 +670,9 @@ final class StickFigureDrawer {
             lieScale = 1
         }
         if lieScale != 1 {
-            ctx.translateBy(x: cx, y: feetY)
+            ctx.translateBy(x: rotCenterX, y: feetY)
             ctx.scaleBy(x: lieScale, y: lieScale)
-            ctx.translateBy(x: -cx, y: -feetY)
+            ctx.translateBy(x: -rotCenterX, y: -feetY)
         }
 
         // Save context for figure transforms (rotation / jump)
@@ -668,7 +680,7 @@ final class StickFigureDrawer {
 
         // Whole-body rotation (lying down) — pivot around feet so body rests on ground
         if pose.figureRotation != 0 {
-            let rotCenter = CGPoint(x: cx, y: feetY)
+            let rotCenter = CGPoint(x: rotCenterX, y: feetY)
             ctx.translateBy(x: rotCenter.x, y: rotCenter.y)
             ctx.rotate(by: pose.figureRotation * .pi / 180)
             ctx.translateBy(x: -rotCenter.x, y: -rotCenter.y)
@@ -785,10 +797,10 @@ final class StickFigureDrawer {
         let isLying = pose.figureRotation != 0
         let isStageWalk = mode == .speaking && stageWalkPhase > 0.01
         let isWalking = (walkType == .left || walkType == .right) && walkPhase > 0.01
+        let isSitting = mode == .idle && anticTrigger > 0 && anticTrigger % 7 == 3
         let isWakingUp = !enginesReady
-        if !isJumping && !isLying && !isWakingUp {
-            let isSquatting = mode == .idle && anticTrigger > 0 && anticTrigger % 7 == 3
-            let footSpread = isSquatting ? w * StickGeo.squatFootSpreadFrac : w * StickGeo.footSpreadFrac
+        if !isJumping && !isLying && !isWakingUp && !isSitting {
+            let footSpread = w * StickGeo.footSpreadFrac
 
             if isStageWalk || isWalking {
                 // Keep the planted foot on the ground; the swinging foot lifts via FK.
