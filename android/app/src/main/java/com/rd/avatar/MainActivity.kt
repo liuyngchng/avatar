@@ -60,6 +60,7 @@ class MainActivity : ComponentActivity() {
     @Volatile private var isRecording = false
     @Volatile private var recordingJob: Job? = null
     @Volatile private var onSpeechEnd: ((String?) -> Unit)? = null
+    @Volatile private var lastSpeechChunkCount = 0  // non-silent buffer count for min-speech gate
 
     // Lifecycle-aware scope — cancelled in onDestroy to prevent leaks
     private val activityScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
@@ -121,7 +122,36 @@ class MainActivity : ComponentActivity() {
             // Defined here so both the onTap lambda and the wakeEvents collector can access it.
             // Must be a var (not val) because the lambda self-references inside speak() callbacks.
             var onSpeechResult: ((String?) -> Unit)? = null
-            onSpeechResult = { text ->
+            onSpeechResult = onResult@ { text ->
+                // Minimum-speech gate: if the utterance is too short
+                // (< ~500ms of actual speech energy), treat it as
+                // echo/reverb rather than real user input.  This stops
+                // the robot from responding to its own TTS tail in
+                // multi-turn mode.
+                val minSpeechChunks = 6  // ~500ms at ~80ms/buffer
+                if (isMultiTurn && lastSpeechChunkCount < minSpeechChunks) {
+                    Log.i("MainActivity",
+                        "Utterance too short (${lastSpeechChunkCount} chunks < $minSpeechChunks), treating as echo")
+                    multiTurnBlankCount++
+                    if (multiTurnBlankCount >= 2) {
+                        isMultiTurn = false
+                        multiTurnBlankCount = 0
+                        wakeWordTriggered = false
+                        WakeWordManager.notifyVoiceFlowDone()
+                        robotState = robotState.copy(mode = RobotMode.IDLE)
+                    } else {
+                        speak("嗯？还在吗？") {
+                            scope.launch {
+                                delay(800)  // post-speech cooldown
+                                robotState = robotState.copy(
+                                    mode = RobotMode.LISTENING, isSpeaking = false)
+                                startRecording(onSpeechResult!!)
+                            }
+                        }
+                    }
+                    return@onResult
+                }
+
                 if (text != null && text.isNotBlank()) {
                     // Productive wake: reset debounce
                     if (wakeWordTriggered) {
@@ -167,12 +197,17 @@ class MainActivity : ComponentActivity() {
                         )
                         speak(response) {
                             if (isMultiTurn) {
-                                // Auto-listen for next utterance
-                                robotState = robotState.copy(
-                                    mode = RobotMode.LISTENING,
-                                    isSpeaking = false
-                                )
-                                startRecording(onSpeechResult!!)
+                                // Post-speech cooldown: wait for room acoustics
+                                // to settle before opening the mic, so we don't
+                                // capture our own TTS tail as the next utterance.
+                                scope.launch {
+                                    delay(800)  // 800ms post-speech cooldown
+                                    robotState = robotState.copy(
+                                        mode = RobotMode.LISTENING,
+                                        isSpeaking = false
+                                    )
+                                    startRecording(onSpeechResult!!)
+                                }
                             } else {
                                 robotState = robotState.copy(
                                     mode = RobotMode.IDLE,
@@ -199,11 +234,14 @@ class MainActivity : ComponentActivity() {
                         } else {
                             // Prompt user to continue
                             speak("嗯？还在吗？") {
-                                robotState = robotState.copy(
-                                    mode = RobotMode.LISTENING,
-                                    isSpeaking = false
-                                )
-                                startRecording(onSpeechResult!!)
+                                scope.launch {
+                                    delay(800)  // post-speech cooldown
+                                    robotState = robotState.copy(
+                                        mode = RobotMode.LISTENING,
+                                        isSpeaking = false
+                                    )
+                                    startRecording(onSpeechResult!!)
+                                }
                             }
                         }
                     } else {
@@ -332,8 +370,10 @@ class MainActivity : ComponentActivity() {
                             audioPlayer.play(greetingPcm, ttsEngine.getSampleRate())
                         }
                     }
-                    // Start recording for the user's first utterance
+                    // Post-speech cooldown: let room acoustics settle
+                    // before opening the mic for the user's first utterance.
                     robotState = robotState.copy(mode = RobotMode.LISTENING, isSpeaking = false)
+                    delay(800)  // 800ms cooldown
                     startRecording(onSpeechResult)
                 }
             }
@@ -498,6 +538,8 @@ class MainActivity : ComponentActivity() {
         isRecording = true
         onSpeechEnd = onResult
         var silentChunks = 0
+        var warmupBuffers = 5  // skip first ~5 buffers (~400ms) to avoid TTS tail/echo
+        var speechChunkCount = 0  // non-silent buffers for minimum-speech gate
         val effectiveThreshold = calibratedNoiseThreshold
 
         // Cancel any stale job before starting a new one
@@ -512,6 +554,13 @@ class MainActivity : ComponentActivity() {
                 }
 
                 audioRecorder.startRecording().collect { samples ->
+                    // Warm-up: drop the first few buffers so residual TTS echo
+                    // doesn't trigger a false VAD start.
+                    if (warmupBuffers > 0) {
+                        warmupBuffers--
+                        return@collect
+                    }
+
                     asrEngine.acceptWaveform(samples)
 
                     var sumSq = 0f
@@ -527,12 +576,14 @@ class MainActivity : ComponentActivity() {
                         }
                     } else {
                         silentChunks = maxOf(0, silentChunks - 1)
+                        speechChunkCount++
                     }
                 }
                 timeoutJob.cancel()
             } finally {
                 if (isRecording) {
                     isRecording = false
+                    lastSpeechChunkCount = speechChunkCount
                     val text = try { asrEngine.inputFinished() } catch (_: Exception) { null }
                     val cb = onSpeechEnd
                     onSpeechEnd = null

@@ -70,6 +70,7 @@ class RobotViewModel: ObservableObject {
     private var latestRms: Float = 0
     private var vadTask: Task<Void, Never>?
     private var calibratedNoiseThreshold: Float = 0.012  // calibrated once at startup
+    private var speechChunkCount = 0  // non-silent buffer count during current recording
 
     // Pause/resume tracking
     private var isRobotRunning = false
@@ -383,7 +384,9 @@ class RobotViewModel: ObservableObject {
         robotState.responseText = nil
 
         latestRms = 0
+        speechChunkCount = 0
         var silentChunks = 0
+        var warmupBuffers = 5                       // skip first ~5 buffers (~400ms) to avoid TTS tail/echo
         let maxSilentChunks = 25                   // ~2 seconds at ~80ms/chunk
         let maxRecordSeconds: TimeInterval = 10
         let startTime = Date()
@@ -392,6 +395,14 @@ class RobotViewModel: ObservableObject {
         recordingCancellable = audioRecorder.startRecordingPublisher()
             .sink { [weak self] samples in
                 guard let self = self else { return }
+
+                // Warm-up: drop the first few buffers so residual TTS echo
+                // doesn't trigger a false VAD start.
+                if warmupBuffers > 0 {
+                    warmupBuffers -= 1
+                    return
+                }
+
                 self.asrEngine.acceptWaveform(samples)
 
                 // VAD: RMS energy-based silence detection
@@ -405,6 +416,7 @@ class RobotViewModel: ObservableObject {
                     }
                 } else {
                     silentChunks = max(0, silentChunks - 1)
+                    self.speechChunkCount += 1
                 }
             }
 
@@ -451,6 +463,24 @@ class RobotViewModel: ObservableObject {
             let text = await MainActor.run { self.asrEngine.inputFinished() }
 
             await MainActor.run {
+                // Minimum-speech gate: if the utterance is too short
+                // (< ~500ms of actual speech energy), treat it as
+                // echo/reverb rather than real user input.  This stops
+                // the robot from responding to its own TTS tail in
+                // multi-turn mode.
+                let minSpeechChunks = 6  // ~500ms at ~80ms/buffer
+                if self.isMultiTurn && self.speechChunkCount < minSpeechChunks {
+                    os_log(.info, "RobotVM: utterance too short (%d chunks < %d), treating as echo",
+                           self.speechChunkCount, minSpeechChunks)
+                    self.multiTurnBlankCount += 1
+                    if self.multiTurnBlankCount >= self.maxMultiTurnBlanks {
+                        self.endMultiTurn()
+                    } else {
+                        self.speakText("嗯？还在吗？")
+                    }
+                    return
+                }
+
                 guard !text.isEmpty else {
                     os_log(.info, "RobotVM: ASR returned blank")
                     if self.isMultiTurn {
@@ -604,6 +634,11 @@ class RobotViewModel: ObservableObject {
             }
         }
 
+        // Let the audio hardware drain its output buffer before tearing
+        // down the engine.  Without this delay the last ~50–100 ms of
+        // audio can be cut off mid-waveform, producing a pop / crackle.
+        try? await Task.sleep(nanoseconds: 150_000_000)  // 150ms
+
         self.audioPlayer.stop()
         self.finishSpeaking(prevMode: prevMode)
     }
@@ -612,9 +647,16 @@ class RobotViewModel: ObservableObject {
         robotState.isSpeaking = false
 
         if isMultiTurn {
-            // Continue multi-turn: auto-listen for next utterance
+            // Continue multi-turn: wait for room acoustics to settle
+            // before opening the mic, so we don't capture the tail/echo
+            // of our own TTS output as the next user utterance.
+            let cooldownNs: UInt64 = 800_000_000  // 800ms post-speech cooldown
             robotState.mode = .listening
-            startListening()
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: cooldownNs)
+                guard let self = self, self.isMultiTurn else { return }
+                self.startListening()
+            }
             return
         }
 
