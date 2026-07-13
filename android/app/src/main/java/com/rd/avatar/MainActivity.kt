@@ -375,8 +375,10 @@ class MainActivity : ComponentActivity() {
                     }
                     // Post-speech cooldown: let room acoustics settle
                     // before opening the mic for the user's first utterance.
-                    robotState = robotState.copy(mode = RobotMode.LISTENING, isSpeaking = false)
+                    // Keep mode as SPEAKING during the cooldown — startRecording()
+                    // will switch to LISTENING when the mic actually opens.
                     delay(800)  // 800ms cooldown
+                    robotState = robotState.copy(mode = RobotMode.LISTENING, isSpeaking = false)
                     startRecording(onSpeechResult)
                 }
             }

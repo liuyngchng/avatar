@@ -652,8 +652,9 @@ class RobotViewModel: ObservableObject {
             // Continue multi-turn: wait for room acoustics to settle
             // before opening the mic, so we don't capture the tail/echo
             // of our own TTS output as the next user utterance.
+            // Keep mode as .speaking during the cooldown — startListening()
+            // will switch to .listening when the mic actually opens.
             let cooldownNs: UInt64 = 800_000_000  // 800ms post-speech cooldown
-            robotState.mode = .listening
             Task { @MainActor [weak self] in
                 try? await Task.sleep(nanoseconds: cooldownNs)
                 guard let self = self, self.isMultiTurn else { return }
@@ -805,6 +806,9 @@ class RobotViewModel: ObservableObject {
                         cont.resume()
                     }
                 }
+                // Let the hardware output buffer drain before tearing down
+                // the engine, same as speakAndFinish().
+                try? await Task.sleep(nanoseconds: 150_000_000)
                 self.audioPlayer.stop()
             } else {
                 os_log(.error, "RobotVM: wake-word greeting TTS synthesis failed — skipping voice prompt")

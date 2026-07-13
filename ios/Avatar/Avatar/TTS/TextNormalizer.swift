@@ -515,104 +515,104 @@ enum TextNormalizer {
 
         // Step 2: Range with ℃: 28℃～35℃ → 二十八至三十五摄氏度
         if let regex = celsiusRangeRegex {
-            let nsString = result as NSString
-            let matches = regex.matches(in: result, range: NSRange(location: 0, length: nsString.length))
+            let matches = regex.matches(in: result, range: NSRange(location: 0, length: (result as NSString).length))
             for match in matches.reversed() {
-                let g1 = nsString.substring(with: match.range(at: 1))
-                let g2 = nsString.substring(with: match.range(at: 2))
-                result = nsString.replacingCharacters(in: match.range, with: numberToChinese(g1) + "至" + numberToChinese(g2) + "摄氏度")
+                let nsCurrent = result as NSString
+                let g1 = nsCurrent.substring(with: match.range(at: 1))
+                let g2 = nsCurrent.substring(with: match.range(at: 2))
+                result = nsCurrent.replacingCharacters(in: match.range, with: numberToChinese(g1) + "至" + numberToChinese(g2) + "摄氏度")
             }
         }
 
         // Step 3: Range with 度
         if let regex = degreeRangeRegex {
-            let nsString = result as NSString
-            let matches = regex.matches(in: result, range: NSRange(location: 0, length: nsString.length))
+            let matches = regex.matches(in: result, range: NSRange(location: 0, length: (result as NSString).length))
             for match in matches.reversed() {
-                let g1 = nsString.substring(with: match.range(at: 1))
-                let g2 = nsString.substring(with: match.range(at: 2))
-                result = nsString.replacingCharacters(in: match.range, with: numberToChinese(g1) + "至" + numberToChinese(g2) + "度")
+                let nsCurrent = result as NSString
+                let g1 = nsCurrent.substring(with: match.range(at: 1))
+                let g2 = nsCurrent.substring(with: match.range(at: 2))
+                result = nsCurrent.replacingCharacters(in: match.range, with: numberToChinese(g1) + "至" + numberToChinese(g2) + "度")
             }
         }
 
         // Step 4: Celsius: 35℃
         if let regex = celsiusRegex {
-            let nsString = result as NSString
-            let matches = regex.matches(in: result, range: NSRange(location: 0, length: nsString.length))
+            let matches = regex.matches(in: result, range: NSRange(location: 0, length: (result as NSString).length))
             for match in matches.reversed() {
-                let g1 = nsString.substring(with: match.range(at: 1))
-                result = nsString.replacingCharacters(in: match.range, with: numberToChinese(g1) + "摄氏度")
+                let nsCurrent = result as NSString
+                let g1 = nsCurrent.substring(with: match.range(at: 1))
+                result = nsCurrent.replacingCharacters(in: match.range, with: numberToChinese(g1) + "摄氏度")
             }
         }
 
         // Step 5: Percentage: 50% → 百分之五十
         if let regex = percentRegex {
-            let nsString = result as NSString
-            let matches = regex.matches(in: result, range: NSRange(location: 0, length: nsString.length))
+            let matches = regex.matches(in: result, range: NSRange(location: 0, length: (result as NSString).length))
             for match in matches.reversed() {
-                let g1 = nsString.substring(with: match.range(at: 1))
-                result = nsString.replacingCharacters(in: match.range, with: "百分之" + numberToChinese(g1))
+                let nsCurrent = result as NSString
+                let g1 = nsCurrent.substring(with: match.range(at: 1))
+                result = nsCurrent.replacingCharacters(in: match.range, with: "百分之" + numberToChinese(g1))
             }
         }
 
         // Step 6: Simple range: 28~35
         if let regex = simpleRangeRegex {
-            let nsString = result as NSString
-            let matches = regex.matches(in: result, range: NSRange(location: 0, length: nsString.length))
+            let matches = regex.matches(in: result, range: NSRange(location: 0, length: (result as NSString).length))
             for match in matches.reversed() {
-                let g1 = nsString.substring(with: match.range(at: 1))
-                let g2 = nsString.substring(with: match.range(at: 2))
-                result = nsString.replacingCharacters(in: match.range, with: numberToChinese(g1) + "至" + numberToChinese(g2))
+                let nsCurrent = result as NSString
+                let g1 = nsCurrent.substring(with: match.range(at: 1))
+                let g2 = nsCurrent.substring(with: match.range(at: 2))
+                result = nsCurrent.replacingCharacters(in: match.range, with: numberToChinese(g1) + "至" + numberToChinese(g2))
             }
         }
 
         // Step 7: Year: 2026年 → 二零二六年
         if let regex = yearRegex {
-            let nsString = result as NSString
-            let matches = regex.matches(in: result, range: NSRange(location: 0, length: nsString.length))
+            let matches = regex.matches(in: result, range: NSRange(location: 0, length: (result as NSString).length))
             for match in matches.reversed() {
-                let g1 = nsString.substring(with: match.range(at: 1))
-                result = nsString.replacingCharacters(in: match.range, with: digitsToChinese(g1) + "年")
+                let nsCurrent = result as NSString
+                let g1 = nsCurrent.substring(with: match.range(at: 1))
+                result = nsCurrent.replacingCharacters(in: match.range, with: digitsToChinese(g1) + "年")
             }
         }
 
         // Step 8: Month: 7月
         if let regex = monthRegex {
-            let nsString = result as NSString
-            let matches = regex.matches(in: result, range: NSRange(location: 0, length: nsString.length))
+            let matches = regex.matches(in: result, range: NSRange(location: 0, length: (result as NSString).length))
             for match in matches.reversed() {
-                let g1 = nsString.substring(with: match.range(at: 1))
-                result = nsString.replacingCharacters(in: match.range, with: numberToChinese(g1) + "月")
+                let nsCurrent = result as NSString
+                let g1 = nsCurrent.substring(with: match.range(at: 1))
+                result = nsCurrent.replacingCharacters(in: match.range, with: numberToChinese(g1) + "月")
             }
         }
 
         // Step 9: Day: 2日
         if let regex = dayRegex {
-            let nsString = result as NSString
-            let matches = regex.matches(in: result, range: NSRange(location: 0, length: nsString.length))
+            let matches = regex.matches(in: result, range: NSRange(location: 0, length: (result as NSString).length))
             for match in matches.reversed() {
-                let g1 = nsString.substring(with: match.range(at: 1))
-                result = nsString.replacingCharacters(in: match.range, with: numberToChinese(g1) + "日")
+                let nsCurrent = result as NSString
+                let g1 = nsCurrent.substring(with: match.range(at: 1))
+                result = nsCurrent.replacingCharacters(in: match.range, with: numberToChinese(g1) + "日")
             }
         }
 
         // Step 10: Hour: 14点
         if let regex = hourRegex {
-            let nsString = result as NSString
-            let matches = regex.matches(in: result, range: NSRange(location: 0, length: nsString.length))
+            let matches = regex.matches(in: result, range: NSRange(location: 0, length: (result as NSString).length))
             for match in matches.reversed() {
-                let g1 = nsString.substring(with: match.range(at: 1))
-                result = nsString.replacingCharacters(in: match.range, with: numberToChinese(g1) + "点")
+                let nsCurrent = result as NSString
+                let g1 = nsCurrent.substring(with: match.range(at: 1))
+                result = nsCurrent.replacingCharacters(in: match.range, with: numberToChinese(g1) + "点")
             }
         }
 
         // Step 11: Time HH:MM: 8:00 → 八点, 19:35 → 十九点三十五分, 08:05 → 八点零五分
         if let regex = timeRegex {
-            let nsString = result as NSString
-            let matches = regex.matches(in: result, range: NSRange(location: 0, length: nsString.length))
+            let matches = regex.matches(in: result, range: NSRange(location: 0, length: (result as NSString).length))
             for match in matches.reversed() {
-                let hourStr = nsString.substring(with: match.range(at: 1))
-                let minuteStr = nsString.substring(with: match.range(at: 2))
+                let nsCurrent = result as NSString
+                let hourStr = nsCurrent.substring(with: match.range(at: 1))
+                let minuteStr = nsCurrent.substring(with: match.range(at: 2))
                 let minute = Int(minuteStr) ?? 0
                 let chHour = numberToChinese(hourStr)
                 let replacement: String
@@ -623,41 +623,41 @@ enum TextNormalizer {
                 } else {
                     replacement = chHour + "点" + numberToChinese(String(minute)) + "分"
                 }
-                result = nsString.replacingCharacters(in: match.range, with: replacement)
+                result = nsCurrent.replacingCharacters(in: match.range, with: replacement)
             }
         }
 
         // Step 12: Decimal: 3.14 → 三点一四
         if let regex = decimalRegex {
-            let nsString = result as NSString
-            let matches = regex.matches(in: result, range: NSRange(location: 0, length: nsString.length))
+            let matches = regex.matches(in: result, range: NSRange(location: 0, length: (result as NSString).length))
             for match in matches.reversed() {
-                let intPart = numberToChinese(nsString.substring(with: match.range(at: 1)))
-                let fracStr = nsString.substring(with: match.range(at: 2))
+                let nsCurrent = result as NSString
+                let intPart = numberToChinese(nsCurrent.substring(with: match.range(at: 1)))
+                let fracStr = nsCurrent.substring(with: match.range(at: 2))
                 let fracPart = fracStr.compactMap { $0.wholeNumberValue }
                     .map { String(chineseDigits[$0]) }
                     .joined()
-                result = nsString.replacingCharacters(in: match.range, with: intPart + " 点 " + fracPart)
+                result = nsCurrent.replacingCharacters(in: match.range, with: intPart + " 点 " + fracPart)
             }
         }
 
         // Step 13: Remaining standalone integers
         if let regex = integerRegex {
-            let nsString = result as NSString
-            let matches = regex.matches(in: result, range: NSRange(location: 0, length: nsString.length))
+            let matches = regex.matches(in: result, range: NSRange(location: 0, length: (result as NSString).length))
             for match in matches.reversed() {
-                let num = nsString.substring(with: match.range(at: 0))
-                result = nsString.replacingCharacters(in: match.range, with: numberToChinese(num))
+                let nsCurrent = result as NSString
+                let num = nsCurrent.substring(with: match.range(at: 0))
+                result = nsCurrent.replacingCharacters(in: match.range, with: numberToChinese(num))
             }
         }
 
         // Step 14: Remaining English letters
         if let regex = englishWordRegex {
-            let nsString = result as NSString
-            let matches = regex.matches(in: result, range: NSRange(location: 0, length: nsString.length))
+            let matches = regex.matches(in: result, range: NSRange(location: 0, length: (result as NSString).length))
             for match in matches.reversed() {
-                let word = nsString.substring(with: match.range(at: 0)).lowercased()
-                result = nsString.replacingCharacters(in: match.range, with: word.map { englishLetterToChinese($0) }.joined())
+                let nsCurrent = result as NSString
+                let word = nsCurrent.substring(with: match.range(at: 0)).lowercased()
+                result = nsCurrent.replacingCharacters(in: match.range, with: word.map { englishLetterToChinese($0) }.joined())
             }
         }
 
