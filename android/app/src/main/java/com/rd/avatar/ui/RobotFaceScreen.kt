@@ -290,13 +290,23 @@ fun RobotFaceScreen(
             val figureH = h * FIGURE_HEIGHT_FRACTION
             val feetY = h * FEET_Y_FRACTION
             val headR = w * HEAD_RADIUS_FRACTION
-            val bodyLen = h * BODY_LENGTH_FRACTION
             val shoulderHalfW = w * SHOULDER_W_FRACTION
             val hipHalfW = w * HIP_W_FRACTION
             val upperArmLen = h * UPPER_ARM_FRACTION
             val forearmLen = h * FOREARM_FRACTION
             val upperLegLen = h * UPPER_LEG_FRACTION
             val lowerLegLen = h * LOWER_LEG_FRACTION
+
+            // Compute bodyLen dynamically so hip-to-foot distance ≈ total leg length,
+            // keeping legs straight regardless of screen aspect ratio.
+            // Without this, wider screens get bent knees because headR depends on
+            // width, which shifts the hip and changes leg reach.
+            // Clamp to a sensible minimum (15% of figureH) to prevent negative body
+            // on extreme aspect ratios (e.g. landscape tablets).
+            val totalLegLen = upperLegLen + lowerLegLen
+            val footSpreadBase = w * 0.015f  // standard stance foot spread
+            val idealHipToFeetY = sqrt(max(0f, totalLegLen * totalLegLen - footSpreadBase * footSpreadBase))
+            val bodyLen = max(figureH * 0.15f, figureH - 2f * headR - idealHipToFeetY)
             val eyeR = w * EYE_RADIUS_FRACTION
             val mouthHalfW = w * MOUTH_W_FRACTION
             val jointR = JOINT_RADIUS

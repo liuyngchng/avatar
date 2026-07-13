@@ -614,13 +614,23 @@ final class StickFigureDrawer {
         let figureH = h * StickGeo.figureHeightFrac
         let feetY = h * StickGeo.feetYFrac
         let headR = w * StickGeo.headRadiusFrac
-        let bodyLen = h * StickGeo.bodyLengthFrac
         let shoulderHalfW = w * StickGeo.shoulderWFrac
         let hipHalfW = w * StickGeo.hipWFrac
         let upperArmLen = h * StickGeo.upperArmFrac
         let forearmLen = h * StickGeo.forearmFrac
         let upperLegLen = h * StickGeo.upperLegFrac
         let lowerLegLen = h * StickGeo.lowerLegFrac
+
+        // Compute bodyLen dynamically so hip-to-foot distance ≈ total leg length,
+        // keeping legs straight regardless of screen aspect ratio.
+        // Without this, wider screens (e.g. iPhone SE) get bent knees because
+        // headR depends on width, which shifts the hip and changes leg reach.
+        // Clamp to a sensible minimum (15% of figureH) to prevent negative body
+        // on extreme aspect ratios (e.g. landscape tablets).
+        let totalLegLen = upperLegLen + lowerLegLen
+        let footSpread = w * StickGeo.footSpreadFrac
+        let idealHipToFeetY = sqrt(max(0, totalLegLen * totalLegLen - footSpread * footSpread))
+        let bodyLen = max(figureH * 0.15, figureH - 2 * headR - idealHipToFeetY)
         let eyeR = w * StickGeo.eyeRadiusFrac
         let mouthHalfW = w * StickGeo.mouthWFrac
         let jointR = StickGeo.jointRadius
