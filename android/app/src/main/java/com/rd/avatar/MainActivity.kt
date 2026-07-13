@@ -61,6 +61,7 @@ class MainActivity : ComponentActivity() {
     @Volatile private var recordingJob: Job? = null
     @Volatile private var onSpeechEnd: ((String?) -> Unit)? = null
     @Volatile private var lastSpeechChunkCount = 0  // non-silent buffer count for min-speech gate
+    @Volatile private var recordingGeneration = 0   // incremented on each start/stop to stale-guard finally blocks
 
     // Lifecycle-aware scope — cancelled in onDestroy to prevent leaks
     private val activityScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
@@ -75,6 +76,8 @@ class MainActivity : ComponentActivity() {
         private const val NOISE_CALIBRATION_CHUNKS = 20
         // Max recording duration before force-stop
         private const val MAX_RECORD_SECONDS = 10f
+        // Consecutive blank/silent turns before ending multi-turn conversation
+        private const val MAX_MULTI_TURN_BLANKS = 3  // ~6s (3 × ~2s VAD silence per utterance)
     }
 
     // Calibrated once at startup, used for all subsequent VAD
@@ -133,7 +136,7 @@ class MainActivity : ComponentActivity() {
                     Log.i("MainActivity",
                         "Utterance too short (${lastSpeechChunkCount} chunks < $minSpeechChunks), treating as echo")
                     multiTurnBlankCount++
-                    if (multiTurnBlankCount >= 2) {
+                    if (multiTurnBlankCount >= MAX_MULTI_TURN_BLANKS) {
                         isMultiTurn = false
                         multiTurnBlankCount = 0
                         wakeWordTriggered = false
@@ -224,8 +227,8 @@ class MainActivity : ComponentActivity() {
                     // Blank / empty speech
                     if (isMultiTurn) {
                         multiTurnBlankCount++
-                        if (multiTurnBlankCount >= 2) {
-                            // End multi-turn after two consecutive blanks
+                        if (multiTurnBlankCount >= MAX_MULTI_TURN_BLANKS) {
+                            // End multi-turn after consecutive blanks
                             isMultiTurn = false
                             multiTurnBlankCount = 0
                             wakeWordTriggered = false
@@ -396,15 +399,34 @@ class MainActivity : ComponentActivity() {
                                 stopWakeWordService()
                             }
 
-                            // Tap-to-talk: not a wake-word session
-                            wakeWordTriggered = false
-                            isMultiTurn = false
+                            // If multi-turn is active, tapping ends the conversation
+                            // gracefully (same as long-press / manual stop).
+                            if (isMultiTurn) {
+                                isMultiTurn = false
+                                multiTurnBlankCount = 0
+                                wakeWordTriggered = false
+                                WakeWordManager.notifyVoiceFlowDone()
+                            }
 
-                            if (isRecording) {
-                                stopRecording { onSpeechResult(it) }
-                            } else {
-                                startRecording { onSpeechResult(it) }
-                                robotState = robotState.copy(mode = RobotMode.LISTENING)
+                            when (robotState.mode) {
+                                RobotMode.LISTENING -> {
+                                    // Stop the current recording and process whatever was captured
+                                    stopRecording { onSpeechResult(it) }
+                                }
+                                RobotMode.SPEAKING -> {
+                                    // Stop TTS playback
+                                    audioPlayer.stop()
+                                    robotState = robotState.copy(
+                                        mode = RobotMode.IDLE,
+                                        isSpeaking = false
+                                    )
+                                }
+                                else -> {
+                                    // Idle or looking — start tap-to-talk
+                                    wakeWordTriggered = false
+                                    startRecording { onSpeechResult(it) }
+                                    robotState = robotState.copy(mode = RobotMode.LISTENING)
+                                }
                             }
                         },
                         onSettingsClick = {
@@ -535,6 +557,11 @@ class MainActivity : ComponentActivity() {
 
     private fun startRecording(onResult: (String?) -> Unit) {
         if (!asrReady) return
+
+        // Bump generation so any in-flight finally block from a previous
+        // recording job knows its results are stale and won't overwrite
+        // the new recording's state (isRecording / onSpeechEnd).
+        val myGeneration = ++recordingGeneration
         isRecording = true
         onSpeechEnd = onResult
         var silentChunks = 0
@@ -581,7 +608,11 @@ class MainActivity : ComponentActivity() {
                 }
                 timeoutJob.cancel()
             } finally {
-                if (isRecording) {
+                // Only deliver the result if this recording is still the
+                // active one.  Stale finally blocks (from cancelled jobs)
+                // must not overwrite state that a newer startRecording()
+                // already set up.
+                if (isRecording && recordingGeneration == myGeneration) {
                     isRecording = false
                     lastSpeechChunkCount = speechChunkCount
                     val text = try { asrEngine.inputFinished() } catch (_: Exception) { null }
@@ -594,10 +625,18 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun stopRecording(onResult: (String?) -> Unit) {
+        // Bump generation first so any in-flight finally block from the
+        // current recording job sees a stale generation and skips delivery.
+        recordingGeneration++
+        isRecording = false
         onSpeechEnd = onResult
         recordingJob?.cancel()
         recordingJob = null
         audioRecorder.stopRecording()
+        // Invoke callback directly — the recording coroutine's finally block
+        // won't deliver because the generation is now stale.
+        onSpeechEnd = null
+        onResult(null)
     }
 
     // ── TTS playback (sentence-by-sentence streaming) ─────────────────
