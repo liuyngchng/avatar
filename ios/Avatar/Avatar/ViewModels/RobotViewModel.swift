@@ -52,7 +52,7 @@ class RobotViewModel: ObservableObject {
     // Multi-turn conversation
     private var isMultiTurn = false
     private var multiTurnBlankCount = 0
-    private let maxMultiTurnBlanks = 2   // ~4 s (2 × ~2 s VAD silence per utterance)
+    private let maxMultiTurnBlanks = 3   // ~6 s (3 × ~2 s VAD silence per utterance)
 
     // Recording / TTS tasks
     private var recordingCancellable: AnyCancellable?
@@ -356,6 +356,7 @@ class RobotViewModel: ObservableObject {
         var chunkCount = 0
 
         let cancellable = audioRecorder.startRecordingPublisher()
+            .receive(on: DispatchQueue.main)
             .sink { [weak self] samples in
                 guard let self = self else { return }
                 let rms = Self.rms(samples)
@@ -393,6 +394,7 @@ class RobotViewModel: ObservableObject {
         let effectiveThreshold = calibratedNoiseThreshold
 
         recordingCancellable = audioRecorder.startRecordingPublisher()
+            .receive(on: DispatchQueue.main)
             .sink { [weak self] samples in
                 guard let self = self else { return }
 
@@ -871,6 +873,12 @@ class RobotViewModel: ObservableObject {
         wakeWordManager.setRunning(false)
         robotState.mode = .idle
         robotState.isSpeaking = false
+        // Reset multi-turn state so we don't resume a conversation
+        // that was interrupted (e.g., phone call, alarm).
+        isMultiTurn = false
+        multiTurnBlankCount = 0
+        isInConversation = false
+        wakeWordTriggered = false
     }
 
     private func handleInterruptionEnded() {
