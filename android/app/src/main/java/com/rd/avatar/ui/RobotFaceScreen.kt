@@ -323,6 +323,7 @@ fun RobotFaceScreen(
                 listenPulse = listenPulse.value,
                 breatheAmount = breatheScale.value,
                 anticTrigger = state.anticTrigger,
+                anticPhase = anticPhase.value,
                 jumpPhase = jumpPhase.value,
                 enginesReady = enginesReady,
                 walkType = walkType,
@@ -345,16 +346,14 @@ fun RobotFaceScreen(
             drawGroundLine(cx, feetY, w)
             drawGroundShadow(cx, feetY)
 
-            // ── Auto-zoom: scale rotated figure to fill screen width comfortably ──
+            // ── Auto-zoom: scale rotated figure down if it would overflow screen ──
             val lieScale = if (pose.figureRotation != 0f) {
                 val absAngleRad = abs(pose.figureRotation) * PI.toFloat() / 180f
                 val horizontalReach = sin(absAngleRad) * figureH + headR * 2.5f
                 val availableW = w / 2f - 20f  // margin from edge
                 if (horizontalReach > availableW)
                     (availableW / horizontalReach).coerceIn(0.25f, 1f)   // scale down to fit
-                else if (horizontalReach > 0f)
-                    (availableW / horizontalReach).coerceIn(1f, 2.5f)    // scale up to fill
-                else 1f
+                else 1f  // never scale up — keeps figure at natural size
             } else 1f
             if (lieScale != 1f) {
                 drawContext.transform.scale(lieScale, lieScale, Offset(cx, feetY))
@@ -1258,6 +1257,7 @@ private fun computePose(
     listenPulse: Float,
     breatheAmount: Float,
     anticTrigger: Long = 0L,
+    anticPhase: Float = 0f,
     jumpPhase: Float = 0f,
     enginesReady: Boolean = true,
     walkType: WalkType = WalkType.NONE,
@@ -1283,7 +1283,8 @@ private fun computePose(
                 jumpingPose(jumpPhase)
             } else when {
                 anticTrigger > 0 && anticTrigger % 7L == 3L -> squattingPose()
-                anticTrigger > 3 && anticTrigger % 13L == 7L -> lyingPose()
+                anticTrigger > 3 && anticTrigger % 13L == 7L ->
+                    blendPose(idlePose(), lyingPose(), anticPhase)
                 else -> idlePose()
             }
         }
