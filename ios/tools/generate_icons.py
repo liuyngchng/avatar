@@ -131,13 +131,15 @@ def draw_launcher_eyes(draw: ImageDraw.ImageDraw):
 
 
 def draw_launcher_mouth(draw: ImageDraw.ImageDraw):
-    mw = _s(12)
-    mh = _s(5)
-    mx, my = _s(54), _s(40)
+    # Crescent smile — thick arc, like a moon
+    mw = _s(14)
+    mh = _s(6)
+    mx, my = _s(54), _s(39)
+    sw = max(1, int(_sw(3)))
     draw.arc(
-        [(mx - mw / 2, my), (mx + mw / 2, my + mh * 2)],
-        start=210, end=330,
-        fill=MOUTH_COLOR, width=max(1, int(_sw(2))),
+        [(mx - mw / 2, my - mh), (mx + mw / 2, my + mh)],
+        start=30, end=150,
+        fill=MOUTH_COLOR, width=sw,
     )
 
 
