@@ -27,12 +27,12 @@ HEAD_OUTLINE_SW = 1.5
 BODY_X, BODY_Y1, BODY_Y2 = 54, 49, 68
 BODY_SW = 4
 
-# Arms
-LA = [(46, 49), (36, 37), (28, 28)]   # left arm: shoulder→elbow→hand
-RA = [(62, 49), (72, 37), (80, 28)]   # right arm
-# Legs
-LL = [(48, 68), (42, 80), (40, 88)]   # left leg: hip→knee→foot
-RL = [(60, 68), (66, 80), (68, 88)]   # right leg
+# Arms: shoulders connect to body edges (body x=54, sw=4 → edges at 52, 56)
+LA = [(52, 49), (36, 37), (28, 28)]   # left arm: shoulder→elbow→hand
+RA = [(56, 49), (72, 37), (80, 28)]   # right arm
+# Legs: hips connect to body edges at bottom
+LL = [(52, 68), (42, 80), (40, 88)]   # left leg: hip→knee→foot
+RL = [(56, 68), (66, 80), (68, 88)]   # right leg
 LIMB_SW = 3
 JOINT_R = 2.5
 
