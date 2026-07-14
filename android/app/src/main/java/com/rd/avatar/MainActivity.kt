@@ -217,7 +217,10 @@ class MainActivity : ComponentActivity() {
                                     isSpeaking = false
                                 )
                             }
-                            if (wakeWordTriggered) {
+                            // Only signal voice-flow-done when multi-turn actually ends,
+                            // NOT after each individual exchange. Otherwise KWS resumes
+                            // and competes with the next ASR recording for the mic.
+                            if (wakeWordTriggered && !isMultiTurn) {
                                 wakeWordTriggered = false
                                 WakeWordManager.notifyVoiceFlowDone()
                             }
@@ -575,6 +578,13 @@ class MainActivity : ComponentActivity() {
         recordingJob?.cancel()
         recordingJob = activityScope.launch(Dispatchers.IO) {
             try {
+                // Defensive ASR reset: flush any stale audio left over from a
+                // previous mid-utterance cancel (stopRecording skips inputFinished
+                // via the generation guard, leaving the decoder in a dirty state).
+                if (asrReady) {
+                    try { asrEngine.inputFinished() } catch (_: Exception) {}
+                }
+
                 val timeoutJob = launch {
                     delay((MAX_RECORD_SECONDS * 1000).toLong())
                     if (isRecording) {

@@ -53,6 +53,7 @@ class RobotViewModel: ObservableObject {
     private var isMultiTurn = false
     private var multiTurnBlankCount = 0
     private let maxMultiTurnBlanks = 3   // ~6 s (3 × ~2 s VAD silence per utterance)
+    private var suspiciousEchoCount = 0  // consecutive echo-like turns (for loop detection)
 
     // Recording / TTS tasks
     private var recordingCancellable: AnyCancellable?
@@ -169,6 +170,7 @@ class RobotViewModel: ObservableObject {
         robotState.isSpeaking = false
         isMultiTurn = false
         multiTurnBlankCount = 0
+        suspiciousEchoCount = 0
         isInConversation = false
 
         // Release audio session so other components (or system) can use it
@@ -387,7 +389,7 @@ class RobotViewModel: ObservableObject {
         latestRms = 0
         speechChunkCount = 0
         var silentChunks = 0
-        var warmupBuffers = 5                       // skip first ~5 buffers (~400ms) to avoid TTS tail/echo
+        var warmupBuffers = 12                      // skip first ~12 buffers (~960ms) to avoid TTS tail/echo
         let maxSilentChunks = 25                   // ~2 seconds at ~80ms/chunk
         let maxRecordSeconds: TimeInterval = 10
         let startTime = Date()
@@ -470,13 +472,18 @@ class RobotViewModel: ObservableObject {
                 // echo/reverb rather than real user input.  This stops
                 // the robot from responding to its own TTS tail in
                 // multi-turn mode.
-                let minSpeechChunks = 6  // ~500ms at ~80ms/buffer
+                let minSpeechChunks = 10  // ~800ms at ~80ms/buffer
                 if self.isMultiTurn && self.speechChunkCount < minSpeechChunks {
                     os_log(.info, "RobotVM: utterance too short (%d chunks < %d), treating as echo",
                            self.speechChunkCount, minSpeechChunks)
                     self.multiTurnBlankCount += 1
                     if self.multiTurnBlankCount >= self.maxMultiTurnBlanks {
                         self.endMultiTurn()
+                    } else if self.multiTurnBlankCount == 1 {
+                        // First blank: silently re-listen without speaking.
+                        // Adding TTS audio here would feed the echo loop.
+                        os_log(.info, "RobotVM: first blank — silently re-listening")
+                        self.startListening()
                     } else {
                         self.speakText("嗯？还在吗？")
                     }
@@ -491,6 +498,11 @@ class RobotViewModel: ObservableObject {
                                self.multiTurnBlankCount, self.maxMultiTurnBlanks)
                         if self.multiTurnBlankCount >= self.maxMultiTurnBlanks {
                             self.endMultiTurn()
+                        } else if self.multiTurnBlankCount == 1 {
+                            // First blank: silently re-listen without speaking.
+                            // Adding TTS audio here would feed the echo loop.
+                            os_log(.info, "RobotVM: first blank — silently re-listening")
+                            self.startListening()
                         } else {
                             self.speakText("嗯？还在吗？")
                         }
@@ -508,6 +520,27 @@ class RobotViewModel: ObservableObject {
 
                 self.robotState.lastUserText = text
                 self.multiTurnBlankCount = 0   // reset silence counter on valid input
+
+                // In multi-turn mode, validate ASR output quality.
+                // Echo/garbage often produces very short or nonsensical
+                // text (1-2 chars) that slips past the speech-chunk gate.
+                if self.isMultiTurn {
+                    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if trimmed.count <= 2 {
+                        os_log(.info, "RobotVM: ASR text too short (%d chars), treating as echo",
+                               trimmed.count)
+                        self.suspiciousEchoCount += 1
+                        if self.suspiciousEchoCount >= 2 {
+                            os_log(.info, "RobotVM: consecutive echo detected — ending multi-turn")
+                            self.endMultiTurn()
+                        } else {
+                            os_log(.info, "RobotVM: suspicious short text — silently re-listening")
+                            self.startListening()
+                        }
+                        return
+                    }
+                }
+                self.suspiciousEchoCount = 0   // reset echo counter on valid input
 
                 if self.wakeWordTriggered {
                     self.wakeWordManager.notifyProductiveWake()
@@ -654,7 +687,7 @@ class RobotViewModel: ObservableObject {
             // of our own TTS output as the next user utterance.
             // Keep mode as .speaking during the cooldown — startListening()
             // will switch to .listening when the mic actually opens.
-            let cooldownNs: UInt64 = 800_000_000  // 800ms post-speech cooldown
+            let cooldownNs: UInt64 = 1_200_000_000  // 1.2s post-speech cooldown
             Task { @MainActor [weak self] in
                 try? await Task.sleep(nanoseconds: cooldownNs)
                 guard let self = self, self.isMultiTurn else { return }
@@ -789,6 +822,7 @@ class RobotViewModel: ObservableObject {
         wakeWordTriggered = true
         isMultiTurn = true
         multiTurnBlankCount = 0
+        suspiciousEchoCount = 0
         isInConversation = true
         os_log(.info, "RobotVM: multi-turn conversation started")
 
@@ -853,6 +887,7 @@ class RobotViewModel: ObservableObject {
         os_log(.info, "RobotVM: ending multi-turn conversation")
         isMultiTurn = false
         multiTurnBlankCount = 0
+        suspiciousEchoCount = 0
         isInConversation = false
         wakeWordTriggered = false
         wakeWordManager.notifyVoiceFlowDone()
@@ -881,6 +916,7 @@ class RobotViewModel: ObservableObject {
         // that was interrupted (e.g., phone call, alarm).
         isMultiTurn = false
         multiTurnBlankCount = 0
+        suspiciousEchoCount = 0
         isInConversation = false
         wakeWordTriggered = false
     }
