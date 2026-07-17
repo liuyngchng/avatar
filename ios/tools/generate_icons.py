@@ -70,14 +70,14 @@ def draw_common_body(draw: ImageDraw.ImageDraw):
         [(_s(54), _s(49)), (_s(54), _s(68))],
         fill=BODY, width=int(_sw(4)), joint="curve",
     )
-    # Left leg
+    # Left leg (hip at body left edge: body center x=54, sw=4 → edge at 52)
     draw.line(
-        [(_s(48), _s(68)), (_s(42), _s(80)), (_s(40), _s(88))],
+        [(_s(52), _s(68)), (_s(42), _s(80)), (_s(40), _s(88))],
         fill=BODY, width=int(_sw(3)), joint="curve",
     )
-    # Right leg
+    # Right leg (hip at body right edge: body center x=54, sw=4 → edge at 56)
     draw.line(
-        [(_s(60), _s(68)), (_s(66), _s(80)), (_s(68), _s(88))],
+        [(_s(56), _s(68)), (_s(66), _s(80)), (_s(68), _s(88))],
         fill=BODY, width=int(_sw(3)), joint="curve",
     )
 
@@ -109,14 +109,14 @@ def draw_feet_common(draw: ImageDraw.ImageDraw, left_hand, right_hand):
 # ── Launcher icon: one-arm wave ─────────────────────────────────────────
 
 def draw_launcher_arms(draw: ImageDraw.ImageDraw):
-    # Left arm (hanging)
+    # Left arm (hanging, shoulder at body left edge x=52)
     draw.line(
-        [(_s(46), _s(49)), (_s(34), _s(57)), (_s(28), _s(67))],
+        [(_s(52), _s(49)), (_s(34), _s(57)), (_s(28), _s(67))],
         fill=BODY, width=int(_sw(3)), joint="curve",
     )
-    # Right arm (waving up)
+    # Right arm (waving up, shoulder at body right edge x=56)
     draw.line(
-        [(_s(62), _s(49)), (_s(74), _s(41)), (_s(80), _s(31))],
+        [(_s(56), _s(49)), (_s(74), _s(41)), (_s(80), _s(31))],
         fill=BODY, width=int(_sw(3)), joint="curve",
     )
 
@@ -131,13 +131,15 @@ def draw_launcher_eyes(draw: ImageDraw.ImageDraw):
 
 
 def draw_launcher_mouth(draw: ImageDraw.ImageDraw):
-    mw = _s(12)
-    mh = _s(5)
-    mx, my = _s(54), _s(40)
+    # Crescent smile — thick arc, like a moon
+    mw = _s(14)
+    mh = _s(6)
+    mx, my = _s(54), _s(39)
+    sw = max(1, int(_sw(3)))
     draw.arc(
-        [(mx - mw / 2, my), (mx + mw / 2, my + mh * 2)],
-        start=210, end=330,
-        fill=MOUTH_COLOR, width=max(1, int(_sw(2))),
+        [(mx - mw / 2, my - mh), (mx + mw / 2, my + mh)],
+        start=30, end=150,
+        fill=MOUTH_COLOR, width=sw,
     )
 
 
@@ -157,15 +159,15 @@ def render_launcher() -> Image.Image:
 # ── Splash icon: both arms up "Ta-da!" ──────────────────────────────────
 
 def draw_splash_arms(draw: ImageDraw.ImageDraw):
-    # Both arms raised up
-    # Left arm: 46,49 → 36,37 → 28,28
+    # Both arms raised up, shoulders at body edges (52, 56)
+    # Left arm: 52,49 → 36,37 → 28,28
     draw.line(
-        [(_s(46), _s(49)), (_s(36), _s(37)), (_s(28), _s(28))],
+        [(_s(52), _s(49)), (_s(36), _s(37)), (_s(28), _s(28))],
         fill=BODY, width=int(_sw(3)), joint="curve",
     )
-    # Right arm: 62,49 → 72,37 → 80,28
+    # Right arm: 56,49 → 72,37 → 80,28
     draw.line(
-        [(_s(62), _s(49)), (_s(72), _s(37)), (_s(80), _s(28))],
+        [(_s(56), _s(49)), (_s(72), _s(37)), (_s(80), _s(28))],
         fill=BODY, width=int(_sw(3)), joint="curve",
     )
 
