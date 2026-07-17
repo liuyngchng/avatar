@@ -4,16 +4,16 @@
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│                       iPhone (iOS 14+)                        │
+│                    iPhone / Android                           │
 │                                                              │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────────┐   │
-│  │  AVCapture   │  │ AudioRecorder│  │  AudioPlayer     │   │
-│  │  + Vision    │  │ 16kHz Mono   │  │ PCM Float 16kHz  │   │
-│  │  人脸+表情    │  │ Float32 PCM  │  │                  │   │
+│  │ AudioRecorder│  │  AudioPlayer │  │  WakeWordEngine  │   │
+│  │ 16kHz Mono   │  │ PCM Float    │  │  16kHz Mono      │   │
+│  │ Float32 PCM  │  │ 16-22kHz     │  │  Zipformer KWS   │   │
 │  └──────┬───────┘  └──────┬───────┘  └───────┬──────────┘   │
 │         │                 │                   │              │
-│   FaceDetector     SherpaAsrEngine     SherpaTtsEngine       │
-│   (Vision)         (SenseVoiceSmall)   (Matcha-TTS)          │
+│   SherpaAsrEngine   SherpaTtsEngine    WakeWordManager       │
+│   (SenseVoiceSmall) (Matcha-TTS)      (状态管理+防抖)        │
 │         │                 │                   │              │
 │         └─────────────────┼───────────────────┘              │
 │                           │                                  │
@@ -24,18 +24,18 @@
 │                           │                                  │
 │              ┌────────────┼────────────┐                     │
 │              │            │            │                     │
-│     BehaviorEngine   ChatSession   WakeWordEngine            │
-│     (规则对话)       (LLM 对话)    (Zipformer KWS)            │
+│     BehaviorEngine   ChatSession   FaceDetector              │
+│     (规则对话)       (LLM 对话)    (on-demand only)           │
 │              │            │                                  │
 │              └────────────┘                                  │
 │                           │                                  │
 │                   ┌───────┴──────────┐                       │
 │                   │  RobotFaceView   │                       │
-│                   │  Core Graphics   │                       │
+│                   │  (Canvas 绘制)    │                       │
 │                   │  眼睛+嘴巴+表情   │                       │
 │                   └──────────────────┘                       │
 │                                                              │
-│  底层: sherpa-onnx C API (sherpa-onnx.xcframework)           │
+│  底层: sherpa-onnx (C API / JNI)                             │
 │  模型: SenseVoiceSmall + Matcha-TTS + Zipformer KWS          │
 └──────────────────────────────────────────────────────────────┘
 ```
@@ -65,62 +65,56 @@
   → AudioPlayer.play() → 扬声器
 ```
 
-### 表情模仿
+### 表情动画
 
 ```
-前置摄像头
-  → AVCaptureSession → CVPixelBuffer
-  → VNDetectFaceLandmarksRequest
-  → VNFaceLandmarks2D (68 个特征点)
-  → 计算:
-     - 嘴角弧度 → smileAmount
-     - 眉毛位置 → eyebrowRaise
-     - 嘴巴开合 → mouthOpen
-     - 眼睛开合 → leftEyeOpen / rightEyeOpen
-  → FaceDetectionResult.inferredEmotion() → 情绪
+RobotMode + Emotion (状态机驱动)
   → RobotState.emotion → 脸部动画更新
+  → 眨眼 (随机 2-5s 间隔)
+  → 说话嘴型 (TTS 播放时)
+  → 随机搞怪 (idle 时 5-15s 随机触发)
 ```
+
+表情不再依赖摄像头——完全由状态机根据当前模式（idle/listening/thinking/speaking）和情绪驱动。
 
 ## 状态机
 
 ```
-         face detected
-  IDLE ─────────────────→ WATCHING (表情模仿)
-    ↑                        │
-    │ face lost > 10s        │ tap / wake word
-    │                        ↓
-    │                    LISTENING
-    │                        │
-    │                        │ VAD silence / manual stop
-    │                        ↓
-    │                    THINKING
-    │                        │
-    │                        │ LLM response ready
-    │                        ↓
-    └─────────────────── SPEAKING
+              tap / wake word
+    IDLE ─────────────────→ LISTENING
+      ↑                        │
+      │                        │ VAD silence / manual stop
+      │                        ↓
+      │                    THINKING
+      │                        │
+      │                        │ LLM response ready
+      │                        ↓
+      └──────────────────── SPEAKING
 ```
+
+唤醒词触发的多轮对话：IDLE → (唤醒) → SPEAKING (打招呼) → LISTENING → THINKING → SPEAKING → LISTENING → … → 连续 3 轮无声 → IDLE
 
 ## 模块说明
 
 | 模块 | 职责 | 技术 |
 |------|------|------|
-| **FaceDetector** | 摄像头 + 人脸检测 + 表情分析 | AVFoundation + Vision |
-| **RobotFaceView** | 脸部渲染 (60fps → 20fps 优化后) | Core Graphics + CADisplayLink |
-| **RobotViewModel** | 主状态机，编排各模块 | Combine + Swift Concurrency |
+| **RobotFaceView** | 脸部渲染 (20fps) | Core Graphics / Compose Canvas |
+| **RobotViewModel** | 主状态机，编排各模块 | Combine + Swift Concurrency / Coroutines |
 | **SherpaAsrEngine** | 离线语音识别 | sherpa-onnx SenseVoiceSmall |
 | **SherpaTtsEngine** | 离线语音合成 | sherpa-onnx Matcha-TTS + vocos |
-| **WakeWordEngine** | 唤醒词检测 ("小爱小爱") | sherpa-onnx Zipformer KWS |
-| **ChatSession** | 对话管理 | Combine + LLM HTTP streaming |
+| **WakeWordEngine** | 唤醒词检测 ("小火小火") | sherpa-onnx Zipformer KWS |
+| **WakeWordManager** | 唤醒状态管理 + 自适应防抖 | Combine / StateFlow |
+| **ChatSession** | 对话管理 | LLM HTTP streaming |
 | **BehaviorEngine** | 规则对话 (无 LLM 时的后备) | 关键词匹配 |
+| **FaceDetector** | 摄像头 + 人脸检测 (on-demand) | AVFoundation+Vision / CameraX+ML Kit |
 
-## 降热优化（2024.07）
-
-手机发热问题已做专项优化：
+## 性能优化
 
 | 优化项 | 改动 |
 |--------|------|
-| 脸部渲染帧率 | 60fps → 20fps (idle 模式 10fps) |
-| Vision 人脸检测 | 每 4 帧跑一次 (~7.5Hz) |
+| 脸部渲染帧率 | 60fps → 20fps |
 | CGGradient 对象 | 从每帧创建改为静态缓存 |
 | 唤醒词线程优先级 | 1.0 → 0.75 |
 | 分析队列 QoS | userInitiated → utility |
+| VAD 噪声校准 | 启动时一次性校准环境噪声阈值 |
+| 多轮对话防回声 | warm-up buffer 跳过 + 回声检测 + 连续静默自动退出 |
