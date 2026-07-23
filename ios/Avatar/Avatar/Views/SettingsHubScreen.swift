@@ -50,6 +50,20 @@ struct SettingsHubScreen: View {
                     }
                 }
 
+                // MARK: - 知识库
+                Section(header: Text("知识库")) {
+                    NavigationLink(destination:
+                        KnowledgeBaseView()
+                    ) {
+                        Label {
+                            Text("燃气知识库")
+                        } icon: {
+                            Image(systemName: "books.vertical.fill")
+                                .foregroundColor(.blue)
+                        }
+                    }
+                }
+
                 // MARK: - 模型
                 Section(header: Text("模型")) {
                     NavigationLink(destination:

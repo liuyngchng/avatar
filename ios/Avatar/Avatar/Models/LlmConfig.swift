@@ -12,6 +12,8 @@ struct LlmConfig: Codable, Equatable {
     let model: String
     let apiKey: String
     var enableSearch: Bool
+    /// Optional embedding model. If nil, `effectiveEmbeddingModel` infers from provider.
+    var embeddingModel: String?
 
     var baseUrl: String {
         apiUrl.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
@@ -19,6 +21,19 @@ struct LlmConfig: Codable, Equatable {
 
     var chatCompletionsUrl: URL? {
         URL(string: "\(baseUrl)/chat/completions")
+    }
+
+    var embeddingsUrl: URL? {
+        URL(string: "\(baseUrl)/embeddings")
+    }
+
+    /// Returns the user-configured embedding model, or a sensible default based on provider.
+    var effectiveEmbeddingModel: String {
+        if let model = embeddingModel { return model }
+        if apiUrl.contains("dashscope.aliyuncs.com") {
+            return "text-embedding-v3"
+        }
+        return "text-embedding-3-small"
     }
 
     var isValid: Bool {
@@ -31,12 +46,13 @@ struct LlmConfig: Codable, Equatable {
         apiUrl.contains("dashscope.aliyuncs.com")
     }
 
-    init(apiUrl: String, model: String, apiKey: String, enableSearch: Bool = true) {
+    init(apiUrl: String, model: String, apiKey: String, enableSearch: Bool = true, embeddingModel: String? = nil) {
         self.apiUrl = apiUrl.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         self.model = model.trimmingCharacters(in: .whitespaces)
         self.apiKey = apiKey.trimmingCharacters(in: .whitespaces)
         // Bailian always supports web search
         let isBailian = self.apiUrl.contains("dashscope.aliyuncs.com")
         self.enableSearch = enableSearch || isBailian
+        self.embeddingModel = embeddingModel
     }
 }

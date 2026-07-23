@@ -23,6 +23,9 @@
 		73E2902863974E2196BADC81 /* Preview Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = F0C26431A7CB4C25858A8F6B /* Preview Assets.xcassets */; };
 		796EC9D13000F8CA00A26778 /* Launch Screen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 796EC9D03000F8CA00A26778 /* Launch Screen.storyboard */; };
 		796EC9D33000FAA100A26778 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 796EC9D23000FAA100A26778 /* Assets.xcassets */; };
+		79A02B4930124B0900AC99A7 /* KnowledgeBaseEntry.swift in Sources */ = {isa = PBXBuildFile; fileRef = 79A02B4830124B0900AC99A7 /* KnowledgeBaseEntry.swift */; };
+		79A02B4B30124B1500AC99A7 /* KnowledgeBaseManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 79A02B4A30124B1500AC99A7 /* KnowledgeBaseManager.swift */; };
+		79A02B4D30124B2300AC99A7 /* KnowledgeBaseView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 79A02B4C30124B2300AC99A7 /* KnowledgeBaseView.swift */; };
 		79B90B06EB504098BE67F7DA /* FaceParts.swift in Sources */ = {isa = PBXBuildFile; fileRef = EB3BD1694A594C23AC1A9C36 /* FaceParts.swift */; };
 		79E62BA92FFD390600CDB096 /* TextReaderView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 79E62BA82FFD390600CDB096 /* TextReaderView.swift */; };
 		875D25526ECD465E977D5B3D /* ChatSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDF988054AE944C8B87DC271 /* ChatSession.swift */; };
@@ -75,6 +78,9 @@
 		796EC9D03000F8CA00A26778 /* Launch Screen.storyboard */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; path = "Launch Screen.storyboard"; sourceTree = "<group>"; };
 		796EC9D23000FAA100A26778 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		796EC9D43000FEF300A26778 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		79A02B4830124B0900AC99A7 /* KnowledgeBaseEntry.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = KnowledgeBaseEntry.swift; sourceTree = "<group>"; };
+		79A02B4A30124B1500AC99A7 /* KnowledgeBaseManager.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = KnowledgeBaseManager.swift; sourceTree = "<group>"; };
+		79A02B4C30124B2300AC99A7 /* KnowledgeBaseView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = KnowledgeBaseView.swift; sourceTree = "<group>"; };
 		79D564C2A0094B549419F765 /* Avatar.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Avatar.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		79E62BA82FFD390600CDB096 /* TextReaderView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = TextReaderView.swift; sourceTree = "<group>"; };
 		7FC7C908614C4E969ED783D1 /* Bzip2Helper.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = Bzip2Helper.h; sourceTree = "<group>"; };
@@ -116,6 +122,7 @@
 		0112D458FCD04093BEB1E3FC /* Views */ = {
 			isa = PBXGroup;
 			children = (
+				79A02B4C30124B2300AC99A7 /* KnowledgeBaseView.swift */,
 				79E62BA82FFD390600CDB096 /* TextReaderView.swift */,
 				EB3BD1694A594C23AC1A9C36 /* FaceParts.swift */,
 				EA6469FDF28748CAAC42FDDB /* RobotFaceView.swift */,
@@ -187,6 +194,7 @@
 		1E05F692255B4212A76F826D /* Services */ = {
 			isa = PBXGroup;
 			children = (
+				79A02B4A30124B1500AC99A7 /* KnowledgeBaseManager.swift */,
 				BDA57F3B870147FEA169EF9B /* FaceDetector.swift */,
 				86BBFAEAB2E54C42ABA1FFC9 /* BehaviorEngine.swift */,
 			);
@@ -259,6 +267,7 @@
 		E41098E210A741E78B704328 /* Models */ = {
 			isa = PBXGroup;
 			children = (
+				79A02B4830124B0900AC99A7 /* KnowledgeBaseEntry.swift */,
 				66785CB86F274EEBA14A6E41 /* ChatMessage.swift */,
 				677D2F1BEDF74DF3A5C896C8 /* LlmConfig.swift */,
 				C813FF332DFB473BBDC23345 /* LlmPreset.swift */,
@@ -356,6 +365,7 @@
 				49E64EA0E4074CB985EA89C6 /* LlmPreset.swift in Sources */,
 				A7EBE6CBCEEA483BA492F888 /* RobotState.swift in Sources */,
 				9F5F7D095F934FADB916EE21 /* FaceDetectionResult.swift in Sources */,
+				79A02B4D30124B2300AC99A7 /* KnowledgeBaseView.swift in Sources */,
 				EF0EE0C402F64607A435815D /* KeychainHelper.swift in Sources */,
 				36650F6D12634F85AF13DAD5 /* Extensions.swift in Sources */,
 				2EA1308074A84E57ADE91641 /* DesignTokens.swift in Sources */,
@@ -371,6 +381,7 @@
 				79E62BA92FFD390600CDB096 /* TextReaderView.swift in Sources */,
 				45DB2E13076B451BBA41525B /* TextNormalizer.swift in Sources */,
 				B47094999D5E4CF38DC06356 /* LlmClient.swift in Sources */,
+				79A02B4B30124B1500AC99A7 /* KnowledgeBaseManager.swift in Sources */,
 				875D25526ECD465E977D5B3D /* ChatSession.swift in Sources */,
 				953DD84B55CC4EE38E3601D6 /* ConfigRepository.swift in Sources */,
 				CB6185003AB4425CBEA5C47A /* ConfigViewModel.swift in Sources */,
@@ -382,6 +393,7 @@
 				D9BD46894966416CAAEFEA76 /* RobotFaceView.swift in Sources */,
 				DA903505CEA44546AC16359C /* RobotMainScreen.swift in Sources */,
 				FEEE49C906C54F80872495CA /* SettingsScreen.swift in Sources */,
+				79A02B4930124B0900AC99A7 /* KnowledgeBaseEntry.swift in Sources */,
 				FE5EA47B44704950B0593FD1 /* ModelSetupScreen.swift in Sources */,
 				EB6F2863463B421BAEB3A616 /* SettingsHubScreen.swift in Sources */,
 				0FA046327A174DABA86359A0 /* BlurView.swift in Sources */,
@@ -413,12 +425,12 @@
 					"$(PROJECT_DIR)/Frameworks/onnxruntime.xcframework/ios-arm64/onnxruntime.framework/Headers",
 				);
 				INFOPLIST_FILE = Avatar/Info.plist;
+				INFOPLIST_KEY_NSAppTransportSecurity_NSAllowsLocalNetworking = YES;
 				INFOPLIST_KEY_NSCameraUsageDescription = "需要使用摄像头进行人脸检测";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "需要使用麦克风进行语音识别";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchStoryboardName = "Launch Screen";
-				INFOPLIST_KEY_NSAppTransportSecurity_NSAllowsLocalNetworking = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				IPHONEOS_DEPLOYMENT_TARGET = 14.0;
@@ -588,12 +600,12 @@
 					"$(PROJECT_DIR)/Frameworks/onnxruntime.xcframework/ios-arm64/onnxruntime.framework/Headers",
 				);
 				INFOPLIST_FILE = Avatar/Info.plist;
+				INFOPLIST_KEY_NSAppTransportSecurity_NSAllowsLocalNetworking = YES;
 				INFOPLIST_KEY_NSCameraUsageDescription = "需要使用摄像头进行人脸检测";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "需要使用麦克风进行语音识别";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchStoryboardName = "Launch Screen";
-				INFOPLIST_KEY_NSAppTransportSecurity_NSAllowsLocalNetworking = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				IPHONEOS_DEPLOYMENT_TARGET = 14.0;

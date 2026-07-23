@@ -485,7 +485,7 @@ class RobotViewModel: ObservableObject {
                         os_log(.info, "RobotVM: first blank — silently re-listening")
                         self.startListening()
                     } else {
-                        self.speakText("嗯？还在吗？")
+                        self.speakText("您好，还在吗？有什么可以帮您的？")
                     }
                     return
                 }
@@ -504,7 +504,7 @@ class RobotViewModel: ObservableObject {
                             os_log(.info, "RobotVM: first blank — silently re-listening")
                             self.startListening()
                         } else {
-                            self.speakText("嗯？还在吗？")
+                            self.speakText("您好，还在吗？有什么可以帮您的？")
                         }
                     } else {
                         self.robotState.mode = .idle
@@ -513,7 +513,7 @@ class RobotViewModel: ObservableObject {
                             self.wakeWordTriggered = false
                             self.wakeWordManager.notifyVoiceFlowDone()
                         }
-                        self.speakText("没听清，请再说一遍")
+                        self.speakText("抱歉，没听清，请您再说一遍")
                     }
                     return
                 }
@@ -826,14 +826,14 @@ class RobotViewModel: ObservableObject {
         isInConversation = true
         os_log(.info, "RobotVM: multi-turn conversation started")
 
-        // TTS "哎，我在呢" then auto-listen
+        // TTS "您好，小燃为您服务" then auto-listen
         Task { @MainActor [weak self] in
             guard let self = self else { return }
             self.robotState.mode = .speaking
             AudioSessionManager.configure()
 
             if let pcm = await Task.detached(priority: .userInitiated, operation: {
-                await self.ttsEngine.synthesize(text: "哎，我在呢", speed: 1.0, sid: self.selectedSid)
+                await self.ttsEngine.synthesize(text: "您好，小燃为您服务", speed: 1.0, sid: self.selectedSid)
             }).value {
                 await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
                     self.audioPlayer.play(pcmFloats: pcm, sampleRate: Double(self.ttsEngine.sampleRate)) {
