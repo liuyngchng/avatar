@@ -34,6 +34,7 @@ struct SettingsContent: View {
     @State private var apiUrl: String = ""
     @State private var model: String = ""
     @State private var apiKey: String = ""
+    @State private var embeddingModel: String = ""
     @State private var showKey: Bool = false
     @State private var showHttpWarning: Bool = false
     @State private var pendingSave: Bool = false
@@ -45,7 +46,7 @@ struct SettingsContent: View {
                     footer: Text("兼容 OpenAI chat/completions 接口")) {
                 HStack {
                     Text("地址")
-                        .frame(width: 40, alignment: .leading)
+                        .frame(width: 80, alignment: .leading)
                     TextField("https://api.deepseek.com/v1", text: $apiUrl)
                         .keyboardType(.URL)
                         .autocapitalization(.none)
@@ -68,8 +69,8 @@ struct SettingsContent: View {
                 }
 
                 HStack {
-                    Text("模型")
-                        .frame(width: 40, alignment: .leading)
+                    Text("大语言模型")
+                        .frame(width: 80, alignment: .leading)
                     TextField("deepseek-v4-flash", text: $model)
                         .autocapitalization(.none)
                         .disableAutocorrection(true)
@@ -77,8 +78,16 @@ struct SettingsContent: View {
                 }
 
                 HStack {
+                    Text("文本嵌入模型")
+                        .frame(width: 80, alignment: .leading)
+                    TextField("text-embedding-v3", text: $embeddingModel)
+                        .autocapitalization(.none)
+                        .disableAutocorrection(true)
+                }
+
+                HStack {
                     Text("密钥")
-                        .frame(width: 40, alignment: .leading)
+                        .frame(width: 80, alignment: .leading)
                     if showKey {
                         TextField("sk-...", text: $apiKey)
                     } else {
@@ -161,7 +170,7 @@ struct SettingsContent: View {
             // MARK: - 操作
             Section {
                 Button(action: {
-                    viewModel.testConnection(apiUrl, model, apiKey)
+                    viewModel.testConnection(apiUrl, model, apiKey, embeddingModel)
                 }) {
                     Label("测试连接", systemImage: "network")
                 }
@@ -198,6 +207,7 @@ struct SettingsContent: View {
                 apiUrl = config.apiUrl
                 model = config.model
                 apiKey = config.apiKey
+                embeddingModel = config.embeddingModel ?? "text-embedding-v3"
                 showHttpWarning = config.apiUrl.hasPrefix("http://")
             }
         }
@@ -206,7 +216,7 @@ struct SettingsContent: View {
                 title: Text("安全警告"),
                 message: Text("你使用的是 HTTP 明文连接，API 密钥将以明文方式传输，存在被窃取的风险。\n\n建议使用 HTTPS 连接。\n\n是否仍然保存？"),
                 primaryButton: .destructive(Text("仍然保存"), action: {
-                    viewModel.saveConfig(apiUrl, model, apiKey)
+                    viewModel.saveConfig(apiUrl, model, apiKey, embeddingModel)
                 }),
                 secondaryButton: .cancel(Text("取消"))
             )
@@ -233,7 +243,7 @@ struct SettingsContent: View {
                 showHttpWarning = true
                 pendingSave = true
             } else {
-                viewModel.saveConfig(apiUrl, model, apiKey)
+                viewModel.saveConfig(apiUrl, model, apiKey, embeddingModel)
             }
         }
         .disabled(apiUrl.isEmpty || model.isEmpty || apiKey.isEmpty)
