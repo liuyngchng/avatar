@@ -39,8 +39,15 @@ func newPlatformRenderer(webFS fs.FS) (Renderer, error) {
 	// --no-sandbox is needed for snap Chromium in WSL/containers.
 	// --remote-allow-origins=* is required by Chrome 111+ for the DevTools
 	// WebSocket handshake that Lorca uses to talk to the page.
+	// The WebGL-related flags force software rendering (SwiftShader/ANGLE),
+	// which is required under WSLg where a real GPU context is unavailable.
 	ui, err := lorca.New(url, "", 1280, 800,
-		"--disable-sync", "--no-first-run", "--no-sandbox", "--remote-allow-origins=*")
+		"--disable-sync", "--no-first-run", "--no-sandbox",
+		"--remote-allow-origins=*",
+		"--enable-unsafe-swiftshader",
+		"--use-gl=angle", "--use-angle=swiftshader",
+		"--enable-webgl", "--ignore-gpu-blocklist",
+		"--disable-gpu")
 	if err != nil {
 		listener.Close()
 		return nil, err

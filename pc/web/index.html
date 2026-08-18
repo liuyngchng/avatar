@@ -45,13 +45,13 @@
   <div class="subtitle hidden" id="subtitle"></div>
   <div class="status" id="status"></div>
 
-  <!-- Three.js + three-vrm via CDN (P0; bundle later) -->
+  <!-- All JS loaded locally (no CDN, for air-gapped deployment) -->
   <script type="importmap">
   {
     "imports": {
-      "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
-      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/",
-      "@pixiv/three-vrm": "https://unpkg.com/@pixiv/three-vrm@3.0.0/lib/three-vrm.module.js"
+      "three": "./js/three.module.js",
+      "three/addons/": "./js/addons/",
+      "@pixiv/three-vrm": "./js/three-vrm.module.js"
     }
   }
   </script>
@@ -70,8 +70,9 @@
     let responseText = '';
 
     // Viseme state (for smooth lerp)
-    let visemeTargets = { A: 0, I: 0, U: 0, E: 0, O: 0 };
-    let visemeCurrent = { A: 0, I: 0, U: 0, E: 0, O: 0 };
+    // VRM1 uses: aa, ih, ou, ee, oh (not A/I/U/E/O)
+    let visemeTargets = { aa: 0, ih: 0, ou: 0, ee: 0, oh: 0 };
+    let visemeCurrent = { aa: 0, ih: 0, ou: 0, ee: 0, oh: 0 };
     let visemeBlendSpeed = 8.0; // how fast visemes transition
 
     // Blink state
@@ -140,7 +141,7 @@
       const gltf = await loader.loadAsync(url);
       vrm = gltf.userData.vrm;
       VRMUtils.removeUnnecessaryVertices(gltf.scene);
-      VRMUtils.combineSkeletons(gltf.scene);
+      VRMUtils.removeUnnecessaryJoints(gltf.scene);
       VRMUtils.rotateVRM0(vrm);
 
       scene.add(vrm.scene);
@@ -158,7 +159,8 @@
         // Try loading a VRM model from the models/ directory.
         await loadVRM('/models/avatar.vrm');
       } catch (err) {
-        console.warn('No VRM model found at /models/avatar.vrm, creating placeholder...');
+        console.error('VRM load failed:', err.message, err.stack);
+        console.warn('Falling back to placeholder avatar...');
         createPlaceholderAvatar();
       }
     }
@@ -242,9 +244,6 @@
     // ─── VRM: Blink ─────────────────────────────────────────
     function updateVRMBlink(dt) {
       blinkTimer += dt;
-      const blinkName = vrm.expressionManager?.getExpressionName(0);
-      const hasBlink = vrm.expressionManager?.expressionNames?.includes('blink') ||
-                       vrm.expressionManager?.expressionNames?.includes('BLINK');
 
       if (!isBlinking && blinkTimer > blinkInterval) {
         isBlinking = true;
@@ -270,14 +269,9 @@
         }
       }
 
-      // Apply blink to the first expression (usually 'blink' or 'neutral')
+      // Apply blink (VRM1 preset name is 'blink')
       if (vrm.expressionManager && blinkValue > 0.001) {
-        // Try actual blink if available
-        const blinkIdx = vrm.expressionManager.expressionNames?.indexOf('blink') ?? -1;
-        const hasBlinkExpr = blinkIdx >= 0;
-        if (hasBlinkExpr) {
-          vrm.expressionManager.setValue('blink', blinkValue);
-        }
+        vrm.expressionManager.setValue('blink', blinkValue);
       }
     }
 
@@ -285,15 +279,12 @@
     function updateVRMVisemes(dt) {
       if (!vrm?.expressionManager) return;
 
-      const visemeNames = ['A', 'I', 'U', 'E', 'O'];
+      const visemeNames = ['aa', 'ih', 'ou', 'ee', 'oh'];
       const lerp = Math.min(visemeBlendSpeed * dt, 1.0);
 
       for (const name of visemeNames) {
         visemeCurrent[name] += (visemeTargets[name] - visemeCurrent[name]) * lerp;
-        const exprName = name.toLowerCase(); // three-vrm uses lowercase
-        if (vrm.expressionManager.expressionNames?.includes(exprName)) {
-          vrm.expressionManager.setValue(exprName, visemeCurrent[name]);
-        }
+        vrm.expressionManager.setValue(name, visemeCurrent[name]);
       }
     }
 
