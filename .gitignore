@@ -63,6 +63,11 @@ android/local.properties
 # ── Models (large files) ───────────────────────────────
 .model_cache/
 
+# ── PC (Go) ───────────────────────────────────────────
+pc/avatar-pc
+pc/avatar-pc.exe
+pc/web/models/*.vrm
+
 # ── Secrets ───────────────────────────────────────────
 *.keystore
 *.jks
