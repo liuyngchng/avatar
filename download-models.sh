@@ -9,7 +9,7 @@
 #   ./download-models.sh --asr-only   # 仅下载 ASR 模型
 #   ./download-models.sh --tts-only   # 仅下载 TTS 模型
 #
-# 总下载量: ~280 MB (ASR 158MB + TTS 72MB + vocoder 51MB)
+# 总下载量: ~290 MB (ASR 158MB + TTS 116MB + KWS 13MB)
 
 set -euo pipefail
 
@@ -21,17 +21,13 @@ set -euo pipefail
 ASR_URL="https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09.tar.bz2"
 ASR_FILE="sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09.tar.bz2"
 
-# TTS: Matcha-TTS 中文 (baker 数据集)
-TTS_URL="https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/matcha-icefall-zh-baker.tar.bz2"
-TTS_FILE="matcha-icefall-zh-baker.tar.bz2"
+# TTS: VITS-aishell3 多说话人 (174人，含男声)
+TTS_URL="https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-zh-aishell3.tar.bz2"
+TTS_FILE="vits-zh-aishell3.tar.bz2"
 
 # KWS: 关键词检测 (Zipformer WenetSpeech 3.3M，支持中文唤醒词)
 KWS_URL="https://github.com/k2-fsa/sherpa-onnx/releases/download/kws-models/sherpa-onnx-kws-zipformer-wenetspeech-3.3M-2024-01-01.tar.bz2"
 KWS_FILE="sherpa-onnx-kws-zipformer-wenetspeech-3.3M-2024-01-01.tar.bz2"
-
-# Vocoder: 通用声码器（Matcha-TTS 需要）
-VOCODER_URL="https://github.com/k2-fsa/sherpa-onnx/releases/download/vocoder-models/vocos-22khz-univ.onnx"
-VOCODER_FILE="vocos-22khz-univ.onnx"
 
 # ============================================================
 # 路径
@@ -54,9 +50,9 @@ for arg in "$@"; do
         --help|-h)
             echo "用法: $0 [--asr-only|--tts-only|--kws-only]"
             echo ""
-            echo "  (无参数)    下载全部: ASR + TTS + vocoder + KWS"
+            echo "  (无参数)    下载全部: ASR + TTS + KWS"
             echo "  --asr-only  仅下载 ASR 模型"
-            echo "  --tts-only  仅下载 TTS 模型 + vocoder"
+            echo "  --tts-only  仅下载 TTS 模型"
             echo "  --kws-only  仅下载 KWS 唤醒词模型"
             exit 0
             ;;
@@ -128,8 +124,7 @@ echo "=============================================="
 echo ""
 echo "  下载内容:"
 $DO_ASR && echo "    - ASR 模型 (SenseVoiceSmall int8, ~158 MB)"
-$DO_TTS && echo "    - TTS 模型 (Matcha-TTS zh-baker, ~72 MB)"
-$DO_TTS && echo "    - Vocoder   (vocos-22khz-univ, ~51 MB)"
+$DO_TTS && echo "    - TTS 模型 (VITS-aishell3 多说话人, ~116 MB)"
 $DO_KWS && echo "    - KWS 唤醒词模型 (Zipformer 3.3M, ~13 MB)"
 echo ""
 echo "  下载目录: ${DOWNLOAD_DIR}"
@@ -145,32 +140,27 @@ if $DO_ASR; then
     download_file "$ASR_URL" "${DOWNLOAD_DIR}/${ASR_FILE}" "SenseVoiceSmall int8"
     log_info "解压 .tar.bz2 -> .tar"
     bunzip2 -kf "${DOWNLOAD_DIR}/${ASR_FILE}"
-    log_info "ASR 模型就绪 ✓"
+    log_info "ASR 模型就绪"
 fi
 
 # ---- TTS ----
 if $DO_TTS; then
     echo "---"
     log_step "2/3 下载 TTS 模型"
-    download_file "$TTS_URL" "${DOWNLOAD_DIR}/${TTS_FILE}" "Matcha-TTS 中文"
+    download_file "$TTS_URL" "${DOWNLOAD_DIR}/${TTS_FILE}" "VITS-aishell3"
     log_info "解压 .tar.bz2 -> .tar"
     bunzip2 -kf "${DOWNLOAD_DIR}/${TTS_FILE}"
-    log_info "TTS 模型就绪 ✓"
-
-    echo "---"
-    log_step "3/3 下载 Vocoder"
-    download_file "$VOCODER_URL" "${DOWNLOAD_DIR}/${VOCODER_FILE}" "vocos-22khz-univ"
-    log_info "Vocoder 就绪 ✓"
+    log_info "TTS 模型就绪"
 fi
 
 # ---- KWS ----
 if $DO_KWS; then
     echo "---"
-    log_step "4/4 下载 KWS 唤醒词模型"
+    log_step "3/3 下载 KWS 唤醒词模型"
     download_file "$KWS_URL" "${DOWNLOAD_DIR}/${KWS_FILE}" "KWS Zipformer 3.3M"
     log_info "解压 .tar.bz2 -> .tar"
     bunzip2 -kf "${DOWNLOAD_DIR}/${KWS_FILE}"
-    log_info "KWS 唤醒词模型就绪 ✓"
+    log_info "KWS 唤醒词模型就绪"
 fi
 
 # ============================================================
@@ -186,10 +176,10 @@ echo "    ${DOWNLOAD_DIR}/"
 ls -lh "$DOWNLOAD_DIR" 2>/dev/null | tail -n +2 | awk '{print "      " $NF " (" $5 ")"}'
 echo ""
 echo "  下一步:"
-echo "    1. 将 .tar 和 .onnx 文件传到手机上"
+echo "    1. 将 .tar 文件传到手机上"
 echo "    2. 在 App 的模型设置界面依次上传:"
 echo "       - ASR: sherpa-onnx-sense-voice-*.tar"
-echo "       - TTS: matcha-icefall-zh-baker.tar"
-echo "       - Vocoder: vocos-22khz-univ.onnx"
+echo "       - TTS: vits-aishell3.tar"
+echo ""
 echo ""
 log_info "全部就绪!"

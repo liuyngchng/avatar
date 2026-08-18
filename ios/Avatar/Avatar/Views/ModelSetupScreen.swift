@@ -3,7 +3,7 @@
 //  SiriApp
 //
 //  First-launch screen: download or import model files.
-//  Three slots: ASR (tar), TTS (tar), Vocoder (onnx).
+//  Three slots: ASR (tar), TTS (tar), KWS (tar).
 //  User can tap all 3 — operations queue and run sequentially.
 //
 //  ModelSetupScreen   – standalone NavigationView wrapper (first-launch flow).
@@ -49,31 +49,53 @@ private struct ModelFilePicker: UIViewControllerRepresentable {
             self.onPick = onPick; self.onError = onError
         }
         func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
-            pickerLog.info("didPickDocuments: count=\(urls.count)")
+            pickerLog.info("[PICKER] didPickDocuments: count=\(urls.count)")
             guard let url = urls.first else {
-                pickerLog.error("Empty URL array from document picker")
+                pickerLog.error("[PICKER] empty URL array")
                 onError?("无法读取所选文件。"); return
             }
-            pickerLog.debug("Selected URL: \(url.absoluteString)")
-            pickerLog.debug("Path: \(url.path), isFileURL: \(url.isFileURL)")
+            pickerLog.info("[PICKER] URL: \(url.absoluteString)")
+            pickerLog.info("[PICKER] path: \(url.path)")
+            pickerLog.info("[PICKER] isFileURL: \(url.isFileURL), scheme: \(url.scheme ?? "nil")")
 
+            // Check file reachability
+            var isRemote = false
+            do {
+                let reachable = try url.checkResourceIsReachable()
+                pickerLog.info("[PICKER] checkResourceIsReachable → \(reachable)")
+            } catch {
+                pickerLog.warning("[PICKER] checkResourceIsReachable failed: \(error.localizedDescription)")
+                isRemote = true
+            }
+
+            // Try to get file attributes
             if let attrs = try? FileManager.default.attributesOfItem(atPath: url.path) {
                 let size = (attrs[.size] as? NSNumber)?.int64Value ?? -1
-                pickerLog.info("File size: \(size) bytes (\(size / 1024 / 1024) MB)")
+                pickerLog.info("[PICKER] fileSize=\(size) bytes (\(size / 1024 / 1024) MB)")
             } else {
-                pickerLog.warning("Cannot read file attributes for \(url.path) — file may be on remote volume")
+                pickerLog.warning("[PICKER] attributesOfItem failed — likely remote/network volume")
+                isRemote = true
             }
+            pickerLog.info("[PICKER] isRemote=\(isRemote)")
 
+            // Acquire security-scoped access
+            let startTime = CFAbsoluteTimeGetCurrent()
             let secured = url.startAccessingSecurityScopedResource()
-            pickerLog.debug("startAccessingSecurityScopedResource → \(secured)")
+            let elapsed = (CFAbsoluteTimeGetCurrent() - startTime) * 1000
+            pickerLog.info("[PICKER] startAccessingSecurityScopedResource → \(secured), took \(String(format: "%.1f", elapsed))ms")
             if !secured {
-                pickerLog.error("Security-scoped access denied for \(url.path)")
+                pickerLog.error("[PICKER] security-scoped access DENIED for \(url.path)")
                 onError?("无法访问所选文件。请在文件 App 中将该文件复制到'我的 iPhone'，再重新导入。"); return
             }
-            onPick(url) { url.stopAccessingSecurityScopedResource() }
+
+            pickerLog.info("[PICKER] handing off to import pipeline, filename=\(url.lastPathComponent)")
+            onPick(url) {
+                pickerLog.info("[PICKER] cleanup — stopAccessingSecurityScopedResource")
+                url.stopAccessingSecurityScopedResource()
+            }
         }
         func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
-            pickerLog.info("Document picker cancelled by user")
+            pickerLog.info("[PICKER] cancelled by user")
         }
     }
 }
@@ -121,21 +143,20 @@ struct ModelSetupContent: View {
         if case .completed = modelManager.asrState { return true }
         return ModelManager.checkAsrReady()
     }
-    private var ttsTarOk: Bool {
+    private var ttsOk: Bool {
         if case .completed = modelManager.ttsState { return true }
-        return ModelManager.checkTtsExtracted()
-    }
-    private var vocoderOk: Bool {
-        if case .completed = modelManager.vocoderState { return true }
-        return ModelManager.checkVocoderReady()
+        return ModelManager.checkTtsReady()
     }
     private var kwsOk: Bool {
         if case .completed = modelManager.kwsState { return true }
         return ModelManager.checkKwsReady()
     }
 
-    private var ttsOk: Bool { ttsTarOk && vocoderOk }
-    private var allReady: Bool { asrOk && ttsOk }
+    private var vocoderOk: Bool {
+        if case .completed = modelManager.vocoderState { return true }
+        return FileManager.default.fileExists(atPath: ModelManager.ttsModelDirURL().appendingPathComponent("vocos.onnx").path)
+    }
+    private var allReady: Bool { asrOk && ttsOk && vocoderOk }
 
     @ViewBuilder
     private var onReadyButton: some View {
@@ -157,7 +178,6 @@ struct ModelSetupContent: View {
         if case .queued = modelManager.vocoderState { return true }
         if case .downloading = modelManager.vocoderState { return true }
         if case .importing = modelManager.vocoderState { return true }
-        if case .extracting = modelManager.vocoderState { return true }
         if case .queued = modelManager.kwsState { return true }
         if case .downloading = modelManager.kwsState { return true }
         if case .importing = modelManager.kwsState { return true }
@@ -189,16 +209,16 @@ struct ModelSetupContent: View {
             }
 
             Section(header: Text("TTS 模型")) {
-                slotRow(label: "Matcha-icefall", subtitle: "语音合成 · 中文",
-                        isReady: ttsTarOk, state: modelManager.ttsState,
+                slotRow(label: "MatchaTTS", subtitle: "中文语音合成 · 冰花",
+                        isReady: ttsOk, state: modelManager.ttsState,
                         onDownload: { modelManager.downloadTtsModel() },
                         onImport: { sheetTarget = .tts })
             }
 
-            Section(header: Text("Vocoder")) {
-                slotRow(label: "Vocos", subtitle: "22kHz · ONNX 格式",
+            Section(header: Text("声码器")) {
+                slotRow(label: "Vocos", subtitle: "22kHz 通用声码器 · ~8MB",
                         isReady: vocoderOk, state: modelManager.vocoderState,
-                        onDownload: { modelManager.downloadVocoder() },
+                        onDownload: { modelManager.downloadVocoderModel() },
                         onImport: { sheetTarget = .vocoder })
             }
 
@@ -275,11 +295,20 @@ struct ModelSetupContent: View {
                 ProgressView(value: max(p, 0.05)).progressViewStyle(LinearProgressViewStyle())
             }
 
-        case .importing:
-            HStack {
-                ProgressView().scaleEffect(0.8)
-                Text("导入中...").font(.subheadline)
-                Spacer()
+        case .importing(let p):
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    ProgressView().scaleEffect(0.8)
+                    Text("导入中...").font(.subheadline)
+                    Spacer()
+                    if p > 0 {
+                        Text("\(Int(p * 100))%")
+                            .font(.system(.caption, design: .monospaced)).foregroundColor(.blue)
+                    }
+                }
+                if p > 0 {
+                    ProgressView(value: max(p, 0.05)).progressViewStyle(LinearProgressViewStyle())
+                }
             }
 
         case .extracting(let p):
@@ -338,6 +367,16 @@ struct ModelSetupContent: View {
     @ViewBuilder
     private func makeFilePicker(for target: ModelSheetTarget) -> some View {
         switch target {
+        case .vocoder:
+            ModelFilePicker(
+                allowedContentTypes: [.data],
+                onPick: { url, cleanup in
+                    pickerLog.info("Vocoder import picked: \(url.lastPathComponent)")
+                    modelManager.importVocoderModel(from: url, cleanup: cleanup)
+                    sheetTarget = nil
+                },
+                onError: { errorMessage = $0 }
+            )
         case .asr, .tts:
             ModelFilePicker(
                 allowedContentTypes: [
@@ -356,19 +395,6 @@ struct ModelSetupContent: View {
                         modelManager.importTtsModel(from: url, cleanup: cleanup)
                     default: break
                     }
-                    sheetTarget = nil
-                },
-                onError: { errorMessage = $0 }
-            )
-        case .vocoder:
-            ModelFilePicker(
-                allowedContentTypes: [
-                    UTType(tag: "onnx", tagClass: .filenameExtension, conformingTo: .data) ?? .item,
-                ],
-                onPick: { url, cleanup in
-                    pickerLog.info("Vocoder import picked: \(url.lastPathComponent)")
-                    pickerLog.info("→ importVocoder")
-                    modelManager.importVocoder(from: url, cleanup: cleanup)
                     sheetTarget = nil
                 },
                 onError: { errorMessage = $0 }

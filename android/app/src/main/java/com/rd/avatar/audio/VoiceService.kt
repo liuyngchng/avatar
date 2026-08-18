@@ -44,7 +44,7 @@ class VoiceService : Service() {
     private val initLock = Any()
     private var initializing = false
     private var lastWakeTime = 0L
-    private var kwsActive = false
+    @Volatile private var kwsActive = false
     private var recoveryAttempts = 0
     private var wakeLock: PowerManager.WakeLock? = null
 
@@ -220,6 +220,13 @@ class VoiceService : Service() {
         Thread({
             Log.i(TAG, "VoiceService: recovery attempt $recoveryAttempts/$MAX_RECOVERY_ATTEMPTS, waiting ${RECOVERY_DELAY_MS}ms")
             Thread.sleep(RECOVERY_DELAY_MS)
+
+            // Guard: if the service was stopped during the recovery delay,
+            // don't restart the engine.
+            if (!WakeWordManager.isRunning.value) {
+                Log.i(TAG, "VoiceService: recovery aborted — service stopped during delay")
+                return@Thread
+            }
 
             // Re-initialize engine
             engine.destroy()

@@ -8,7 +8,7 @@ import kotlinx.coroutines.flow.asStateFlow
 
 class ChatSession(
     private val llmClient: LlmClient,
-    private val maxHistory: Int = 5,
+    private val maxHistory: Int = 20,
     private val maxScreenMessages: Int = 20
 ) {
 

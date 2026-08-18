@@ -12,6 +12,13 @@ struct SettingsHubScreen: View {
     @ObservedObject var configVM: ConfigViewModel
     var onDismiss: () -> Void
     var onReadText: (String) -> Void = { _ in }
+
+    // TTS speaker selection
+    var ttsNumSpeakers: Int = 0
+    @Binding var selectedSid: Int
+    var onSetSpeaker: (Int) -> Void = { _ in }
+    var speakerName: (Int) -> String = { "Voice \($0)" }
+
     @Environment(\.presentationMode) private var presentationMode
 
     /// Build-time-based version string (executable modification date).
@@ -57,6 +64,32 @@ struct SettingsHubScreen: View {
                     }
                 }
 
+                // MARK: - 音色
+                if ttsNumSpeakers > 1 {
+                    Section(header: Text("音色")) {
+                        NavigationLink(destination:
+                            SpeakerPickerView(
+                                numSpeakers: ttsNumSpeakers,
+                                selectedSid: $selectedSid,
+                                speakerName: speakerName,
+                                onSelect: { onSetSpeaker($0) }
+                            )
+                        ) {
+                            Label {
+                                HStack {
+                                    Text("说话人")
+                                    Spacer()
+                                    Text(speakerName(selectedSid))
+                                        .foregroundColor(.secondary)
+                                }
+                            } icon: {
+                                Image(systemName: "waveform.circle.fill")
+                                    .foregroundColor(.blue)
+                            }
+                        }
+                    }
+                }
+
                 // MARK: - 交互
                 Section(header: Text("交互")) {
                     NavigationLink(destination:
@@ -97,5 +130,37 @@ struct SettingsHubScreen: View {
             }
         }
         .navigationViewStyle(.stack)
+    }
+}
+
+// MARK: - Speaker Picker (sub-page)
+
+private struct SpeakerPickerView: View {
+    let numSpeakers: Int
+    @Binding var selectedSid: Int
+    let speakerName: (Int) -> String
+    let onSelect: (Int) -> Void
+
+    var body: some View {
+        List {
+            ForEach(0..<numSpeakers, id: \.self) { sid in
+                Button(action: {
+                    onSelect(sid)
+                }) {
+                    HStack {
+                        Text(speakerName(sid))
+                            .foregroundColor(.primary)
+                        Spacer()
+                        if sid == selectedSid {
+                            Image(systemName: "checkmark")
+                                .foregroundColor(.blue)
+                        }
+                    }
+                }
+            }
+        }
+        .listStyle(InsetGroupedListStyle())
+        .navigationTitle("选择音色")
+        .navigationBarTitleDisplayMode(.inline)
     }
 }

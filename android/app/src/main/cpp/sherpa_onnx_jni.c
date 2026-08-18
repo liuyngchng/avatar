@@ -216,9 +216,9 @@ Java_com_rd_avatar_tts_SherpaTtsEngine_nativeCreateTts(
     config.model.matcha.noise_scale = 0.667f;
     config.model.matcha.length_scale = 1.0f;
     config.model.num_threads = (int32_t)numThreads;
-    config.model.provider = "xnnpack";  // XNNPACK: 2-4x faster TTS synthesis
+    config.model.provider = "cpu";
     config.model.debug = 0;
-    config.max_num_sentences = 1;  // process one sentence at a time for streaming
+    config.max_num_sentences = 1;
     config.silence_scale = 0.2f;
 
     const SherpaOnnxOfflineTts *tts = SherpaOnnxCreateOfflineTts(&config);

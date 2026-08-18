@@ -140,8 +140,15 @@ enum TarBz2Extractor {
                 continue
             }
 
-            // Strip first directory component (--strip-components=1)
+            // Strip first directory component (--strip-components=1).
+            // Handle the "./" prefix that some tar implementations add:
+            // "./dirname/file" → strip "./" → "dirname/file" → strip "dirname/" → "file"
             var relativePath = name
+            // First: strip leading "./" if present
+            if relativePath.hasPrefix("./") {
+                relativePath = String(relativePath.dropFirst(2))
+            }
+            // Then: strip the first directory component
             if let slashRange = relativePath.range(of: "/") {
                 relativePath = String(relativePath[slashRange.upperBound...])
             }

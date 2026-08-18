@@ -43,6 +43,7 @@ class WakeWordEngine(private val context: Context) {
     private var keywordsContent: String = ""
 
     private val isRunning = AtomicBoolean(false)
+    @Volatile
     private var detectionThread: Thread? = null
     @Volatile
     private var audioRecord: AudioRecord? = null

@@ -153,6 +153,9 @@ class AudioRecorder {
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
         isRecording = false
+        // Nil converter *after* isRecording=false: removeTap is
+        // synchronous per Apple docs, but this ordering is a belt-
+        // and-suspenders guard against a stray tap callback.
         cachedConverter = nil
         cachedOutputFormat = nil
         os_log(.info, "AudioRecorder: stopped")

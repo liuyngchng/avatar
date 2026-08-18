@@ -124,8 +124,10 @@ class AudioPlayer {
             return
         }
         guard index < chunks.count else {
-            // All chunks played — full stop to release engine
-            stop()
+            // All chunks played.  Don't stop the engine yet — audio is
+            // still draining through the mixer and hardware output buffer.
+            // The caller is responsible for a delayed engine teardown.
+            stopNode()
             completion?()
             return
         }
@@ -153,6 +155,8 @@ class AudioPlayer {
         format: AVAudioFormat,
         completion: (() -> Void)?
     ) {
+        os_log(.info, "AudioPlayer: scheduleChunk %d samples, playing=%@",
+               pcmFloats.count, isPlaying ? "YES" : "NO")
         // If stop() was called externally while a playSequence was in flight,
         // bail out immediately — the engine has already been torn down.
         guard !terminated else {

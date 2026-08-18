@@ -104,6 +104,11 @@ class SherpaAsrEngine {
         os_log(.info, "ASR: decoding %d samples", sampleBuffer.count)
 
         let stream = SherpaOnnxCreateOfflineStream(recognizer)
+        guard let stream = stream else {
+            os_log(.error, "ASR: failed to create offline stream")
+            sampleBuffer = []
+            return ""
+        }
 
         sampleBuffer.withUnsafeBufferPointer { ptr in
             SherpaOnnxAcceptWaveformOffline(

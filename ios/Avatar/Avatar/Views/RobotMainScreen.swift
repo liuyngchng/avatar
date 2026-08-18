@@ -2,8 +2,8 @@
 //  RobotMainScreen.swift
 //  Avatar
 //
-//  Main screen: robot face with tap/long-press gestures + status overlay.
-//  Ported from Android: MainActivity.kt RobotFace screen
+//  Main screen: stick figure with tap/long-press gestures + status overlay.
+//  Ported from Android: RobotFaceScreen.kt
 //
 
 import SwiftUI
@@ -17,14 +17,14 @@ struct RobotMainScreen: View {
     var body: some View {
         NavigationView {
             GeometryReader { geo in
-                // Face circle geometry: centerY = h * 0.46, radius = w * 0.38
-                let faceBottom = geo.size.height * 0.46 + geo.size.width * 0.38
+                // Figure geometry: feetY = h * 0.82, head extends to ~h * 0.30
+                let figureBottom = geo.size.height * StickGeo.feetYFrac + 20
                 let bottomPadding: CGFloat = 40
                 let faceMargin: CGFloat = 16
-                let textMaxHeight = max(0, geo.size.height - faceBottom - bottomPadding - faceMargin)
+                let textMaxHeight = max(0, geo.size.height - figureBottom - bottomPadding - faceMargin)
 
                 ZStack {
-                    // Face view fills the screen
+                    // Stick figure view fills the screen
                     RobotFaceView(
                         robotState: $viewModel.robotState,
                         blinkTrigger: $viewModel.robotState.blinkTrigger,
@@ -44,7 +44,7 @@ struct RobotMainScreen: View {
                             }
                     )
 
-                    // Status overlay (non-intrusive)
+                    // Status overlay
                     VStack {
                         // Top: mode indicator + wake word + settings buttons
                         HStack {
@@ -70,8 +70,8 @@ struct RobotMainScreen: View {
                                       : "ear")
                                     .font(.system(size: 18, weight: .medium))
                                     .foregroundColor(viewModel.wakeWordEnabled
-                                                     ? .blue
-                                                     : .white.opacity(0.6))
+                                                     ? Color(red: 0.27, green: 0.53, blue: 1.0)
+                                                     : .white.opacity(0.55))
                                     .padding(10)
                             }
 
@@ -89,6 +89,9 @@ struct RobotMainScreen: View {
 
                         // Bottom: status text (matches Android RobotFaceScreen)
                         let statusText: String = {
+                            if !viewModel.enginesReady {
+                                return "小火正在醒来..."
+                            }
                             switch viewModel.robotState.mode {
                             case .listening:
                                 return "聆听中..."
@@ -96,33 +99,19 @@ struct RobotMainScreen: View {
                                 return "思考中..."
                             case .speaking:
                                 return viewModel.robotState.responseText ?? ""
-                            case .idle, .watching:
-                                return viewModel.robotState.mode == .watching
-                                    ? "点击我开始说话" : "点击屏幕与我互动"
+                            default:
+                                return ""
                             }
                         }()
 
                         if !statusText.isEmpty {
-                            let isHint = viewModel.robotState.mode == .idle
-                                       || viewModel.robotState.mode == .watching
-
-                            if isHint {
-                                Text(statusText)
-                                    .font(.caption)
-                                    .foregroundColor(.white.opacity(0.4))
-                                    .padding(.bottom, 60)
-                            } else {
-                                Text(statusText)
-                                    .font(.body)
-                                    .foregroundColor(.white)
-                                    .padding(.horizontal, 20)
-                                    .padding(.vertical, 12)
-                                    .background(Color.black.opacity(0.5))
-                                    .clipShape(RoundedRectangle(cornerRadius: 16))
-                                    .frame(maxHeight: textMaxHeight)
-                                    .padding(.bottom, bottomPadding)
-                                    .padding(.horizontal, 20)
-                            }
+                            Text(statusText)
+                                .font(.body)
+                                .foregroundColor(.white.opacity(0.7))
+                                .multilineTextAlignment(.center)
+                                .padding(.horizontal, 40)
+                                .padding(.bottom, 40)
+                                .frame(maxHeight: textMaxHeight)
                         }
                     }
                 }
@@ -136,7 +125,11 @@ struct RobotMainScreen: View {
                     },
                     onReadText: { text in
                         viewModel.speakText(text)
-                    }
+                    },
+                    ttsNumSpeakers: viewModel.ttsNumSpeakers,
+                    selectedSid: $viewModel.selectedSid,
+                    onSetSpeaker: { viewModel.setSpeaker($0) },
+                    speakerName: { viewModel.speakerName(for: $0) }
                 )
             }
             .onAppear {
@@ -151,5 +144,6 @@ struct RobotMainScreen: View {
             }
         }
         .navigationViewStyle(.stack)
+        .background(Color(red: 0.10, green: 0.10, blue: 0.18).edgesIgnoringSafeArea(.all))
     }
 }

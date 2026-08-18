@@ -20,6 +20,10 @@ class RobotViewModel: ObservableObject {
     @Published var errorMessage: String?
     @Published var isPaused: Bool = false
     @Published var isInConversation: Bool = false
+    @Published var selectedSid: Int = 0
+    @Published var ttsNumSpeakers: Int = 0
+
+    private let sidKey = "tts_selected_sid"
 
     // MARK: - Services
 
@@ -48,7 +52,8 @@ class RobotViewModel: ObservableObject {
     // Multi-turn conversation
     private var isMultiTurn = false
     private var multiTurnBlankCount = 0
-    private let maxMultiTurnBlanks = 2   // ~4 s (2 × ~2 s VAD silence per utterance)
+    private let maxMultiTurnBlanks = 3   // ~6 s (3 × ~2 s VAD silence per utterance)
+    private var suspiciousEchoCount = 0  // consecutive echo-like turns (for loop detection)
 
     // Recording / TTS tasks
     private var recordingCancellable: AnyCancellable?
@@ -57,7 +62,7 @@ class RobotViewModel: ObservableObject {
     private var speakingTask: Task<Void, Never>?
     private var recognitionTask: Task<Void, Never>?
     private var blinkTask: Task<Void, Never>?
-    private var faceCheckTask: Task<Void, Never>?
+    private var anticTask: Task<Void, Never>?
     private var wakeEventCancellable: AnyCancellable?
     private var resumeCancellable: AnyCancellable?
     private var wakeRunningCancellable: AnyCancellable?
@@ -65,10 +70,8 @@ class RobotViewModel: ObservableObject {
     // VAD
     private var latestRms: Float = 0
     private var vadTask: Task<Void, Never>?
-
-    // Expression smoothing
-    private var expressionWindow: [Emotion?] = []
-    private let expressionWindowSize = 5
+    private var calibratedNoiseThreshold: Float = 0.012  // calibrated once at startup
+    private var speechChunkCount = 0  // non-silent buffer count during current recording
 
     // Pause/resume tracking
     private var isRobotRunning = false
@@ -125,10 +128,12 @@ class RobotViewModel: ObservableObject {
         guard !isRobotRunning else { return }
         isRobotRunning = true
 
+        // Clear chat history and LLM context on app (re)start
+        chatSession.clear()
+
         initEngines()
-        startFaceDetection()
         startBlinkTimer()
-        startFaceCheckTimer()
+        startAnticTimer()
     }
 
     // MARK: - Pause / Resume
@@ -146,16 +151,11 @@ class RobotViewModel: ObservableObject {
         // Stop all audio (recording, playback, wake word)
         stopAllAudio()
 
-        // Stop camera / face detection
-        faceDetector.stop()
-        faceCancellable?.cancel()
-        faceCancellable = nil
-
         // Cancel all async tasks
         blinkTask?.cancel()
         blinkTask = nil
-        faceCheckTask?.cancel()
-        faceCheckTask = nil
+        anticTask?.cancel()
+        anticTask = nil
         recognitionTask?.cancel()
         recognitionTask = nil
         vadTask?.cancel()
@@ -170,8 +170,8 @@ class RobotViewModel: ObservableObject {
         robotState.isSpeaking = false
         isMultiTurn = false
         multiTurnBlankCount = 0
+        suspiciousEchoCount = 0
         isInConversation = false
-        expressionWindow.removeAll()
 
         // Release audio session so other components (or system) can use it
         AudioSessionManager.deactivate()
@@ -194,12 +194,9 @@ class RobotViewModel: ObservableObject {
             initEngines()
         }
 
-        // Restart camera / face detection
-        startFaceDetection()
-
         // Restart background timers
         startBlinkTimer()
-        startFaceCheckTimer()
+        startAnticTimer()
 
         // Restore audio session
         AudioSessionManager.configure()
@@ -216,6 +213,10 @@ class RobotViewModel: ObservableObject {
         guard !isInitializingEngines else { return }
         isInitializingEngines = true
 
+        // Show waking-up state during engine loading (matches Android)
+        robotState.mode = .thinking
+        robotState.emotion = .sleepy
+
         Task.detached(priority: .userInitiated) { [weak self] in
             guard let self = self else { return }
 
@@ -224,11 +225,19 @@ class RobotViewModel: ObservableObject {
 
             await MainActor.run {
                 self.enginesReady = asrReady && ttsReady
+                self.robotState.enginesReady = asrReady && ttsReady
                 self.isInitializingEngines = false
                 if self.enginesReady {
-                    // Engines are ready — clear any stale "not ready" error
-                    // that may have been shown while models were still loading.
                     self.errorMessage = nil
+                    self.robotState.mode = .idle
+                    self.robotState.emotion = .neutral
+                    // Discover how many speakers the TTS model supports
+                    self.ttsNumSpeakers = self.ttsEngine.numSpeakers
+                    // Load saved speaker ID, clamp to valid range
+                    let saved = UserDefaults.standard.integer(forKey: self.sidKey)
+                    self.selectedSid = (self.ttsNumSpeakers > 0) ? min(saved, self.ttsNumSpeakers - 1) : 0
+                    // One-time ambient noise calibration for VAD
+                    self.calibrateNoiseOnce()
                 } else {
                     self.errorMessage = "模型加载失败，请检查模型文件"
                 }
@@ -236,32 +245,20 @@ class RobotViewModel: ObservableObject {
         }
     }
 
-    private func startFaceDetection() {
+    /// Turn on the camera for "looking" mode — triggered by voice command.
+    func startLooking() {
+        guard enginesReady else {
+            errorMessage = "模型未就绪，请先上传模型文件"
+            return
+        }
         faceDetector.start()
+        robotState.mode = .looking
+    }
 
-        faceCancellable = faceDetector.faces
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] result in
-                guard let self = self else { return }
-                self.robotState.faceTargetX = result?.cx
-                self.robotState.faceTargetY = result?.cy
-                self.robotState.msSinceLastFace = (result != nil) ? 0 : self.robotState.msSinceLastFace + 200
-
-                // Expression mimicry: in watching mode, mirror the user's
-                // facial expression onto the robot. Use a rolling window
-                // to smooth out transient Vision noise.
-                if let result = result, self.robotState.mode == .watching {
-                    let inferred = result.inferredEmotion()
-                    self.expressionWindow.append(inferred)
-                    if self.expressionWindow.count > self.expressionWindowSize {
-                        self.expressionWindow.removeFirst()
-                    }
-                    // Require majority agreement in the window
-                    if let dominant = self.smoothedExpression() {
-                        self.robotState.emotion = dominant
-                    }
-                }
-            }
+    /// Turn off the camera and return to idle.
+    func stopLooking() {
+        faceDetector.stop()
+        robotState.mode = .idle
     }
 
     private func startBlinkTimer() {
@@ -275,42 +272,15 @@ class RobotViewModel: ObservableObject {
         }
     }
 
-    private func startFaceCheckTimer() {
-        faceCheckTask = Task { @MainActor [weak self] in
+    private func startAnticTimer() {
+        anticTask = Task { @MainActor [weak self] in
             while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 200_000_000)  // 200ms poll
-
+                // Fire goofy antics every 5-15 seconds when idle
+                let delay = UInt64.random(in: 5_000_000_000...15_000_000_000)
+                try? await Task.sleep(nanoseconds: delay)
                 guard let self = self, !self.isPaused else { continue }
-                let hasFace = self.robotState.faceTargetX != nil
-                let idleTooLong = self.robotState.msSinceLastFace > 10_000
-
-                // Face appeared → WATCHING + greeting
-                if hasFace && self.robotState.mode == .idle {
-                    let greeting = self.behaviorEngine.onFaceAppear()
-                    self.robotState.mode = .watching
-                    self.robotState.emotion = .happy
-                    self.robotState.responseText = greeting
-                    self.expressionWindow.removeAll()   // fresh expression window
-                    try? await Task.sleep(nanoseconds: 800_000_000)
-                    // Re-check: don't interrupt if the user has already
-                    // engaged in a conversation (tapped to talk, wake word,
-                    // or LLM response in progress).
-                    if self.robotState.mode == .watching || self.robotState.mode == .idle {
-                        self.speakText(greeting)
-                    }
-                }
-
-                // Face disappeared too long → IDLE + remark
-                if !hasFace
-                    && idleTooLong
-                    && self.robotState.mode != .idle
-                    && self.robotState.mode != .listening
-                    && self.robotState.mode != .speaking {
-                    let remark = self.behaviorEngine.onFaceDisappear()
-                    self.robotState.mode = .idle
-                    if let remark = remark {
-                        self.speakText(remark)
-                    }
+                if self.robotState.mode == .idle {
+                    self.robotState.anticTrigger += 1
                 }
             }
         }
@@ -344,7 +314,11 @@ class RobotViewModel: ObservableObject {
 
     func onTap() {
         guard enginesReady else {
-            errorMessage = "模型未就绪，请先上传模型文件"
+            // Silently ignore taps while engines are loading ("小火正在醒来...");
+            // only show an error if initialization completed but failed.
+            if !isInitializingEngines {
+                errorMessage = "模型加载失败，请检查模型文件"
+            }
             return
         }
 
@@ -372,6 +346,38 @@ class RobotViewModel: ObservableObject {
 
     // MARK: - Recording
 
+    /// Calibrate noise threshold once at startup. Records ~1.5s of ambient audio,
+    /// computes the minimum RMS energy, and stores a threshold for future VAD.
+    func calibrateNoiseOnce() {
+        os_log(.info, "RobotVM: starting one-time noise calibration")
+        AudioSessionManager.configure()
+
+        let baseSilenceThreshold: Float = 0.012
+        let calibrationChunks = 20   // ~1.6s at ~80ms/chunk
+        var noiseFloor = Float.greatestFiniteMagnitude
+        var chunkCount = 0
+
+        let cancellable = audioRecorder.startRecordingPublisher()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] samples in
+                guard let self = self else { return }
+                let rms = Self.rms(samples)
+                noiseFloor = min(noiseFloor, rms)
+                chunkCount += 1
+                if chunkCount >= calibrationChunks {
+                    self.calibratedNoiseThreshold = max(baseSilenceThreshold, noiseFloor * 1.8)
+                    os_log(.info, "RobotVM: noise calibration done — noiseFloor=%.5f threshold=%.5f",
+                           noiseFloor, self.calibratedNoiseThreshold)
+                    self.audioRecorder.stop()
+                }
+            }
+
+        // Keep a reference so it doesn't get cancelled before calibration completes
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [cancellable] in
+            _ = cancellable  // retain until timeout
+        }
+    }
+
     private func startListening() {
         AudioSessionManager.configure()
 
@@ -381,28 +387,40 @@ class RobotViewModel: ObservableObject {
         robotState.responseText = nil
 
         latestRms = 0
+        speechChunkCount = 0
         var silentChunks = 0
-        let silenceThreshold: Float = 0.012   // RMS below this = silence
-        let maxSilentChunks = 25               // ~2 seconds at ~80ms/chunk
+        var warmupBuffers = 12                      // skip first ~12 buffers (~960ms) to avoid TTS tail/echo
+        let maxSilentChunks = 25                   // ~2 seconds at ~80ms/chunk
         let maxRecordSeconds: TimeInterval = 10
         let startTime = Date()
+        let effectiveThreshold = calibratedNoiseThreshold
 
         recordingCancellable = audioRecorder.startRecordingPublisher()
+            .receive(on: DispatchQueue.main)
             .sink { [weak self] samples in
                 guard let self = self else { return }
+
+                // Warm-up: drop the first few buffers so residual TTS echo
+                // doesn't trigger a false VAD start.
+                if warmupBuffers > 0 {
+                    warmupBuffers -= 1
+                    return
+                }
+
                 self.asrEngine.acceptWaveform(samples)
 
                 // VAD: RMS energy-based silence detection
                 let rms = Self.rms(samples)
                 self.latestRms = rms
 
-                if rms < silenceThreshold {
+                if rms < effectiveThreshold {
                     silentChunks += 1
                     if silentChunks >= maxSilentChunks {
                         self.audioRecorder.stop()
                     }
                 } else {
                     silentChunks = max(0, silentChunks - 1)
+                    self.speechChunkCount += 1
                 }
             }
 
@@ -449,6 +467,29 @@ class RobotViewModel: ObservableObject {
             let text = await MainActor.run { self.asrEngine.inputFinished() }
 
             await MainActor.run {
+                // Minimum-speech gate: if the utterance is too short
+                // (< ~500ms of actual speech energy), treat it as
+                // echo/reverb rather than real user input.  This stops
+                // the robot from responding to its own TTS tail in
+                // multi-turn mode.
+                let minSpeechChunks = 10  // ~800ms at ~80ms/buffer
+                if self.isMultiTurn && self.speechChunkCount < minSpeechChunks {
+                    os_log(.info, "RobotVM: utterance too short (%d chunks < %d), treating as echo",
+                           self.speechChunkCount, minSpeechChunks)
+                    self.multiTurnBlankCount += 1
+                    if self.multiTurnBlankCount >= self.maxMultiTurnBlanks {
+                        self.endMultiTurn()
+                    } else if self.multiTurnBlankCount == 1 {
+                        // First blank: silently re-listen without speaking.
+                        // Adding TTS audio here would feed the echo loop.
+                        os_log(.info, "RobotVM: first blank — silently re-listening")
+                        self.startListening()
+                    } else {
+                        self.speakText("嗯？还在吗？")
+                    }
+                    return
+                }
+
                 guard !text.isEmpty else {
                     os_log(.info, "RobotVM: ASR returned blank")
                     if self.isMultiTurn {
@@ -457,11 +498,16 @@ class RobotViewModel: ObservableObject {
                                self.multiTurnBlankCount, self.maxMultiTurnBlanks)
                         if self.multiTurnBlankCount >= self.maxMultiTurnBlanks {
                             self.endMultiTurn()
+                        } else if self.multiTurnBlankCount == 1 {
+                            // First blank: silently re-listen without speaking.
+                            // Adding TTS audio here would feed the echo loop.
+                            os_log(.info, "RobotVM: first blank — silently re-listening")
+                            self.startListening()
                         } else {
                             self.speakText("嗯？还在吗？")
                         }
                     } else {
-                        self.robotState.mode = self.robotState.faceTargetX != nil ? .watching : .idle
+                        self.robotState.mode = .idle
                         if self.wakeWordTriggered {
                             self.wakeWordManager.notifyFalseTrigger()
                             self.wakeWordTriggered = false
@@ -474,6 +520,27 @@ class RobotViewModel: ObservableObject {
 
                 self.robotState.lastUserText = text
                 self.multiTurnBlankCount = 0   // reset silence counter on valid input
+
+                // In multi-turn mode, validate ASR output quality.
+                // Echo/garbage often produces very short or nonsensical
+                // text (1-2 chars) that slips past the speech-chunk gate.
+                if self.isMultiTurn {
+                    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if trimmed.count <= 2 {
+                        os_log(.info, "RobotVM: ASR text too short (%d chars), treating as echo",
+                               trimmed.count)
+                        self.suspiciousEchoCount += 1
+                        if self.suspiciousEchoCount >= 2 {
+                            os_log(.info, "RobotVM: consecutive echo detected — ending multi-turn")
+                            self.endMultiTurn()
+                        } else {
+                            os_log(.info, "RobotVM: suspicious short text — silently re-listening")
+                            self.startListening()
+                        }
+                        return
+                    }
+                }
+                self.suspiciousEchoCount = 0   // reset echo counter on valid input
 
                 if self.wakeWordTriggered {
                     self.wakeWordManager.notifyProductiveWake()
@@ -507,6 +574,7 @@ class RobotViewModel: ObservableObject {
                 await MainActor.run {
                     self.robotState.responseText = reply
                     self.robotState.emotion = .happy
+                    self.chatSession.appendAssistantReply(reply)
                     self.speakText(reply)
                 }
             } else {
@@ -528,6 +596,7 @@ class RobotViewModel: ObservableObject {
         return try await withCheckedThrowingContinuation { continuation in
             var fullReply = ""
 
+            streamingCancellable?.cancel()
             streamingCancellable = streamPublisher
                 .flatMap { $0 }
                 .sink(
@@ -581,7 +650,7 @@ class RobotViewModel: ObservableObject {
                 if Task.isCancelled { break }
                 let normalized = TextNormalizer.normalize(sentence)
                 guard normalized.isNotBlank else { continue }
-                if let pcm = await self.ttsEngine.synthesize(text: normalized) {
+                if let pcm = await self.ttsEngine.synthesize(text: normalized, sid: self.selectedSid) {
                     results.append(pcm)
                 }
             }
@@ -600,6 +669,11 @@ class RobotViewModel: ObservableObject {
             }
         }
 
+        // Let the audio hardware drain its output buffer before tearing
+        // down the engine.  Without this delay the last ~50–100 ms of
+        // audio can be cut off mid-waveform, producing a pop / crackle.
+        try? await Task.sleep(nanoseconds: 150_000_000)  // 150ms
+
         self.audioPlayer.stop()
         self.finishSpeaking(prevMode: prevMode)
     }
@@ -608,17 +682,21 @@ class RobotViewModel: ObservableObject {
         robotState.isSpeaking = false
 
         if isMultiTurn {
-            // Continue multi-turn: auto-listen for next utterance
-            robotState.mode = .listening
-            startListening()
+            // Continue multi-turn: wait for room acoustics to settle
+            // before opening the mic, so we don't capture the tail/echo
+            // of our own TTS output as the next user utterance.
+            // Keep mode as .speaking during the cooldown — startListening()
+            // will switch to .listening when the mic actually opens.
+            let cooldownNs: UInt64 = 1_200_000_000  // 1.2s post-speech cooldown
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: cooldownNs)
+                guard let self = self, self.isMultiTurn else { return }
+                self.startListening()
+            }
             return
         }
 
-        let newMode: RobotMode = (robotState.faceTargetX != nil) ? .watching : .idle
-        robotState.mode = newMode
-        if newMode == .watching {
-            expressionWindow.removeAll()
-        }
+        robotState.mode = .idle
 
         if wakeWordTriggered {
             wakeWordTriggered = false
@@ -643,11 +721,7 @@ class RobotViewModel: ObservableObject {
             endMultiTurn()
         }
 
-        let newMode: RobotMode = (robotState.faceTargetX != nil) ? .watching : .idle
-        robotState.mode = newMode
-        if newMode == .watching {
-            expressionWindow.removeAll()
-        }
+        robotState.mode = .idle
 
         // Resume KWS if it was stopped by onTap() before this
         if resumeKwsAfterVoiceFlow {
@@ -740,14 +814,15 @@ class RobotViewModel: ObservableObject {
 
     private func onWakeWordDetected() {
         guard enginesReady else { return }
-        guard robotState.mode == .idle || robotState.mode == .watching else {
-            os_log(.info, "RobotVM: ignoring wake word — not idle/watching")
+        guard robotState.mode == .idle || robotState.mode == .looking else {
+            os_log(.info, "RobotVM: ignoring wake word — not idle/looking")
             return
         }
 
         wakeWordTriggered = true
         isMultiTurn = true
         multiTurnBlankCount = 0
+        suspiciousEchoCount = 0
         isInConversation = true
         os_log(.info, "RobotVM: multi-turn conversation started")
 
@@ -758,14 +833,19 @@ class RobotViewModel: ObservableObject {
             AudioSessionManager.configure()
 
             if let pcm = await Task.detached(priority: .userInitiated, operation: {
-                await self.ttsEngine.synthesize(text: "哎，我在呢", speed: 1.0)
+                await self.ttsEngine.synthesize(text: "哎，我在呢", speed: 1.0, sid: self.selectedSid)
             }).value {
                 await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
                     self.audioPlayer.play(pcmFloats: pcm, sampleRate: Double(self.ttsEngine.sampleRate)) {
                         cont.resume()
                     }
                 }
+                // Let the hardware output buffer drain before tearing down
+                // the engine, same as speakAndFinish().
+                try? await Task.sleep(nanoseconds: 150_000_000)
                 self.audioPlayer.stop()
+            } else {
+                os_log(.error, "RobotVM: wake-word greeting TTS synthesis failed — skipping voice prompt")
             }
 
             self.startListening()
@@ -807,6 +887,7 @@ class RobotViewModel: ObservableObject {
         os_log(.info, "RobotVM: ending multi-turn conversation")
         isMultiTurn = false
         multiTurnBlankCount = 0
+        suspiciousEchoCount = 0
         isInConversation = false
         wakeWordTriggered = false
         wakeWordManager.notifyVoiceFlowDone()
@@ -831,6 +912,13 @@ class RobotViewModel: ObservableObject {
         wakeWordManager.setRunning(false)
         robotState.mode = .idle
         robotState.isSpeaking = false
+        // Reset multi-turn state so we don't resume a conversation
+        // that was interrupted (e.g., phone call, alarm).
+        isMultiTurn = false
+        multiTurnBlankCount = 0
+        suspiciousEchoCount = 0
+        isInConversation = false
+        wakeWordTriggered = false
     }
 
     private func handleInterruptionEnded() {
@@ -842,24 +930,6 @@ class RobotViewModel: ObservableObject {
 
     // MARK: - Helpers
 
-    /// Returns the emotion that appears most often in the expression window,
-    /// or nil when there's no clear consensus.
-    private func smoothedExpression() -> Emotion? {
-        let recent = expressionWindow
-        guard !recent.isEmpty else { return nil }
-
-        var counts: [Emotion: Int] = [:]
-        for e in recent {
-            guard let e = e else { continue }
-            counts[e, default: 0] += 1
-        }
-        guard let best = counts.max(by: { $0.value < $1.value }) else { return nil }
-
-        // Require ≥ 60% of the window to agree
-        let threshold = max(1, Int(Double(expressionWindowSize) * 0.6))
-        return best.value >= threshold ? best.key : nil
-    }
-
     func checkConfig() -> Bool {
         let hasConfig = configRepo.hasConfig
         return hasConfig
@@ -867,6 +937,18 @@ class RobotViewModel: ObservableObject {
 
     func clearError() {
         errorMessage = nil
+    }
+
+    /// Change the TTS speaker ID and persist the selection.
+    func setSpeaker(_ sid: Int) {
+        let clamped = max(0, min(sid, ttsNumSpeakers - 1))
+        selectedSid = clamped
+        UserDefaults.standard.set(clamped, forKey: sidKey)
+    }
+
+    /// Human-readable voice name for the given speaker ID.
+    func speakerName(for sid: Int) -> String {
+        ttsEngine.speakerName(for: sid)
     }
 
     private static func rms(_ samples: [Float]) -> Float {
@@ -888,7 +970,7 @@ class RobotViewModel: ObservableObject {
         speakingTask?.cancel()
         recognitionTask?.cancel()
         blinkTask?.cancel()
-        faceCheckTask?.cancel()
+        anticTask?.cancel()
         vadTask?.cancel()
         wakeEventCancellable?.cancel()
         resumeCancellable?.cancel()

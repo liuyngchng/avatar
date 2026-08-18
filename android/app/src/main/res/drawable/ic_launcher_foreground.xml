@@ -16,8 +16,8 @@
 
     <!-- ═══ Left arm (hanging casually) ═══ -->
     <path
-        android:pathData="M46,49L34,57L28,67"
-        android:strokeWidth="3"
+        android:pathData="M54,49L34,57L28,67"
+        android:strokeWidth="4"
         android:strokeColor="#F0ECE6"
         android:strokeLineCap="round"
         android:strokeLineJoin="round"
@@ -25,8 +25,8 @@
 
     <!-- ═══ Right arm (waving! — raised up) ═══ -->
     <path
-        android:pathData="M62,49L74,41L80,31"
-        android:strokeWidth="3"
+        android:pathData="M54,49L74,41L80,31"
+        android:strokeWidth="4"
         android:strokeColor="#F0ECE6"
         android:strokeLineCap="round"
         android:strokeLineJoin="round"
@@ -34,8 +34,8 @@
 
     <!-- ═══ Left leg ═══ -->
     <path
-        android:pathData="M48,68L42,80L40,88"
-        android:strokeWidth="3"
+        android:pathData="M54,68L42,80L40,88"
+        android:strokeWidth="4"
         android:strokeColor="#F0ECE6"
         android:strokeLineCap="round"
         android:strokeLineJoin="round"
@@ -43,8 +43,8 @@
 
     <!-- ═══ Right leg ═══ -->
     <path
-        android:pathData="M60,68L66,80L68,88"
-        android:strokeWidth="3"
+        android:pathData="M54,68L66,80L68,88"
+        android:strokeWidth="4"
         android:strokeColor="#F0ECE6"
         android:strokeLineCap="round"
         android:strokeLineJoin="round"

@@ -63,8 +63,67 @@ final class ModelManager: ObservableObject {
     static let kwsModelDir = "kws"
 
     private static let asrRequired = ["model.int8.onnx", "tokens.txt"]
+    /// Matcha-TTS: acoustic model + vocoder + tokens + lexicon
     private static let ttsRequired = ["model.onnx", "vocos.onnx", "tokens.txt", "lexicon.txt"]
     private static let kwsRequired = ["encoder.onnx", "decoder.onnx", "joiner.onnx", "tokens.txt"]
+
+    /// Rename extracted TTS model files to canonical names expected by
+    /// SherpaTtsEngine: model.onnx, tokens.txt, lexicon.txt.
+    nonisolated static func applyTtsRenames() {
+        let dir = ttsModelDirURL()
+        let fm = FileManager.default
+
+        guard let contents = try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: [.isRegularFileKey]) else {
+            return
+        }
+
+        // ── model.onnx (acoustic model) ──
+        if !fm.fileExists(atPath: dir.appendingPathComponent("model.onnx").path) {
+            let onnxFiles = contents.filter { $0.pathExtension.lowercased() == "onnx" }
+            // Prefer model-named files, skip vocos.onnx (the vocoder)
+            let preferred = onnxFiles.first { name in
+                let n = name.lastPathComponent.lowercased()
+                return n.contains("model") || n.contains("generator")
+            } ?? onnxFiles.first { !$0.lastPathComponent.lowercased().contains("vocos") }
+            if let src = preferred {
+                let dst = dir.appendingPathComponent("model.onnx")
+                try? fm.removeItem(at: dst)
+                try? fm.moveItem(at: src, to: dst)
+                modelLog.info("TTS rename: \(src.lastPathComponent) -> model.onnx")
+            }
+        }
+
+        // ── tokens.txt ──
+        if !fm.fileExists(atPath: dir.appendingPathComponent("tokens.txt").path) {
+            let txtFiles = contents.filter { $0.pathExtension.lowercased() == "txt" }
+            let preferred = txtFiles.first { name in
+                let n = name.lastPathComponent.lowercased()
+                return n.contains("token") || n.contains("vocab")
+            } ?? txtFiles.first
+            if let src = preferred {
+                let dst = dir.appendingPathComponent("tokens.txt")
+                try? fm.removeItem(at: dst)
+                try? fm.moveItem(at: src, to: dst)
+                modelLog.info("TTS rename: \(src.lastPathComponent) -> tokens.txt")
+            }
+        }
+
+        // ── lexicon.txt ──
+        if !fm.fileExists(atPath: dir.appendingPathComponent("lexicon.txt").path) {
+            let refreshed = (try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? contents
+            let txtFiles = refreshed.filter { $0.pathExtension.lowercased() == "txt" }
+            let preferredLex = txtFiles.first { name in
+                let n = name.lastPathComponent.lowercased()
+                return n.contains("lexicon") || n.contains("lex")
+            } ?? txtFiles.first
+            if let src = preferredLex {
+                let dst = dir.appendingPathComponent("lexicon.txt")
+                try? fm.removeItem(at: dst)
+                try? fm.moveItem(at: src, to: dst)
+                modelLog.info("TTS rename: \(src.lastPathComponent) -> lexicon.txt")
+            }
+        }
+    }
 
     /// KWS model archive contains multiple epochs and quantisation variants.
     /// Match Android's selection:
@@ -170,14 +229,12 @@ final class ModelManager: ObservableObject {
         return ttsRequired.allSatisfy { FileManager.default.fileExists(atPath: dir.appendingPathComponent($0).path) }
     }
     nonisolated static func checkTtsExtracted() -> Bool {
+        // Check that at least tokens + lexicon exist after extraction
         let dir = ttsModelDirURL()
-        return ["tokens.txt", "lexicon.txt"].allSatisfy { FileManager.default.fileExists(atPath: dir.appendingPathComponent($0).path) }
-    }
-    nonisolated static func checkVocoderReady() -> Bool {
-        let path = ttsModelDirURL().appendingPathComponent("vocos.onnx").path
-        let exists = FileManager.default.fileExists(atPath: path)
-        modelLog.info("checkVocoderReady: path=\(path), exists=\(exists)")
-        return exists
+        let fm = FileManager.default
+        let hasTokens = fm.fileExists(atPath: dir.appendingPathComponent("tokens.txt").path)
+        let hasLexicon = fm.fileExists(atPath: dir.appendingPathComponent("lexicon.txt").path)
+        return hasTokens && hasLexicon
     }
     nonisolated static func checkKwsReady() -> Bool {
         let dir = kwsModelDirURL()
@@ -223,17 +280,6 @@ final class ModelManager: ObservableObject {
         }
     }
 
-    func downloadVocoder() {
-        guard vocoderState != .completed(Date()) else { return }
-        modelLog.info("downloadVocoder enqueued")
-        vocoderState = .queued
-        Task {
-            await queue.enqueue { [weak self] in
-                await self?._downloadVocoder()
-            }
-        }
-    }
-
     func downloadKwsModel() {
         guard kwsState != .completed(Date()) else { return }
         modelLog.info("downloadKwsModel enqueued")
@@ -241,6 +287,27 @@ final class ModelManager: ObservableObject {
         Task {
             await queue.enqueue { [weak self] in
                 await self?._downloadKwsModel()
+            }
+        }
+    }
+
+    func downloadVocoderModel() {
+        guard vocoderState != .completed(Date()) else { return }
+        modelLog.info("downloadVocoderModel enqueued")
+        vocoderState = .queued
+        Task {
+            await queue.enqueue { [weak self] in
+                await self?._downloadVocoderModel()
+            }
+        }
+    }
+
+    func importVocoderModel(from sourceURL: URL, cleanup: (() -> Void)? = nil) {
+        modelLog.info("importVocoderModel enqueued: \(sourceURL.lastPathComponent)")
+        vocoderState = .queued
+        Task {
+            await queue.enqueue { [weak self] in
+                await self?._importVocoderModel(from: sourceURL, cleanup: cleanup)
             }
         }
     }
@@ -263,16 +330,6 @@ final class ModelManager: ObservableObject {
         Task {
             await queue.enqueue { [weak self] in
                 await self?._importTtsModel(from: sourceURL, cleanup: cleanup)
-            }
-        }
-    }
-
-    func importVocoder(from sourceURL: URL, cleanup: (() -> Void)? = nil) {
-        modelLog.info("importVocoder enqueued: \(sourceURL.lastPathComponent)")
-        vocoderState = .queued
-        Task {
-            await queue.enqueue { [weak self] in
-                await self?._importVocoder(from: sourceURL, cleanup: cleanup)
             }
         }
     }
@@ -305,42 +362,73 @@ final class ModelManager: ObservableObject {
             destDir: Self.ttsModelDir,
             archiveName: "tts_model.tar.bz2",
             statePath: \.ttsState,
-            checkReady: { Self.checkTtsExtracted() }
+            checkReady: {
+                Self.applyTtsRenames()
+                return Self.checkTtsExtracted()
+            }
         )
     }
 
-    private func _downloadVocoder() async {
+    private func _downloadVocoderModel() async {
         modelLog.info("Starting vocoder download")
         vocoderState = .downloading(progress: 0)
 
+        let downloadURL = Self.vocoderDownloadURL
+
+        let fm = FileManager.default
         let destDir = Self.ttsModelDirURL()
-        try? FileManager.default.createDirectory(at: destDir, withIntermediateDirectories: true)
+        try? fm.createDirectory(at: destDir, withIntermediateDirectories: true)
         let destFile = destDir.appendingPathComponent("vocos.onnx")
 
-        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("vocoder-download-\(UUID().uuidString)")
-        try? FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: tempDir) }
+        let tempDir = fm.temporaryDirectory.appendingPathComponent("vocoder-download-\(UUID().uuidString)")
+        try? fm.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: tempDir) }
 
-        let tempFile = tempDir.appendingPathComponent("vocos-22khz-univ.onnx")
+        let tempFile = tempDir.appendingPathComponent("vocos.onnx")
 
         do {
-            try await _downloadFile(from: Self.vocoderDownloadURL, to: tempFile) { [weak self] p in
+            try await _downloadFile(from: downloadURL, to: tempFile) { [weak self] p in
                 self?.vocoderState = .downloading(progress: p)
             }
         } catch {
             if error is CancellationError {
-                modelLog.info("Vocoder download cancelled")
                 vocoderState = .idle; return
             }
             modelLog.error("Vocoder download failed: \(error.localizedDescription)")
-            vocoderState = .failed("下载失败: \(error.localizedDescription)")
+            vocoderState = .failed("声码器下载失败: \(error.localizedDescription)")
             return
         }
 
-        try? FileManager.default.removeItem(at: destFile)
-        try? FileManager.default.copyItem(at: tempFile, to: destFile)
-        modelLog.info("Vocoder download completed")
-        vocoderState = .completed(Date())
+        try? fm.removeItem(at: destFile)
+        do {
+            try fm.copyItem(at: tempFile, to: destFile)
+            vocoderState = .completed(Date())
+            modelLog.info("Vocoder download completed, copied to \(destFile.path)")
+        } catch {
+            vocoderState = .failed("声码器拷贝失败: \(error.localizedDescription)")
+        }
+    }
+
+    private func _importVocoderModel(from sourceURL: URL, cleanup: (() -> Void)?) async {
+        vocoderState = .importing(progress: 0)
+        modelLog.info("[IMPORT-VOCODER] start, source=\(sourceURL.lastPathComponent)")
+
+        let fm = FileManager.default
+        let destDir = Self.ttsModelDirURL()
+        try? fm.createDirectory(at: destDir, withIntermediateDirectories: true)
+        let destFile = destDir.appendingPathComponent("vocos.onnx")
+
+        defer { cleanup?() }
+
+        do {
+            let data = try Data(contentsOf: sourceURL, options: [])
+            try? fm.removeItem(at: destFile)
+            try data.write(to: destFile)
+            vocoderState = .completed(Date())
+            modelLog.info("[IMPORT-VOCODER] completed, \(data.count) bytes -> \(destFile.path)")
+        } catch {
+            vocoderState = .failed("声码器导入失败: \(error.localizedDescription)")
+        }
     }
 
     private func _downloadKwsModel() async {
@@ -359,59 +447,24 @@ final class ModelManager: ObservableObject {
     // MARK: - Private: Actual Import Logic (runs sequentially)
 
     private func _importAsrModel(from sourceURL: URL, cleanup: (() -> Void)?) async {
-        await _importArchive(from: sourceURL, destDir: Self.asrModelDir, statePath: \.asrState, cleanup: cleanup)
+        await _importArchive(from: sourceURL, destDir: Self.asrModelDir, statePath: \.asrState,
+                            checkReady: { Self.checkAsrReady() }, cleanup: cleanup)
     }
 
     private func _importTtsModel(from sourceURL: URL, cleanup: (() -> Void)?) async {
-        await _importArchive(from: sourceURL, destDir: Self.ttsModelDir, statePath: \.ttsState, cleanup: cleanup)
+        await _importArchive(from: sourceURL, destDir: Self.ttsModelDir, statePath: \.ttsState,
+                            checkReady: {
+                                Self.applyTtsRenames()
+                                return Self.checkTtsExtracted()
+                            }, cleanup: cleanup)
     }
 
     private func _importKwsModel(from sourceURL: URL, cleanup: (() -> Void)?) async {
-        await _importArchive(from: sourceURL, destDir: Self.kwsModelDir, statePath: \.kwsState, cleanup: cleanup)
-        // Rename long KWS file names to standard short names after extraction
-        if case .completed = kwsState {
-            Self.applyKwsRenames()
-            if !Self.checkKwsReady() {
-                modelLog.warning("KWS import: files extracted but verification failed after rename")
-                kwsState = .failed("解压完成但文件验证失败")
-            }
-        }
-    }
-
-    private func _importVocoder(from sourceURL: URL, cleanup: (() -> Void)?) async {
-        modelLog.info("Starting vocoder import from \(sourceURL.lastPathComponent)")
-        vocoderState = .importing(progress: 0)
-
-        let destDir = Self.ttsModelDirURL()
-        try? FileManager.default.createDirectory(at: destDir, withIntermediateDirectories: true)
-        let destFile = destDir.appendingPathComponent("vocos.onnx")
-
-        do {
-            try await Task.detached(priority: .userInitiated) {
-                let fm = FileManager.default
-                try? fm.removeItem(at: destFile)
-                let data: Data
-                do { data = try Data(contentsOf: sourceURL, options: []) }
-                catch {
-                    modelLog.warning("Data(contentsOf:) failed, falling back to FileHandle: \(error.localizedDescription)")
-                    let handle = try FileHandle(forReadingFrom: sourceURL)
-                    defer { try? handle.close() }
-                    data = handle.readDataToEndOfFile()
-                }
-                modelLog.debug("Read \(data.count) bytes, writing to dest")
-                try data.write(to: destFile)
-                modelLog.info("Vocoder file written to \(destFile.lastPathComponent)")
-            }.value
-        } catch {
-            modelLog.error("Vocoder import failed: \(error.localizedDescription)")
-            vocoderState = .failed("文件复制失败: \(error.localizedDescription)")
-            cleanup?()
-            return
-        }
-
-        modelLog.info("Vocoder import completed")
-        cleanup?()
-        vocoderState = .completed(Date())
+        await _importArchive(from: sourceURL, destDir: Self.kwsModelDir, statePath: \.kwsState,
+                            checkReady: {
+                                Self.applyKwsRenames()
+                                return Self.checkKwsReady()
+                            }, cleanup: cleanup)
     }
 
     // MARK: - Private: Download + Extract Pipeline
@@ -499,9 +552,11 @@ final class ModelManager: ObservableObject {
         from sourceURL: URL,
         destDir: String,
         statePath: ReferenceWritableKeyPath<ModelManager, ModelDownloadState>,
+        checkReady: @escaping () -> Bool,
         cleanup: (() -> Void)?
     ) async {
         self[keyPath: statePath] = .importing(progress: 0)
+        modelLog.info("[IMPORT] start, source=\(sourceURL.lastPathComponent), scheme=\(sourceURL.scheme ?? "nil")")
 
         let fm = FileManager.default
         let modelsDir = Self.modelsDir()
@@ -510,6 +565,7 @@ final class ModelManager: ObservableObject {
 
         let srcExt = sourceURL.pathExtension.lowercased()
         let isTar = (srcExt == "tar")
+        modelLog.info("[IMPORT] srcExt=\(srcExt), isTar=\(isTar)")
 
         let tempDir = fm.temporaryDirectory.appendingPathComponent("model-import-\(UUID().uuidString)")
         try? fm.createDirectory(at: tempDir, withIntermediateDirectories: true)
@@ -518,38 +574,55 @@ final class ModelManager: ObservableObject {
         let archiveName = isTar ? "uploaded.tar" : "uploaded.tar.bz2"
         let archiveURL = tempDir.appendingPathComponent(archiveName)
 
-        modelLog.info("Import archive from \(sourceURL.lastPathComponent) (isTar=\(isTar))")
-
-        // Copy file to temp
+        // Copy file data to local temp
+        let copyStart = CFAbsoluteTimeGetCurrent()
         do {
             try await Task.detached(priority: .userInitiated) {
                 let fm = FileManager.default
                 try? fm.removeItem(at: archiveURL)
                 let data: Data
-                do { data = try Data(contentsOf: sourceURL, options: []) }
+                let readStart = CFAbsoluteTimeGetCurrent()
+                do {
+                    modelLog.info("[IMPORT] Data(contentsOf:) starting, url=\(sourceURL.lastPathComponent)")
+                    data = try Data(contentsOf: sourceURL, options: [])
+                    let readMs = (CFAbsoluteTimeGetCurrent() - readStart) * 1000
+                    modelLog.info("[IMPORT] Data(contentsOf:) OK, \(data.count) bytes, took \(String(format: "%.0f", readMs))ms")
+                }
                 catch {
-                    modelLog.warning("Data(contentsOf:) failed, falling back to FileHandle: \(error.localizedDescription)")
+                    let readMs = (CFAbsoluteTimeGetCurrent() - readStart) * 1000
+                    modelLog.warning("[IMPORT] Data(contentsOf:) FAILED after \(String(format: "%.0f", readMs))ms: \(error.localizedDescription)")
+                    modelLog.info("[IMPORT] falling back to FileHandle")
+                    let fhStart = CFAbsoluteTimeGetCurrent()
                     let handle = try FileHandle(forReadingFrom: sourceURL)
                     defer { try? handle.close() }
                     data = handle.readDataToEndOfFile()
+                    let fhMs = (CFAbsoluteTimeGetCurrent() - fhStart) * 1000
+                    modelLog.info("[IMPORT] FileHandle OK, \(data.count) bytes, took \(String(format: "%.0f", fhMs))ms")
                 }
-                modelLog.debug("Read \(data.count) bytes (\(data.count / 1024 / 1024) MB) from source")
+                let writeStart = CFAbsoluteTimeGetCurrent()
                 try data.write(to: archiveURL)
-                modelLog.info("Copied to temp: \(archiveURL.lastPathComponent)")
+                let writeMs = (CFAbsoluteTimeGetCurrent() - writeStart) * 1000
+                modelLog.info("[IMPORT] write to temp OK, took \(String(format: "%.0f", writeMs))ms")
             }.value
+            let copyMs = (CFAbsoluteTimeGetCurrent() - copyStart) * 1000
+            modelLog.info("[IMPORT] copy phase complete, total \(String(format: "%.0f", copyMs))ms")
         } catch {
-            modelLog.error("File read failed: \(error.localizedDescription)")
+            let copyMs = (CFAbsoluteTimeGetCurrent() - copyStart) * 1000
+            modelLog.error("[IMPORT] file read FAILED after \(String(format: "%.0f", copyMs))ms: \(error.localizedDescription)")
             self[keyPath: statePath] = .failed("文件读取失败: \(error.localizedDescription)")
             cleanup?()
             return
         }
 
-        // File data is now in local temp — safe to release security-scoped URL
+        // Data safely in local temp — release security-scoped URL
+        modelLog.info("[IMPORT] releasing security-scoped access")
         cleanup?()
 
-        // Extract on background thread to keep UI responsive
-        self[keyPath: statePath] = .extracting(progress: 0)
-        modelLog.info("Starting extraction to \(destinationDir.path)")
+        // Extract tar (with or without bzip2 decompression) — keep showing "导入中..."
+        // so the user sees one smooth progress flow instead of a jarring
+        // "导入中..." → "解压中..." transition.
+        modelLog.info("[IMPORT] extracting to \(destinationDir.path)")
+        let extractStart = CFAbsoluteTimeGetCurrent()
         do {
             try await Task.detached(priority: .userInitiated) {
                 var lastReported: Float = -1
@@ -557,22 +630,31 @@ final class ModelManager: ObservableObject {
                     sourceURL: archiveURL,
                     destinationDir: destinationDir,
                     progress: { p in
-                        // Throttle: only update when changed by ≥2% or reached end
                         guard p - lastReported >= 0.02 || p >= 1.0 else { return }
                         lastReported = p
                         Task { @MainActor [weak self] in
-                            self?[keyPath: statePath] = .extracting(progress: Double(p))
+                            // Use .importing so extraction progress is visible in one phase
+                            self?[keyPath: statePath] = .importing(progress: Double(p))
                         }
                     }
                 )
             }.value
+            let extractMs = (CFAbsoluteTimeGetCurrent() - extractStart) * 1000
+            modelLog.info("[IMPORT] extraction OK, took \(String(format: "%.0f", extractMs))ms")
         } catch {
-            modelLog.error("Extraction failed: \(error.localizedDescription)")
-            self[keyPath: statePath] = .failed("解压失败: \(error.localizedDescription)")
+            let extractMs = (CFAbsoluteTimeGetCurrent() - extractStart) * 1000
+            modelLog.error("[IMPORT] extraction FAILED after \(String(format: "%.0f", extractMs))ms: \(error.localizedDescription)")
+            self[keyPath: statePath] = .failed("导入失败: \(error.localizedDescription)")
             return
         }
 
-        modelLog.info("Import completed successfully")
+        guard checkReady() else {
+            modelLog.error("[IMPORT] verification failed — required files missing")
+            self[keyPath: statePath] = .failed("完成但验证失败，文件缺失")
+            return
+        }
+
+        modelLog.info("[IMPORT] ✅ completed successfully")
         self[keyPath: statePath] = .completed(Date())
     }
 

@@ -2,7 +2,7 @@
 //  RobotState.swift
 //  Avatar
 //
-//  Core data model for the robot companion.
+//  Core data model for the stick-figure companion.
 //  Ported from Android: RobotState.kt
 //
 
@@ -10,20 +10,20 @@ import Foundation
 
 /// Top-level behavior state (FSM)
 enum RobotMode: Equatable {
-    /// Idle, waiting for interaction. Eyes wander, occasional blinks.
+    /// Idle, waiting for interaction. Stick figure does random goofy antics.
     case idle
 
     /// User tapped or said wake word — waiting for speech input.
     case listening
 
-    /// Robot is speaking (TTS active). Mouth animates.
+    /// Stick figure is speaking (TTS active). Mouth + arm gestures animate.
     case speaking
-
-    /// Human face detected — engaged, eyes follow face.
-    case watching
 
     /// Processing request (e.g., waiting on LLM response).
     case thinking
+
+    /// Camera is active (rear camera, on-demand). Stick figure holds a "camera" pose.
+    case looking
 }
 
 /// Emotional state — drives expression and tone
@@ -35,6 +35,8 @@ enum Emotion: CaseIterable {
     case shy
     case sleepy
     case sad
+    /// Goofy / silly mood — for random antics
+    case goofy
 
     var intensity: Float {
         switch self {
@@ -45,20 +47,20 @@ enum Emotion: CaseIterable {
         case .shy:        return 0.4
         case .sleepy:     return 0.3
         case .sad:        return 0.3
+        case .goofy:      return 0.9
         }
     }
 }
 
-/// Current robot state, consumed by UI and behavior engine.
+/// Current stick figure state, consumed by UI and behavior engine.
 struct RobotState {
     var mode: RobotMode = .idle
 
-    /// Detected face bounding box center, normalized 0..1, or nil
-    var faceTargetX: Float? = nil
-    var faceTargetY: Float? = nil
-
     /// Current emotion
     var emotion: Emotion = .neutral
+
+    /// Whether engines (ASR + TTS) are initialized and ready
+    var enginesReady: Bool = false
 
     /// Whether TTS is currently producing audio
     var isSpeaking: Bool = false
@@ -72,6 +74,9 @@ struct RobotState {
     /// Blink trigger — UI toggles each time this changes
     var blinkTrigger: Int = 0
 
-    /// Time since last face detection in ms
-    var msSinceLastFace: Int = 0
+    /// Random antic trigger — increments to make the stick figure do something goofy
+    var anticTrigger: Int = 0
+
+    /// When LOOKING: a description of what the camera saw (filled by LLM or local logic)
+    var cameraObservation: String? = nil
 }

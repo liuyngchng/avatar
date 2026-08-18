@@ -52,26 +52,36 @@ class MainActivity : ComponentActivity() {
     // Sherpa-onnx engines (offline)
     private val asrEngine by lazy { SherpaAsrEngine(this) }
     private val ttsEngine by lazy { SherpaTtsEngine(this) }
-    private val audioPlayer = AudioPlayer()
+    private val audioPlayer = AudioPlayer(this)
     private val audioRecorder = AudioRecorder(this)
 
-    private var asrReady = false
-    private var ttsReady = false
-    private var isRecording = false
-    private var recordingJob: Job? = null
-    private var onSpeechEnd: ((String?) -> Unit)? = null
+    @Volatile private var asrReady = false
+    @Volatile private var ttsReady = false
+    @Volatile private var isRecording = false
+    @Volatile private var recordingJob: Job? = null
+    @Volatile private var onSpeechEnd: ((String?) -> Unit)? = null
+    @Volatile private var lastSpeechChunkCount = 0  // non-silent buffer count for min-speech gate
+    @Volatile private var recordingGeneration = 0   // incremented on each start/stop to stale-guard finally blocks
+
+    // Lifecycle-aware scope — cancelled in onDestroy to prevent leaks
+    private val activityScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
     // VAD (Voice Activity Detection) constants
     companion object {
-        // Base silence threshold (RMS). Actual threshold = max(this, noiseFloor * 2.0)
+        // Base silence threshold (RMS). Actual threshold = max(this, noiseFloor * 1.8)
         private const val VAD_SILENCE_THRESHOLD = 0.022f
         // Consecutive silent chunks to auto-stop (~80ms/chunk)
         private const val VAD_MAX_SILENT_CHUNKS = 20
-        // Chunks used to calibrate ambient noise floor (~1.2s)
-        private const val NOISE_CALIBRATION_CHUNKS = 15
+        // Chunks used to calibrate ambient noise floor (~1.6s)
+        private const val NOISE_CALIBRATION_CHUNKS = 20
         // Max recording duration before force-stop
         private const val MAX_RECORD_SECONDS = 10f
+        // Consecutive blank/silent turns before ending multi-turn conversation
+        private const val MAX_MULTI_TURN_BLANKS = 3  // ~6s (3 × ~2s VAD silence per utterance)
     }
+
+    // Calibrated once at startup, used for all subsequent VAD
+    private var calibratedNoiseThreshold: Float = VAD_SILENCE_THRESHOLD
 
     // LLM integration
     private val configRepository by lazy { ConfigRepository(this) }
@@ -81,6 +91,9 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // Clear chat history and LLM context on app (re)start
+        chatSession.clear()
 
         llmConfigured = configRepository.hasConfig
         Log.i("MainActivity", "LLM configured: $llmConfigured")
@@ -103,6 +116,152 @@ class MainActivity : ComponentActivity() {
             // Wake word toggle state
             val wakeWordEnabled by WakeWordManager.isRunning.collectAsState()
 
+            // Wake-word-triggered session tracking
+            var wakeWordTriggered by remember { mutableStateOf(false) }
+            var isMultiTurn by remember { mutableStateOf(false) }
+            var multiTurnBlankCount by remember { mutableIntStateOf(0) }
+
+            // Shared speech-result handler for both tap-to-talk and wake-word flows.
+            // Defined here so both the onTap lambda and the wakeEvents collector can access it.
+            // Must be a var (not val) because the lambda self-references inside speak() callbacks.
+            var onSpeechResult: ((String?) -> Unit)? = null
+            onSpeechResult = onResult@ { text ->
+                // Minimum-speech gate: if the utterance is too short
+                // (< ~500ms of actual speech energy), treat it as
+                // echo/reverb rather than real user input.  This stops
+                // the robot from responding to its own TTS tail in
+                // multi-turn mode.
+                val minSpeechChunks = 6  // ~500ms at ~80ms/buffer
+                if (isMultiTurn && lastSpeechChunkCount < minSpeechChunks) {
+                    Log.i("MainActivity",
+                        "Utterance too short (${lastSpeechChunkCount} chunks < $minSpeechChunks), treating as echo")
+                    multiTurnBlankCount++
+                    if (multiTurnBlankCount >= MAX_MULTI_TURN_BLANKS) {
+                        isMultiTurn = false
+                        multiTurnBlankCount = 0
+                        wakeWordTriggered = false
+                        WakeWordManager.notifyVoiceFlowDone()
+                        robotState = robotState.copy(mode = RobotMode.IDLE)
+                    } else {
+                        speak("嗯？还在吗？") {
+                            scope.launch {
+                                delay(800)  // post-speech cooldown
+                                robotState = robotState.copy(
+                                    mode = RobotMode.LISTENING, isSpeaking = false)
+                                startRecording(onSpeechResult!!)
+                            }
+                        }
+                    }
+                    return@onResult
+                }
+
+                if (text != null && text.isNotBlank()) {
+                    // Productive wake: reset debounce
+                    if (wakeWordTriggered) {
+                        WakeWordManager.notifyProductiveWake()
+                    }
+                    multiTurnBlankCount = 0
+                    robotState = robotState.copy(
+                        mode = RobotMode.THINKING,
+                        lastUserText = text,
+                        emotion = Emotion.CURIOUS,
+                        isSpeaking = false
+                    )
+                    scope.launch {
+                        // Check if user is asking to look at something
+                        val wantsCamera = text.contains("看") &&
+                            (text.contains("外面") || text.contains("什么") ||
+                             text.contains("哪里") || text.contains("前面"))
+
+                        if (wantsCamera) {
+                            robotState = robotState.copy(
+                                mode = RobotMode.LOOKING,
+                                emotion = Emotion.CURIOUS
+                            )
+                            delay(1500)
+                        }
+
+                        val (response, emotion) = if (configRepository.hasConfig) {
+                            chatSession.send(text).fold(
+                                onSuccess = { it to Emotion.HAPPY },
+                                onFailure = { e ->
+                                    Log.w("MainActivity", "LLM fail, fallback to rules", e)
+                                    behaviorEngine.respond(text)
+                                }
+                            )
+                        } else {
+                            behaviorEngine.respond(text)
+                        }
+                        robotState = robotState.copy(
+                            mode = RobotMode.SPEAKING,
+                            responseText = response,
+                            emotion = emotion,
+                            isSpeaking = true
+                        )
+                        speak(response) {
+                            if (isMultiTurn) {
+                                // Post-speech cooldown: wait for room acoustics
+                                // to settle before opening the mic, so we don't
+                                // capture our own TTS tail as the next utterance.
+                                scope.launch {
+                                    delay(800)  // 800ms post-speech cooldown
+                                    robotState = robotState.copy(
+                                        mode = RobotMode.LISTENING,
+                                        isSpeaking = false
+                                    )
+                                    startRecording(onSpeechResult!!)
+                                }
+                            } else {
+                                robotState = robotState.copy(
+                                    mode = RobotMode.IDLE,
+                                    isSpeaking = false
+                                )
+                            }
+                            // Only signal voice-flow-done when multi-turn actually ends,
+                            // NOT after each individual exchange. Otherwise KWS resumes
+                            // and competes with the next ASR recording for the mic.
+                            if (wakeWordTriggered && !isMultiTurn) {
+                                wakeWordTriggered = false
+                                WakeWordManager.notifyVoiceFlowDone()
+                            }
+                        }
+                    }
+                } else {
+                    // Blank / empty speech
+                    if (isMultiTurn) {
+                        multiTurnBlankCount++
+                        if (multiTurnBlankCount >= MAX_MULTI_TURN_BLANKS) {
+                            // End multi-turn after consecutive blanks
+                            isMultiTurn = false
+                            multiTurnBlankCount = 0
+                            wakeWordTriggered = false
+                            WakeWordManager.notifyVoiceFlowDone()
+                            robotState = robotState.copy(mode = RobotMode.IDLE)
+                        } else {
+                            // Prompt user to continue
+                            speak("嗯？还在吗？") {
+                                scope.launch {
+                                    delay(800)  // post-speech cooldown
+                                    robotState = robotState.copy(
+                                        mode = RobotMode.LISTENING,
+                                        isSpeaking = false
+                                    )
+                                    startRecording(onSpeechResult!!)
+                                }
+                            }
+                        }
+                    } else {
+                        robotState = robotState.copy(mode = RobotMode.IDLE)
+                        if (wakeWordTriggered) {
+                            WakeWordManager.notifyFalseTrigger()
+                            wakeWordTriggered = false
+                            WakeWordManager.notifyVoiceFlowDone()
+                        }
+                        speak("没听清，请再说一遍")
+                    }
+                }
+            }
+
             // Initialize ASR/TTS when models become ready
             LaunchedEffect(modelsReady) {
                 if (modelsReady && !asrReady) {
@@ -120,6 +279,8 @@ class MainActivity : ComponentActivity() {
                         mode = RobotMode.IDLE,
                         emotion = Emotion.NEUTRAL
                     )
+                    // One-time ambient noise calibration for VAD
+                    calibrateNoiseOnce()
                 } else if (asrReady && ttsReady) {
                     // Already initialized (fast phone, or modelsReady was cached)
                     enginesReady = true
@@ -192,6 +353,39 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
+            // ── Wake word event → start voice flow (the missing link) ──
+            LaunchedEffect(Unit) {
+                WakeWordManager.wakeEvents.collect {
+                    if (!enginesReady) return@collect
+                    if (robotState.mode != RobotMode.IDLE && robotState.mode != RobotMode.LOOKING) {
+                        Log.i("MainActivity", "Ignoring wake word — not idle/looking")
+                        return@collect
+                    }
+                    Log.i("MainActivity", "Wake word triggered — starting voice flow")
+                    wakeWordTriggered = true
+                    isMultiTurn = true
+                    multiTurnBlankCount = 0
+
+                    // Play greeting TTS, then auto-listen
+                    val greetingPcm = withContext(Dispatchers.IO) {
+                        ttsEngine.synthesize("哎，我在呢")
+                    }
+                    if (greetingPcm != null) {
+                        robotState = robotState.copy(mode = RobotMode.SPEAKING, isSpeaking = true)
+                        withContext(Dispatchers.IO) {
+                            audioPlayer.play(greetingPcm, ttsEngine.getSampleRate())
+                        }
+                    }
+                    // Post-speech cooldown: let room acoustics settle
+                    // before opening the mic for the user's first utterance.
+                    // Keep mode as SPEAKING during the cooldown — startRecording()
+                    // will switch to LISTENING when the mic actually opens.
+                    delay(800)  // 800ms cooldown
+                    robotState = robotState.copy(mode = RobotMode.LISTENING, isSpeaking = false)
+                    startRecording(onSpeechResult)
+                }
+            }
+
             // ── Screen routing ──
             when (currentScreen) {
                 is Screen.RobotFace -> {
@@ -209,65 +403,35 @@ class MainActivity : ComponentActivity() {
                             if (wakeWordEnabled) {
                                 stopWakeWordService()
                             }
-                            // Shared result handler
-                            val onSpeechResult: (String?) -> Unit = { text ->
-                                if (text != null && text.isNotBlank()) {
-                                    robotState = robotState.copy(
-                                        mode = RobotMode.THINKING,
-                                        lastUserText = text,
-                                        emotion = Emotion.CURIOUS,
-                                        isSpeaking = false
-                                    )
-                                    scope.launch {
-                                        // Check if user is asking to look at something
-                                        val wantsCamera = text.contains("看") &&
-                                            (text.contains("外面") || text.contains("什么") ||
-                                             text.contains("哪里") || text.contains("前面"))
 
-                                        if (wantsCamera) {
-                                            // Switch to LOOKING mode briefly
-                                            robotState = robotState.copy(
-                                                mode = RobotMode.LOOKING,
-                                                emotion = Emotion.CURIOUS
-                                            )
-                                            delay(1500) // brief "looking" pose
-                                        }
-
-                                        val (response, emotion) = if (configRepository.hasConfig) {
-                                            chatSession.send(text).fold(
-                                                onSuccess = { it to Emotion.HAPPY },
-                                                onFailure = { e ->
-                                                    Log.w("MainActivity", "LLM fail, fallback to rules", e)
-                                                    behaviorEngine.respond(text)
-                                                }
-                                            )
-                                        } else {
-                                            behaviorEngine.respond(text)
-                                        }
-                                        robotState = robotState.copy(
-                                            mode = RobotMode.SPEAKING,
-                                            responseText = response,
-                                            emotion = emotion,
-                                            isSpeaking = true
-                                        )
-                                        speak(response) {
-                                            robotState = robotState.copy(
-                                                mode = RobotMode.IDLE,
-                                                isSpeaking = false
-                                            )
-                                        }
-                                    }
-                                } else {
-                                    robotState = robotState.copy(mode = RobotMode.IDLE)
-                                    speak("没听清，请再说一遍")
-                                }
+                            // If multi-turn is active, tapping ends the conversation
+                            // gracefully (same as long-press / manual stop).
+                            if (isMultiTurn) {
+                                isMultiTurn = false
+                                multiTurnBlankCount = 0
+                                wakeWordTriggered = false
+                                WakeWordManager.notifyVoiceFlowDone()
                             }
 
-                            if (isRecording) {
-                                stopRecording { onSpeechResult(it) }
-                            } else {
-                                startRecording { onSpeechResult(it) }
-                                robotState = robotState.copy(mode = RobotMode.LISTENING)
+                            when (robotState.mode) {
+                                RobotMode.LISTENING -> {
+                                    // Stop the current recording and process whatever was captured
+                                    stopRecording { onSpeechResult(it) }
+                                }
+                                RobotMode.SPEAKING -> {
+                                    // Stop TTS playback
+                                    audioPlayer.stop()
+                                    robotState = robotState.copy(
+                                        mode = RobotMode.IDLE,
+                                        isSpeaking = false
+                                    )
+                                }
+                                else -> {
+                                    // Idle or looking — start tap-to-talk
+                                    wakeWordTriggered = false
+                                    startRecording { onSpeechResult(it) }
+                                    robotState = robotState.copy(mode = RobotMode.LISTENING)
+                                }
                             }
                         },
                         onSettingsClick = {
@@ -339,6 +503,11 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onDestroy() {
+        activityScope.cancel()
+        super.onDestroy()
+    }
+
     // ── Wake word service ──────────────────────────────────────────────
 
     private fun startWakeWordService() {
@@ -353,19 +522,69 @@ class MainActivity : ComponentActivity() {
         val intent = Intent(this, VoiceService::class.java).apply {
             action = VoiceService.ACTION_STOP
         }
-        startService(intent)
+        stopService(intent)
     }
 
     // ── ASR recording ─────────────────────────────────────────────────
 
+    /** Calibrate noise threshold once at startup. */
+    private fun calibrateNoiseOnce() {
+        Log.i("MainActivity", "Starting one-time noise calibration")
+        activityScope.launch(Dispatchers.IO) {
+            try {
+                var noiseFloor = Float.MAX_VALUE
+                var chunkCount = 0
+                val job = launch {
+                    audioRecorder.startRecording().collect { samples ->
+                        var sumSq = 0f
+                        for (s in samples) sumSq += s * s
+                        val rms = kotlin.math.sqrt(sumSq / samples.size)
+                        noiseFloor = minOf(noiseFloor, rms)
+                        chunkCount++
+                        if (chunkCount >= NOISE_CALIBRATION_CHUNKS) {
+                            calibratedNoiseThreshold = maxOf(VAD_SILENCE_THRESHOLD, noiseFloor * 1.8f)
+                            Log.i("MainActivity",
+                                "Noise calibration done: noiseFloor=${"%.4f".format(noiseFloor)}, " +
+                                "threshold=${"%.4f".format(calibratedNoiseThreshold)}")
+                            audioRecorder.stopRecording()
+                            cancel()
+                        }
+                    }
+                }
+                // Safety timeout: stop calibration after 3s
+                delay(3000)
+                job.cancel()
+            } catch (_: Exception) {
+                Log.w("MainActivity", "Noise calibration failed, using default threshold")
+            }
+        }
+    }
+
     private fun startRecording(onResult: (String?) -> Unit) {
         if (!asrReady) return
+
+        // Bump generation so any in-flight finally block from a previous
+        // recording job knows its results are stale and won't overwrite
+        // the new recording's state (isRecording / onSpeechEnd).
+        val myGeneration = ++recordingGeneration
         isRecording = true
         onSpeechEnd = onResult
         var silentChunks = 0
+        var warmupBuffers = 5  // skip first ~5 buffers (~400ms) to avoid TTS tail/echo
+        var speechChunkCount = 0  // non-silent buffers for minimum-speech gate
+        val effectiveThreshold = calibratedNoiseThreshold
 
-        recordingJob = CoroutineScope(Dispatchers.IO).launch {
+        // Cancel any stale job before starting a new one
+        recordingJob?.cancel()
+        recordingJob = activityScope.launch(Dispatchers.IO) {
             try {
+                // Defensive ASR reset: flush any stale audio left over from a
+                // previous mid-utterance cancel (stopRecording skips inputFinished
+                // via the generation guard, leaving the decoder in a dirty state).
+                if (asrReady) {
+                    try { asrEngine.inputFinished() } catch (_: Exception) {}
+                }
+
                 val timeoutJob = launch {
                     delay((MAX_RECORD_SECONDS * 1000).toLong())
                     if (isRecording) {
@@ -373,34 +592,19 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
-                // Adaptive noise floor: measure ambient RMS over first ~1.2s,
-                // then use max(baseThreshold, noiseFloor × 2.0) as actual threshold.
-                var noiseFloor = Float.MAX_VALUE
-                var calibrationDone = false
-                var chunkIndex = 0
-
                 audioRecorder.startRecording().collect { samples ->
+                    // Warm-up: drop the first few buffers so residual TTS echo
+                    // doesn't trigger a false VAD start.
+                    if (warmupBuffers > 0) {
+                        warmupBuffers--
+                        return@collect
+                    }
+
                     asrEngine.acceptWaveform(samples)
 
                     var sumSq = 0f
                     for (s in samples) sumSq += s * s
                     val rms = kotlin.math.sqrt(sumSq / samples.size)
-
-                    // ── Noise floor calibration ──
-                    if (!calibrationDone) {
-                        noiseFloor = minOf(noiseFloor, rms)
-                        chunkIndex++
-                        if (chunkIndex >= NOISE_CALIBRATION_CHUNKS) {
-                            calibrationDone = true
-                            val effectiveThreshold = maxOf(VAD_SILENCE_THRESHOLD, noiseFloor * 1.8f)
-                            Log.i("MainActivity",
-                                "VAD calibrated: noiseFloor=${"%.4f".format(noiseFloor)}, " +
-                                "threshold=${"%.4f".format(effectiveThreshold)}")
-                        }
-                        return@collect  // skip VAD during calibration
-                    }
-
-                    val effectiveThreshold = maxOf(VAD_SILENCE_THRESHOLD, noiseFloor * 1.8f)
 
                     if (rms < effectiveThreshold) {
                         silentChunks++
@@ -411,12 +615,18 @@ class MainActivity : ComponentActivity() {
                         }
                     } else {
                         silentChunks = maxOf(0, silentChunks - 1)
+                        speechChunkCount++
                     }
                 }
                 timeoutJob.cancel()
             } finally {
-                if (isRecording) {
+                // Only deliver the result if this recording is still the
+                // active one.  Stale finally blocks (from cancelled jobs)
+                // must not overwrite state that a newer startRecording()
+                // already set up.
+                if (isRecording && recordingGeneration == myGeneration) {
                     isRecording = false
+                    lastSpeechChunkCount = speechChunkCount
                     val text = try { asrEngine.inputFinished() } catch (_: Exception) { null }
                     val cb = onSpeechEnd
                     onSpeechEnd = null
@@ -427,8 +637,18 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun stopRecording(onResult: (String?) -> Unit) {
+        // Bump generation first so any in-flight finally block from the
+        // current recording job sees a stale generation and skips delivery.
+        recordingGeneration++
+        isRecording = false
         onSpeechEnd = onResult
+        recordingJob?.cancel()
+        recordingJob = null
         audioRecorder.stopRecording()
+        // Invoke callback directly — the recording coroutine's finally block
+        // won't deliver because the generation is now stale.
+        onSpeechEnd = null
+        onResult(null)
     }
 
     // ── TTS playback (sentence-by-sentence streaming) ─────────────────
@@ -436,7 +656,7 @@ class MainActivity : ComponentActivity() {
     private fun speak(text: String, onDone: (() -> Unit)? = null) {
         if (!ttsReady) return
         val sentences = TextNormalizer.splitSentences(text)
-        CoroutineScope(Dispatchers.IO).launch {
+        activityScope.launch(Dispatchers.IO) {
             val sr = ttsEngine.getSampleRate()
             for (sentence in sentences) {
                 val normalized = TextNormalizer.normalize(sentence)
