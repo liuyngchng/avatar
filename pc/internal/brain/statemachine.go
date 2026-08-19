@@ -2,7 +2,11 @@ package brain
 
 import (
 	"log"
+	"sync"
 	"time"
+
+	"github.com/liuyngchng/avatar-pc/internal/audio"
+	"github.com/liuyngchng/avatar-pc/internal/tts"
 )
 
 // Event is a message coming from the renderer (user interaction).
@@ -14,17 +18,24 @@ type Event struct {
 
 // StateMachine orchestrates the digital human's behavior.
 //
-// P0 scope: a minimal FSM that just advances idle → listening → thinking →
-// speaking → idle, so the renderer has something to react to. ASR/TTS/LLM
-// get wired in during P1/P2.
+// P1 scope: uses real TTS + audio playback instead of the P0 demo timer loop.
+// ASR and LLM are still simulated — the canned text is synthesized via
+// sherpa-onnx Matcha-TTS and played through oto/ALSA. Viseme timeline drives
+// lip-sync.
 type StateMachine struct {
 	state        State
 	stateChanges chan State
 	events       chan Event
+	visemes      chan VisemeEvent
+	ttsEngine    *tts.Engine
+	audioPlayer  *audio.Player
+
+	mu   sync.Mutex
+	busy bool
 }
 
 // NewStateMachine creates a state machine in ModeIdle.
-func NewStateMachine() *StateMachine {
+func NewStateMachine(ttsEngine *tts.Engine, audioPlayer *audio.Player) *StateMachine {
 	return &StateMachine{
 		state: State{
 			Mode:    ModeIdle,
@@ -32,6 +43,9 @@ func NewStateMachine() *StateMachine {
 		},
 		stateChanges: make(chan State, 16),
 		events:       make(chan Event, 16),
+		visemes:      make(chan VisemeEvent, 64),
+		ttsEngine:    ttsEngine,
+		audioPlayer:  audioPlayer,
 	}
 }
 
@@ -49,14 +63,23 @@ func (sm *StateMachine) StateChanges() <-chan State {
 	return sm.stateChanges
 }
 
+// Visemes returns the channel of viseme events the main loop forwards
+// to the renderer for lip-sync.
+func (sm *StateMachine) Visemes() <-chan VisemeEvent {
+	return sm.visemes
+}
+
 // HandleEvent feeds a renderer event into the FSM.
 func (sm *StateMachine) HandleEvent(ev Event) {
 	sm.events <- ev
 }
 
 func (sm *StateMachine) emit() {
+	sm.mu.Lock()
+	s := sm.state // copy
+	sm.mu.Unlock()
 	select {
-	case sm.stateChanges <- sm.state:
+	case sm.stateChanges <- s:
 	default:
 	}
 }
@@ -64,37 +87,126 @@ func (sm *StateMachine) emit() {
 func (sm *StateMachine) handleEvent(ev Event) {
 	switch ev.Type {
 	case "tap", "wake_detected":
+		sm.mu.Lock()
+		if sm.busy {
+			sm.mu.Unlock()
+			log.Printf("state: event=%s ignored (busy)", ev.Type)
+			return
+		}
+		sm.busy = true
+		sm.mu.Unlock()
+
 		log.Printf("state: event=%s → listening", ev.Type)
-		sm.state.Mode = ModeListening
+		sm.setState(ModeListening, EmotionNeutral, "")
 		sm.emit()
 
-		// P0 demo: simulate the ASR→LLM→TTS pipeline with timers so the
-		// renderer can visually react. Replaced by real engines in P1/P2.
-		go sm.demoPipeline()
+		// P1: simulate the ASR→LLM pipeline with real TTS output.
+		go sm.pipeline()
 	}
 }
 
-// demoPipeline simulates a full conversation turn. It will be replaced by
-// the real ASR → LLM → TTS chain. Present only so P0 can show all four
-// states and a talking avatar without the native engines.
-func (sm *StateMachine) demoPipeline() {
-	// Thinking.
-	sm.state.Mode = ModeThinking
-	sm.state.Emotion = EmotionNeutral
-	sm.emit()
-	time.Sleep(1200 * time.Millisecond)
+// setState safely updates the state fields.
+func (sm *StateMachine) setState(mode Mode, emotion Emotion, responseText string) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	sm.state.Mode = mode
+	sm.state.Emotion = emotion
+	if responseText != "" {
+		sm.state.ResponseText = responseText
+	}
+}
 
-	// Speaking with a canned reply.
-	sm.state.Mode = ModeSpeaking
-	sm.state.Emotion = EmotionHappy
-	sm.state.ResponseText = "你好，我是企业数字人。"
-	sm.state.IsSpeaking = true
+// pipeline runs a conversation turn: thinking → TTS synthesis → speaking.
+// ASR and LLM are still fake (canned text), but the TTS, audio playback, and
+// viseme lip-sync are real. Replaced by full ASR→LLM→TTS in P1c/P1d.
+func (sm *StateMachine) pipeline() {
+	// Clear the busy flag when this turn completes.
+	defer func() {
+		sm.mu.Lock()
+		sm.busy = false
+		sm.mu.Unlock()
+	}()
+
+	// Thinking.
+	sm.setState(ModeThinking, EmotionNeutral, "")
 	sm.emit()
-	time.Sleep(2200 * time.Millisecond)
+	time.Sleep(800 * time.Millisecond)
+
+	// Synthesize with real TTS.
+	text := "你好，我是企业数字人。"
+	sm.setState(ModeThinking, EmotionHappy, text)
+
+	result, err := sm.ttsEngine.Synthesize(text, 1.0)
+	if err != nil {
+		log.Printf("state: TTS synthesis failed: %v", err)
+		sm.setState(ModeIdle, EmotionNeutral, "")
+		sm.emit()
+		return
+	}
+
+	// Generate viseme timeline.
+	audioDur := time.Duration(float64(len(result.Samples)) / float64(result.SampleRate) * float64(time.Second))
+	timeline := GenerateVisemeTimeline(text, audioDur)
+	log.Printf("state: viseme timeline: %d entries, total audio %.1fs", len(timeline), audioDur.Seconds())
+
+	// Speaking.
+	sm.mu.Lock()
+	sm.state.Mode = ModeSpeaking
+	sm.state.IsSpeaking = true
+	sm.mu.Unlock()
+	sm.emit()
+
+	// Play audio (non-blocking).
+	player, err := sm.audioPlayer.Play(result.Samples)
+	if err != nil {
+		log.Printf("state: audio play error: %v", err)
+		sm.mu.Lock()
+		sm.state.IsSpeaking = false
+		sm.mu.Unlock()
+		sm.setState(ModeIdle, EmotionNeutral, "")
+		sm.emit()
+		return
+	}
+
+	// Drive viseme timeline while audio plays.
+	startTime := time.Now()
+	timelineIdx := 0
+	for player.IsPlaying() {
+		if err := player.Err(); err != nil {
+			log.Printf("state: audio play error: %v", err)
+			break
+		}
+
+		elapsed := time.Since(startTime).Milliseconds()
+
+		// Emit any viseme entries whose start time has been reached.
+		for timelineIdx < len(timeline) && int64(timeline[timelineIdx].StartMs) <= elapsed {
+			entry := timeline[timelineIdx]
+			ev := VisemeEvent{
+				Type:   "viseme",
+				Viseme: entry.Viseme,
+				Weight: 1.0,
+			}
+			select {
+			case sm.visemes <- ev:
+			default:
+			}
+			timelineIdx++
+		}
+
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	// Reset viseme to rest.
+	select {
+	case sm.visemes <- VisemeEvent{Type: "viseme", Viseme: VisemeRest, Weight: 0}:
+	default:
+	}
 
 	// Back to idle.
+	sm.mu.Lock()
 	sm.state.IsSpeaking = false
-	sm.state.Mode = ModeIdle
-	sm.state.Emotion = EmotionNeutral
+	sm.mu.Unlock()
+	sm.setState(ModeIdle, EmotionNeutral, "")
 	sm.emit()
 }

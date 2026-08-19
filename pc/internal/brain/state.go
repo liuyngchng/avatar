@@ -5,6 +5,8 @@
 // minus the camera face-tracking (not needed for a big-screen avatar).
 package brain
 
+import "encoding/json"
+
 // Mode is the top-level behavior state (FSM).
 type Mode int
 
@@ -31,6 +33,12 @@ func (m Mode) String() string {
 		return "thinking"
 	}
 	return "unknown"
+}
+
+// MarshalJSON encodes Mode as a string (e.g. "idle") so the JS frontend
+// can match it in a switch statement.
+func (m Mode) MarshalJSON() ([]byte, error) {
+	return json.Marshal(m.String())
 }
 
 // Emotion drives the digital human's expression.

@@ -8,10 +8,13 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 
+	"github.com/liuyngchng/avatar-pc/internal/audio"
 	"github.com/liuyngchng/avatar-pc/internal/brain"
 	"github.com/liuyngchng/avatar-pc/internal/renderer"
+	"github.com/liuyngchng/avatar-pc/internal/tts"
 )
 
 //go:embed web
@@ -21,6 +24,27 @@ func main() {
 	log.SetFlags(log.Ltime | log.Lshortfile)
 	log.Println("Avatar PC starting...")
 
+	// Initialize TTS engine (Matcha-TTS + vocos).
+	ttsDir := tts.ModelsDir()
+	ttsEngine, err := tts.New(tts.ModelPaths{
+		AcousticModel: filepath.Join(ttsDir, "model.onnx"),
+		Vocoder:       filepath.Join(ttsDir, "vocos.onnx"),
+		Tokens:        filepath.Join(ttsDir, "tokens.txt"),
+		Lexicon:       filepath.Join(ttsDir, "lexicon.txt"),
+	})
+	if err != nil {
+		log.Fatalf("Failed to create TTS engine: %v", err)
+	}
+	defer ttsEngine.Close()
+
+	// Initialize audio player.
+	player, err := audio.NewPlayer(ttsEngine.SampleRate())
+	if err != nil {
+		log.Fatalf("Failed to create audio player: %v", err)
+	}
+	player.WaitReady()
+	defer player.Close()
+
 	// Create the renderer window (platform-specific).
 	r, err := renderer.New(webAssets)
 	if err != nil {
@@ -29,7 +53,7 @@ func main() {
 	defer r.Close()
 
 	// Create the brain (state machine).
-	sm := brain.NewStateMachine()
+	sm := brain.NewStateMachine(ttsEngine, player)
 
 	// Start the FSM loop.
 	go sm.Run()
@@ -45,6 +69,13 @@ func main() {
 	go func() {
 		for state := range sm.StateChanges() {
 			r.SendMessage(state)
+		}
+	}()
+
+	// Forward viseme events to the renderer for lip-sync.
+	go func() {
+		for vis := range sm.Visemes() {
+			r.SendMessage(vis)
 		}
 	}()
 

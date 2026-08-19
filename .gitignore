@@ -67,6 +67,7 @@ android/local.properties
 pc/avatar-pc
 pc/avatar-pc.exe
 pc/web/models/*.vrm
+pc/models/
 
 # ── Secrets ───────────────────────────────────────────
 *.keystore

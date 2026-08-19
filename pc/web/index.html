@@ -148,7 +148,7 @@
       vrm.scene.position.set(0, -0.95, 0);
 
       console.log('VRM loaded:', vrm.meta?.metaVersion);
-      console.log('Blendshapes:', vrm.expressionManager?.expressionNames);
+      console.log('Expressions:', Object.keys(vrm.expressionManager?.expressionMap || {}));
       document.getElementById('tapHint').style.display = 'block';
       updateStatus();
     }
@@ -401,17 +401,67 @@
     window.handleMessage = function(jsonStr) {
       try {
         const msg = JSON.parse(jsonStr);
+        if (msg.type === 'viseme') {
+          // Viseme lip-sync message
+          applyViseme(msg.viseme, msg.weight);
+          return;
+        }
         if (msg.mode) {
           currentMode = msg.mode;
           isSpeaking = msg.isSpeaking || false;
           responseText = msg.responseText || '';
           if (msg.emotion) currentEmotion = msg.emotion;
           updateStatus();
+          applyModeToVRM();
         }
       } catch (e) {
         console.error('handleMessage error:', e);
       }
     };
+
+    // ─── Apply a single viseme to the VRM model ──────────────
+    function applyViseme(viseme, weight) {
+      if (!vrm?.expressionManager) return;
+
+      // VRM1 mouth visemes: aa, ih, ou, ee, oh
+      const mouthVisemes = ['aa', 'ih', 'ou', 'ee', 'oh'];
+
+      if (viseme === 'rest' || !viseme) {
+        // Reset all visemes (closed mouth).
+        for (const name of mouthVisemes) {
+          visemeTargets[name] = 0;
+        }
+        return;
+      }
+
+      // Set the target viseme to the given weight, others to 0.
+      for (const name of mouthVisemes) {
+        visemeTargets[name] = (name === viseme) ? weight : 0;
+      }
+    }
+
+    // ─── Apply mode/emotion/speaking state to VRM ──────────────
+    function applyModeToVRM() {
+      if (!vrm?.expressionManager) return;
+
+      // Reset all preset expressions to neutral
+      const presets = ['happy', 'angry', 'sad', 'surprised', 'relaxed', 'neutral'];
+      for (const p of presets) {
+        vrm.expressionManager.setValue(p, 0);
+      }
+
+      // Apply emotion
+      if (currentEmotion !== 'neutral' && presets.includes(currentEmotion)) {
+        vrm.expressionManager.setValue(currentEmotion, 1.0);
+      }
+
+      // Visemes are driven by real-time viseme messages from Go,
+      // not by the mode/emotion state. When not speaking, reset
+      // the mouth to closed.
+      if (!isSpeaking) {
+        applyViseme('rest', 0);
+      }
+    }
 
     // ─── JS Bridge: Send events to Go ───────────────────────
     function sendEvent(type, data) {
