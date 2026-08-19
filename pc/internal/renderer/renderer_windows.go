@@ -15,7 +15,7 @@ import (
 )
 
 type webviewRenderer struct {
-	webview *webview2.WebView
+	webview webview2.WebView
 	events  chan brain.Event
 }
 
@@ -38,7 +38,7 @@ func newPlatformRenderer(webFS fs.FS) (Renderer, error) {
 		events: make(chan brain.Event, 16),
 	}
 
-	webview := webview2.NewWithOptions(webview2.WebViewOptions{
+	w := webview2.NewWithOptions(webview2.WebViewOptions{
 		Debug:     false,
 		AutoFocus: true,
 		WindowOptions: webview2.WindowOptions{
@@ -48,18 +48,19 @@ func newPlatformRenderer(webFS fs.FS) (Renderer, error) {
 		},
 	})
 
-	if webview == nil {
+	if w == nil {
 		listener.Close()
 		return nil, err
 	}
 
-	r.webview = webview
+	r.webview = w
 
-	// Handle postMessage from JS (window.chrome.webview.postMessage).
-	webview.MessageReceived(func(message string) {
+	// Bind goBridge_sendEvent so JS can send events to Go.
+	// The JS side calls window.goBridge_sendEvent(jsonStr).
+	if err := w.Bind("goBridge_sendEvent", func(jsonStr string) {
 		var ev brain.Event
-		if err := json.Unmarshal([]byte(message), &ev); err != nil {
-			log.Printf("renderer: bad message from JS: %v", err)
+		if err := json.Unmarshal([]byte(jsonStr), &ev); err != nil {
+			log.Printf("renderer: bad event from JS: %v", err)
 			return
 		}
 		select {
@@ -67,9 +68,11 @@ func newPlatformRenderer(webFS fs.FS) (Renderer, error) {
 		default:
 			log.Printf("renderer: dropping event (channel full): %s", ev.Type)
 		}
-	})
+	}); err != nil {
+		log.Printf("renderer: bind warning: %v", err)
+	}
 
-	webview.Navigate(url)
+	w.Navigate(url)
 
 	return r, nil
 }

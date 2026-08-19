@@ -66,8 +66,10 @@ android/local.properties
 # ── PC (Go) ───────────────────────────────────────────
 pc/avatar-pc
 pc/avatar-pc.exe
+pc/avatar.exe
 pc/web/models/*.vrm
 pc/models/
+pc/cfg.yml
 
 # ── Secrets ───────────────────────────────────────────
 *.keystore
