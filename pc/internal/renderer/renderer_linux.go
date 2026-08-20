@@ -78,9 +78,11 @@ var _ Renderer = (*gtkRenderer)(nil)
 // newPlatformRenderer creates a Linux renderer using WebKitGTK.
 func newPlatformRenderer(webFS fs.FS) (Renderer, error) {
 	// JSC (WebKit's JavaScript engine) uses SIGUSR1 for garbage collection
-	// by default, but Go's runtime also uses SIGUSR1. This causes a SIGABRT.
-	// Tell JSC to use a different signal.
-	_ = os.Setenv("JSC_SIGNAL_FOR_GC", "SIGUSR2")
+	// by default, but Go's runtime also reserves SIGUSR1 and SIGUSR2.
+	// Tell JSC to use SIGRTMIN instead — a real-time signal that Go's
+	// runtime never touches. The env var expects a signal NAME, not a number.
+	// Valid options: SIGUSR1, SIGUSR2, SIGPIPE, SIGALRM, SIGPROF, SIGRTMIN.
+	_ = os.Setenv("JSC_SIGNAL_FOR_GC", "SIGRTMIN")
 	// Serve the embedded web assets on a random local port.
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
