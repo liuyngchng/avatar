@@ -209,6 +209,16 @@ func (sm *StateMachine) pipeline() {
 	log.Printf("state: viseme timeline: %d entries, total audio %.1fs", len(timeline), audioDur.Seconds())
 
 	// 6. Speak.
+	if sm.audioPlayer == nil {
+		log.Printf("state: audio player is nil, skipping playback")
+		sm.mu.Lock()
+		sm.state.IsSpeaking = false
+		sm.mu.Unlock()
+		sm.setState(ModeIdle, EmotionNeutral, "")
+		sm.emit()
+		return
+	}
+
 	sm.mu.Lock()
 	sm.state.Mode = ModeSpeaking
 	sm.state.IsSpeaking = true

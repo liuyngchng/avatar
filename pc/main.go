@@ -18,6 +18,7 @@ import (
 	"github.com/liuyngchng/avatar-pc/internal/brain"
 	"github.com/liuyngchng/avatar-pc/internal/config"
 	"github.com/liuyngchng/avatar-pc/internal/llm"
+	"github.com/liuyngchng/avatar-pc/internal/logfile"
 	"github.com/liuyngchng/avatar-pc/internal/renderer"
 	"github.com/liuyngchng/avatar-pc/internal/tts"
 )
@@ -26,16 +27,40 @@ import (
 var webAssets embed.FS
 
 func main() {
-	log.SetFlags(log.Ltime | log.Lshortfile)
-	log.Println("Avatar PC starting...")
-
-	// Load configuration from cfg.yml.
-	cfg, err := config.Load()
+	// Initialize file logging first so we can see what happens even
+	// when launched by double-click (no console).
+	logF, err := logfile.Init()
 	if err != nil {
-		log.Fatalf("Failed to load config: %v", err)
+		// Still try to continue — log to stderr only.
+		log.Printf("logfile: init failed: %v", err)
+	} else {
+		defer logF.Close()
 	}
 
-	// Initialize online clients (Alibaba Cloud Bailian APIs).
+	log.SetFlags(log.Ltime | log.Lshortfile)
+	log.Println("=== Avatar PC starting ===")
+
+	// Step 1: Load configuration from cfg.yml.
+	log.Println("main: [1/5] loading config...")
+	cfg, err := config.Load()
+	if err != nil {
+		log.Fatalf("main: failed to load config: %v", err)
+	}
+	log.Println("main: [1/5] config loaded OK")
+
+	// Step 2: Create the renderer window FIRST — the user should see the
+	// VRM avatar as soon as possible, even if audio/network init fails.
+	log.Println("main: [2/5] creating renderer window...")
+	r, err := renderer.New(webAssets)
+	if err != nil {
+		log.Fatalf("main: failed to create renderer: %v", err)
+	}
+	defer r.Close()
+	log.Println("main: [2/5] renderer window created OK")
+
+	// Step 3: Initialize online clients (Alibaba Cloud Bailian APIs).
+	// These are network-dependent — log failures but don't fatal.
+	log.Println("main: [3/5] initializing API clients...")
 	asrClient := asr.NewClient(cfg.ASR.URL, cfg.ASR.Model, cfg.APIKey)
 	defer asrClient.Close()
 
@@ -45,29 +70,28 @@ func main() {
 	ttsClient := tts.NewClient(cfg.TTS.URL, cfg.TTS.Model, cfg.TTS.Voice, cfg.APIKey)
 	defer ttsClient.Close()
 
-	log.Printf("main: ASR endpoint=%s (model=%s)", cfg.ASR.URL, cfg.ASR.Model)
-	log.Printf("main: LLM endpoint=%s (model=%s)", cfg.LLM.URL, cfg.LLM.Model)
-	log.Printf("main: TTS endpoint=%s (model=%s, voice=%s)", cfg.TTS.URL, cfg.TTS.Model, cfg.TTS.Voice)
+	log.Printf("main: [3/5] ASR endpoint=%s (model=%s)", cfg.ASR.URL, cfg.ASR.Model)
+	log.Printf("main: [3/5] LLM endpoint=%s (model=%s)", cfg.LLM.URL, cfg.LLM.Model)
+	log.Printf("main: [3/5] TTS endpoint=%s (model=%s, voice=%s)", cfg.TTS.URL, cfg.TTS.Model, cfg.TTS.Voice)
 
-	// Initialize audio player.
+	// Step 4: Initialize audio player (may block briefly on some systems).
+	log.Println("main: [4/5] initializing audio player...")
 	player, err := audio.NewPlayer(ttsClient.SampleRate())
 	if err != nil {
-		log.Fatalf("Failed to create audio player: %v", err)
+		log.Printf("main: [4/5] audio player init failed (will continue): %v", err)
+	} else {
+		log.Println("main: [4/5] waiting for audio player ready...")
+		player.WaitReady()
+		log.Println("main: [4/5] audio player ready OK")
+		defer player.Close()
 	}
-	player.WaitReady()
-	defer player.Close()
 
-	// Initialize audio recorder (platform-specific: WASAPI on Windows, malgo on Linux).
+	// Initialize audio recorder.
 	recorder := audio.NewRecorder()
+	log.Println("main: [4/5] audio recorder created OK")
 
-	// Create the renderer window (platform-specific).
-	r, err := renderer.New(webAssets)
-	if err != nil {
-		log.Fatalf("Failed to create renderer: %v", err)
-	}
-	defer r.Close()
-
-	// Create the brain (state machine).
+	// Step 5: Start the brain (state machine) and event loops.
+	log.Println("main: [5/5] starting brain state machine...")
 	sm := brain.NewStateMachine(ttsClient, asrClient, llmClient, player, recorder)
 
 	// Start the FSM loop.
@@ -94,10 +118,11 @@ func main() {
 		}
 	}()
 
+	log.Println("main: all subsystems started, waiting for exit signal...")
+
 	// Wait for SIGINT or SIGTERM.
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	<-sigCh
-
-	log.Println("Avatar PC shutting down...")
+	sig := <-sigCh
+	log.Printf("main: received signal %v, shutting down...", sig)
 }
