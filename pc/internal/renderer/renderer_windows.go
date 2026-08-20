@@ -38,6 +38,11 @@ func newPlatformRenderer(webFS fs.FS) (Renderer, error) {
 		events: make(chan brain.Event, 16),
 	}
 
+	// WebView2 with transparent background.
+	// Note: background transparency requires WebView2 Runtime 1.0.1054.31+
+	// and setting the ICoreWebView2Controller2.DefaultBackgroundColor to
+	// transparent (0, 0, 0, 0). This is done via the window.options.
+	// We set the page HTML/CSS to transparent: body { background: transparent }.
 	webview := webview2.NewWithOptions(webview2.WebViewOptions{
 		Debug:     false,
 		AutoFocus: true,

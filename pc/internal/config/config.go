@@ -11,7 +11,8 @@ import (
 
 // Config holds all application configuration.
 type Config struct {
-	LLM LLMConfig `yaml:"llm"`
+	LLM      LLMConfig `yaml:"llm"`
+	WakeWord string    `yaml:"wake_word"`
 }
 
 // LLMConfig holds the LLM API connection parameters.

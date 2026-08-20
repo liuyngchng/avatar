@@ -5,6 +5,7 @@ package llm
 import (
 	"bufio"
 	"bytes"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -67,6 +68,13 @@ func New(cfg Config) *Client {
 		config: cfg,
 		http: &http.Client{
 			Timeout: 120 * time.Second,
+			// No proxy (direct connection to the intranet LLM API).
+			Transport: &http.Transport{
+				Proxy: nil,
+				// The intranet API uses a self-signed TLS certificate;
+				// skip verification (same as `curl -k`).
+				TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+			},
 		},
 		system: defaultSystemPrompt(),
 	}
@@ -134,7 +142,8 @@ func (c *Client) ChatStream(messages []Message, params ChatParams) (<-chan strin
 			var sse struct {
 				Choices []struct {
 					Delta struct {
-						Content string `json:"content"`
+						Content          string `json:"content"`
+						ReasoningContent string `json:"reasoning_content"`
 					} `json:"delta"`
 				} `json:"choices"`
 			}
@@ -142,8 +151,12 @@ func (c *Client) ChatStream(messages []Message, params ChatParams) (<-chan strin
 				continue // skip malformed lines
 			}
 
-			if len(sse.Choices) > 0 && sse.Choices[0].Delta.Content != "" {
-				chunkCh <- sse.Choices[0].Delta.Content
+			if len(sse.Choices) > 0 {
+				// Skip reasoning tokens (deepseek thinking), only collect actual content.
+				if sse.Choices[0].Delta.Content != "" {
+					chunkCh <- sse.Choices[0].Delta.Content
+				}
+				// Note: reasoning_content tokens are silently discarded.
 			}
 		}
 

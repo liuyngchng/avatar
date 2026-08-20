@@ -6,7 +6,7 @@
   <title>Avatar PC</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    html, body { width: 100%; height: 100%; overflow: hidden; background: #1a1a2e; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: transparent; }
     #canvas { display: block; }
 
     /* Status overlay */
@@ -94,8 +94,8 @@
     renderer.toneMappingExposure = 1.2;
 
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color('#1a1a2e');
-    scene.fog = new THREE.Fog('#1a1a2e', 3, 15);
+    // Transparent background: no scene.background, no fog.
+    // scene.background = null by default → WebGL renders alpha transparent.
 
     const camera = new THREE.PerspectiveCamera(30, window.innerWidth / window.innerHeight, 0.1, 50);
     camera.position.set(0, 0.9, 3.5);
@@ -125,13 +125,14 @@
     scene.add(rimLight);
 
     // ─── Ground plane ───────────────────────────────────────
-    const groundGeo = new THREE.PlaneGeometry(8, 8);
-    const groundMat = new THREE.MeshStandardMaterial({ color: '#1a1a2e', roughness: 0.9 });
-    const ground = new THREE.Mesh(groundGeo, groundMat);
-    ground.rotation.x = -Math.PI / 2;
-    ground.position.y = -1.5;
-    ground.receiveShadow = true;
-    scene.add(ground);
+    // Disabled for transparent background (would show as a visible dark plane).
+    // const groundGeo = new THREE.PlaneGeometry(8, 8);
+    // const groundMat = new THREE.MeshStandardMaterial({ color: '#1a1a2e', roughness: 0.9 });
+    // const ground = new THREE.Mesh(groundGeo, groundMat);
+    // ground.rotation.x = -Math.PI / 2;
+    // ground.position.y = -1.5;
+    // ground.receiveShadow = true;
+    // scene.add(ground);
 
     // ─── Load VRM ───────────────────────────────────────────
     async function loadVRM(url) {
@@ -146,6 +147,38 @@
 
       scene.add(vrm.scene);
       vrm.scene.position.set(0, -0.95, 0);
+
+      // ── Fix arms: rotate from T-pose to natural rest pose ──
+      // The VRM model defaults to T-pose (arms out to the sides).
+      // T-pose left arm points +X, right arm points -X.
+      // Rotate ~75° around Z toward -Y (down), leaving ~15° outward
+      // so the arms are visible from the front, not hidden by the torso.
+      if (vrm.humanoid) {
+        const leftUpperArm = vrm.humanoid.getNormalizedBoneNode('leftUpperArm');
+        const rightUpperArm = vrm.humanoid.getNormalizedBoneNode('rightUpperArm');
+        const leftLowerArm = vrm.humanoid.getNormalizedBoneNode('leftLowerArm');
+        const rightLowerArm = vrm.humanoid.getNormalizedBoneNode('rightLowerArm');
+
+        if (leftUpperArm) {
+          leftUpperArm.rotation.set(0, 0, 1.0);   // ~57°: close to body but visible
+        }
+        if (rightUpperArm) {
+          rightUpperArm.rotation.set(0, 0, -1.0);  // ~57°: close to body but visible
+        }
+        if (leftLowerArm) {
+          leftLowerArm.rotation.set(0, 0, 0.2);
+        }
+        if (rightLowerArm) {
+          rightLowerArm.rotation.set(0, 0, -0.2);
+        }
+      }
+
+      // ── Reset blink: eyes open on startup ──
+      if (vrm.expressionManager) {
+        vrm.expressionManager.setValue('blink', 0);
+        vrm.expressionManager.setValue('blinkLeft', 0);
+        vrm.expressionManager.setValue('blinkRight', 0);
+      }
 
       console.log('VRM loaded:', vrm.meta?.metaVersion);
       console.log('Expressions:', Object.keys(vrm.expressionManager?.expressionMap || {}));
@@ -398,12 +431,15 @@
 
     // ─── JS Bridge: Receive messages from Go ─────────────────
     // Called by Go via Eval: handleMessage(jsonString)
+    // Viseme timeline is deferred until mode switches to "speaking",
+    // so the mouth animation syncs with actual audio playback.
+    let pendingTimeline = null;
     window.handleMessage = function(jsonStr) {
       try {
         const msg = JSON.parse(jsonStr);
         if (msg.type === 'viseme_timeline') {
-          // Full viseme timeline — drive lip-sync locally with timers.
-          playVisemeTimeline(msg.timeline);
+          // Store the timeline; play it when mode switches to "speaking".
+          pendingTimeline = msg.timeline;
           return;
         }
         if (msg.type === 'viseme') {
@@ -417,6 +453,14 @@
           responseText = msg.responseText || '';
           if (msg.emotion) currentEmotion = msg.emotion;
           updateStatus();
+          if (currentMode === 'speaking' && pendingTimeline) {
+            // Audio just started playing — fire the viseme timeline now.
+            playVisemeTimeline(pendingTimeline);
+            pendingTimeline = null;
+          } else if (currentMode !== 'speaking') {
+            // Discard pending timeline if we're not about to speak.
+            pendingTimeline = null;
+          }
           applyModeToVRM();
         }
       } catch (e) {

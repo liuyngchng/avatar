@@ -89,7 +89,7 @@ func main() {
 	// ── Initialize KWS engine (Zipformer wake word) ──────────
 	kwsDir := kws.ModelsDir()
 	var kwsEngine *kws.Engine
-	kwsEngine, err = kws.New(kwsDir)
+	kwsEngine, err = kws.New(kwsDir, cfg.WakeWord)
 	if err != nil {
 		log.Printf("Warning: KWS engine init failed (continuing without wake word): %v", err)
 		kwsEngine = nil

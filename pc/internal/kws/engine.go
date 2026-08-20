@@ -12,10 +12,10 @@ import (
 	sherpa "github.com/k2-fsa/sherpa-onnx-go/sherpa_onnx"
 )
 
-// WakeWord is the Chinese wake word in sherpa keyword format.
+// DefaultWakeWord is the default Chinese wake word in sherpa keyword format.
 // "x iǎo h uǒ x iǎo h uǒ @小火小火" means the phoneme sequence
 // followed by the display name.
-const WakeWord = "x iǎo h uǒ x iǎo h uǒ @小火小火"
+const DefaultWakeWord = "x iǎo h uǒ x iǎo h uǒ @小火小火"
 
 // Engine wraps the sherpa-onnx KeywordSpotter for wake word detection.
 type Engine struct {
@@ -25,9 +25,14 @@ type Engine struct {
 	stream   *sherpa.OnlineStream // internal stream for continuous detection
 }
 
-// New creates a new KWS engine with the given model directory.
-// It searches for encoder/decoder/joiner/onnx files by keyword.
-func New(modelDir string) (*Engine, error) {
+// New creates a new KWS engine with the given model directory and wake word.
+// The wakeWord should be in sherpa keyword format: "phonemes @DisplayName"
+// If empty, DefaultWakeWord is used.
+func New(modelDir string, wakeWord string) (*Engine, error) {
+	if wakeWord == "" {
+		wakeWord = DefaultWakeWord
+	}
+
 	// Find model files by keyword (same approach as iOS/Android).
 	encoder := findFile(modelDir, "encoder", ".onnx")
 	decoder := findFile(modelDir, "decoder", ".onnx")
@@ -66,8 +71,8 @@ func New(modelDir string) (*Engine, error) {
 		MaxActivePaths:    2,
 		KeywordsScore:     6.0,
 		KeywordsThreshold: 0.05,
-		KeywordsBuf:       WakeWord,
-		KeywordsBufSize:   len(WakeWord),
+		KeywordsBuf:       wakeWord,
+		KeywordsBufSize:   len(wakeWord),
 	}
 
 	spotter := sherpa.NewKeywordSpotter(config)
@@ -81,11 +86,11 @@ func New(modelDir string) (*Engine, error) {
 		return nil, fmt.Errorf("kws: failed to create keyword stream")
 	}
 
-	log.Printf("kws: engine created, keywords=%q, num_threads=%d", WakeWord, numThreads)
+	log.Printf("kws: engine created, keywords=%q, num_threads=%d", wakeWord, numThreads)
 
 	return &Engine{
 		spotter:  spotter,
-		keyword:  WakeWord,
+		keyword:  wakeWord,
 		modelDir: modelDir,
 		stream:   stream,
 	}, nil

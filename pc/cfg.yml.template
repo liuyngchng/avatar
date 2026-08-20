@@ -4,4 +4,8 @@
 llm:
   base_url: "https://api.deepseek.com"
   api_key: "sk-123456"
-  model: "deepseek-v4-pro"
+  model: "deepseek-v4-flash"
+
+# 唤醒词（sherpa-onnx 关键词格式: "音素序列 @中文显示名"）
+# 默认: "x iǎo h uǒ x iǎo h uǒ @小火小火"
+wake_word: "x iǎo h uǒ x iǎo h uǒ @小火小火"
