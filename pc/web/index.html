@@ -528,11 +528,15 @@
     // ─── JS Bridge: Send events to Go ───────────────────────
     function sendEvent(type, data) {
       const msg = JSON.stringify({ type, data });
-      // Try Lorca bind path first
+      // WebKitGTK path (Linux)
+      if (window.webkit?.messageHandlers?.bridge) {
+        window.webkit.messageHandlers.bridge.postMessage(msg);
+      }
+      // Lorca bind path (deprecated, kept for reference)
       if (window.goBridge_sendEvent) {
         window.goBridge_sendEvent(msg);
       }
-      // WebView2 path (will be implemented in renderer_windows.go)
+      // WebView2 path (Windows)
       if (window.chrome?.webview) {
         window.chrome.webview.postMessage(msg);
       }

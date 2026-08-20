@@ -7,7 +7,6 @@ require (
 	github.com/jchv/go-webview2 v0.0.0-20260205173254-56598839c808
 	github.com/k2-fsa/sherpa-onnx-go v1.13.6
 	github.com/mozillazg/go-pinyin v0.21.0
-	github.com/zserge/lorca v0.1.10
 	gopkg.in/yaml.v3 v3.0.1
 )
 
@@ -17,6 +16,5 @@ require (
 	github.com/k2-fsa/sherpa-onnx-go-linux v1.13.6 // indirect
 	github.com/k2-fsa/sherpa-onnx-go-macos v1.13.6 // indirect
 	github.com/k2-fsa/sherpa-onnx-go-windows v1.13.6 // indirect
-	golang.org/x/net v0.0.0-20200222125558-5a598a2470a0 // indirect
 	golang.org/x/sys v0.36.0 // indirect
 )

@@ -152,10 +152,17 @@ func main() {
 		}
 	}()
 
-	// Wait for SIGINT or SIGTERM.
+	// ── Handle SIGINT/SIGTERM by closing the renderer window ──
+	// Closing the window quits the GTK main loop on Linux, which
+	// unblocks r.Run() below and lets the process shut down cleanly.
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	<-sigCh
+	go func() {
+		<-sigCh
+		log.Println("Avatar PC shutting down...")
+		r.Close()
+	}()
 
-	log.Println("Avatar PC shutting down...")
+	// Run the renderer's main loop (blocks until the window closes).
+	r.Run()
 }

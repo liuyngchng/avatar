@@ -96,3 +96,9 @@ func (r *webviewRenderer) Events() <-chan brain.Event {
 func (r *webviewRenderer) Close() {
 	r.webview.Destroy()
 }
+
+// Run blocks until the window closes. On Windows the WebView2 event loop
+// runs on its own thread; this is a no-op that blocks forever.
+func (r *webviewRenderer) Run() {
+	select {}
+}

@@ -11,6 +11,7 @@ import (
 type Renderer interface {
 	SendMessage(msg any)
 	Events() <-chan brain.Event
+	Run() // blocks until the window closes (GTK main loop on Linux, no-op on Windows)
 	Close()
 }
 
