@@ -68,6 +68,7 @@ pc/avatar-pc
 pc/avatar-pc.exe
 pc/web/models/*.vrm
 pc/models/
+pc/cfg.yml
 
 # ── Secrets ───────────────────────────────────────────
 *.keystore

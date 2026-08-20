@@ -11,8 +11,12 @@ import (
 	"path/filepath"
 	"syscall"
 
+	"github.com/liuyngchng/avatar-pc/internal/asr"
 	"github.com/liuyngchng/avatar-pc/internal/audio"
 	"github.com/liuyngchng/avatar-pc/internal/brain"
+	"github.com/liuyngchng/avatar-pc/internal/config"
+	"github.com/liuyngchng/avatar-pc/internal/kws"
+	"github.com/liuyngchng/avatar-pc/internal/llm"
 	"github.com/liuyngchng/avatar-pc/internal/renderer"
 	"github.com/liuyngchng/avatar-pc/internal/tts"
 )
@@ -24,7 +28,30 @@ func main() {
 	log.SetFlags(log.Ltime | log.Lshortfile)
 	log.Println("Avatar PC starting...")
 
-	// Initialize TTS engine (Matcha-TTS + vocos).
+	// ── Load config ────────────────────────────────────────
+	cfg, err := config.Load()
+	if err != nil {
+		log.Printf("Warning: failed to load config: %v (using env vars as fallback)", err)
+		cfg = &config.Config{
+			LLM: config.LLMConfig{
+				BaseURL: os.Getenv("AVATAR_LLM_BASE_URL"),
+				APIKey:  os.Getenv("AVATAR_LLM_API_KEY"),
+				Model:   os.Getenv("AVATAR_LLM_MODEL"),
+			},
+		}
+	}
+	// Env vars override config file values.
+	if v := os.Getenv("AVATAR_LLM_BASE_URL"); v != "" {
+		cfg.LLM.BaseURL = v
+	}
+	if v := os.Getenv("AVATAR_LLM_API_KEY"); v != "" {
+		cfg.LLM.APIKey = v
+	}
+	if v := os.Getenv("AVATAR_LLM_MODEL"); v != "" {
+		cfg.LLM.Model = v
+	}
+
+	// ── Initialize TTS engine (Matcha-TTS + vocos) ──────────
 	ttsDir := tts.ModelsDir()
 	ttsEngine, err := tts.New(tts.ModelPaths{
 		AcousticModel: filepath.Join(ttsDir, "model.onnx"),
@@ -37,7 +64,7 @@ func main() {
 	}
 	defer ttsEngine.Close()
 
-	// Initialize audio player.
+	// ── Initialize audio player ──────────────────────────────
 	player, err := audio.NewPlayer(ttsEngine.SampleRate())
 	if err != nil {
 		log.Fatalf("Failed to create audio player: %v", err)
@@ -45,15 +72,61 @@ func main() {
 	player.WaitReady()
 	defer player.Close()
 
-	// Create the renderer window (platform-specific).
+	// ── Initialize ASR engine (SenseVoiceSmall) ──────────────
+	asrDir := asr.ModelsDir()
+	var asrEngine *asr.Engine
+	asrEngine, err = asr.New(asr.ModelPaths{
+		Model:  filepath.Join(asrDir, "model.int8.onnx"),
+		Tokens: filepath.Join(asrDir, "tokens.txt"),
+	})
+	if err != nil {
+		log.Printf("Warning: ASR engine init failed (continuing without ASR): %v", err)
+		asrEngine = nil
+	} else {
+		defer asrEngine.Close()
+	}
+
+	// ── Initialize KWS engine (Zipformer wake word) ──────────
+	kwsDir := kws.ModelsDir()
+	var kwsEngine *kws.Engine
+	kwsEngine, err = kws.New(kwsDir)
+	if err != nil {
+		log.Printf("Warning: KWS engine init failed (continuing without wake word): %v", err)
+		kwsEngine = nil
+	} else {
+		defer kwsEngine.Close()
+	}
+
+	// ── Initialize microphone capture ────────────────────────
+	capture, err := audio.NewCapture(audio.DefaultCaptureConfig())
+	if err != nil {
+		log.Printf("Warning: microphone capture init failed (continuing without audio input): %v", err)
+		capture = nil
+	} else {
+		defer capture.Close()
+	}
+
+	// ── Initialize LLM client ────────────────────────────────
+	llmClient := llm.New(llm.Config{
+		BaseURL: cfg.LLM.BaseURL,
+		APIKey:  cfg.LLM.APIKey,
+		Model:   cfg.LLM.Model,
+	})
+	if llmClient.IsConfigured() {
+		log.Println("LLM client configured (streaming enabled)")
+	} else {
+		log.Println("LLM client NOT configured — set values in cfg.yml. Using fallback responses.")
+	}
+
+	// ── Create the renderer window (platform-specific) ──────
 	r, err := renderer.New(webAssets)
 	if err != nil {
 		log.Fatalf("Failed to create renderer: %v", err)
 	}
 	defer r.Close()
 
-	// Create the brain (state machine).
-	sm := brain.NewStateMachine(ttsEngine, player)
+	// ── Create the brain (state machine) ─────────────────────
+	sm := brain.NewStateMachine(ttsEngine, player, asrEngine, kwsEngine, llmClient, capture)
 
 	// Start the FSM loop.
 	go sm.Run()

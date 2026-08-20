@@ -1,0 +1,7 @@
+# Avatar PC 配置文件模板
+# 复制此文件为 cfg.yml 并填入实际值
+
+llm:
+  base_url: "https://e.cnpc.com.cn/klzm-ai-proxy"
+  api_key: "sk-4e0291cc8b264357bf60a1903a21c3c2"
+  model: "deepseek-v4-pro"
