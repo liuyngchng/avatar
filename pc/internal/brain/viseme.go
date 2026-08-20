@@ -7,7 +7,6 @@ package brain
 
 import (
 	"strings"
-	"time"
 	"unicode"
 
 	"github.com/mozillazg/go-pinyin"
@@ -130,16 +129,21 @@ func GetViseme(char rune) VisemeName {
 
 // VisemeTimelineEntry is a single entry in the viseme timeline.
 type VisemeTimelineEntry struct {
-	Char       string     // the Chinese character
-	Viseme     VisemeName // VRM viseme name
-	StartMs    int        // start time in milliseconds
-	DurationMs int        // duration in milliseconds
+	Char    string     `json:"char"`    // the Chinese character
+	Viseme  VisemeName `json:"viseme"`  // VRM viseme name
+	StartMs int        `json:"startMs"` // start time in milliseconds
+}
+
+// VisemeTimeline is the full viseme timeline sent to the frontend.
+type VisemeTimeline struct {
+	Type     string                `json:"type"`
+	Timeline []VisemeTimelineEntry `json:"timeline"`
 }
 
 // GenerateVisemeTimeline creates a viseme timeline from text and audio duration.
 // Uses the "even distribution" approach (方案A): total duration ÷ number of
 // Chinese characters, with punctuation getting shorter pauses.
-func GenerateVisemeTimeline(text string, audioDuration time.Duration) []VisemeTimelineEntry {
+func GenerateVisemeTimeline(text string, audioDurationMs int) *VisemeTimeline {
 	chars := []rune(text)
 	if len(chars) == 0 {
 		return nil
@@ -156,10 +160,8 @@ func GenerateVisemeTimeline(text string, audioDuration time.Duration) []VisemeTi
 		return nil
 	}
 
-	totalMs := int(audioDuration.Milliseconds())
+	totalMs := audioDurationMs
 	// Punctuation gets a shorter slot (1/3 of a hanzi slot).
-	// Let N = hanziCount, P = punctuationCount.
-	// effectiveSlots = N + P/3, hanziSlot = totalMs / effectiveSlots.
 	punctuationCount := len(chars) - hanziCount
 	effectiveSlots := float64(hanziCount) + float64(punctuationCount)/3.0
 	hanziSlotMs := float64(totalMs) / effectiveSlots
@@ -180,22 +182,18 @@ func GenerateVisemeTimeline(text string, audioDuration time.Duration) []VisemeTi
 			viseme = VisemeRest
 		}
 
-		startMs := int(currentMs)
-		durationMs := int(slotMs)
-		if durationMs < 30 {
-			durationMs = 30 // minimum 30ms per slot
-		}
-
 		entries = append(entries, VisemeTimelineEntry{
-			Char:       string(c),
-			Viseme:     viseme,
-			StartMs:    startMs,
-			DurationMs: durationMs,
+			Char:    string(c),
+			Viseme:  viseme,
+			StartMs: int(currentMs),
 		})
 		currentMs += slotMs
 	}
 
-	return entries
+	return &VisemeTimeline{
+		Type:     "viseme_timeline",
+		Timeline: entries,
+	}
 }
 
 // stripTone removes tone digits and diacritics from a pinyin syllable.

@@ -401,8 +401,13 @@
     window.handleMessage = function(jsonStr) {
       try {
         const msg = JSON.parse(jsonStr);
+        if (msg.type === 'viseme_timeline') {
+          // Full viseme timeline — drive lip-sync locally with timers.
+          playVisemeTimeline(msg.timeline);
+          return;
+        }
         if (msg.type === 'viseme') {
-          // Viseme lip-sync message
+          // Single viseme instruction (fallback).
           applyViseme(msg.viseme, msg.weight);
           return;
         }
@@ -418,6 +423,38 @@
         console.error('handleMessage error:', e);
       }
     };
+
+    // ─── Play a viseme timeline with local timers ──────────
+    // Drives the mouth via setTimeout so there's no round-trip delay.
+    let visemeTimers = [];
+    function playVisemeTimeline(timeline) {
+      if (!timeline || !timeline.length) return;
+
+      // Clear any previous pending timers.
+      for (const t of visemeTimers) clearTimeout(t);
+      visemeTimers = [];
+
+      const start = performance.now();
+
+      for (const entry of timeline) {
+        const delay = Math.max(0, entry.startMs - (performance.now() - start));
+        const timer = setTimeout(() => {
+          if (entry.viseme === 'rest' || !entry.viseme) {
+            applyViseme('rest', 0);
+          } else {
+            applyViseme(entry.viseme, 1.0);
+          }
+        }, delay);
+        visemeTimers.push(timer);
+      }
+
+      // Reset mouth at the end of the timeline.
+      const lastStart = timeline.length > 0 ? timeline[timeline.length - 1].startMs : 0;
+      const resetTimer = setTimeout(() => {
+        applyViseme('rest', 0);
+      }, lastStart + 200);
+      visemeTimers.push(resetTimer);
+    }
 
     // ─── Apply a single viseme to the VRM model ──────────────
     function applyViseme(viseme, weight) {

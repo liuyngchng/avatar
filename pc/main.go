@@ -74,8 +74,8 @@ func main() {
 
 	// Forward viseme events to the renderer for lip-sync.
 	go func() {
-		for vis := range sm.Visemes() {
-			r.SendMessage(vis)
+		for msg := range sm.Outbound() {
+			r.SendMessage(msg)
 		}
 	}()
 

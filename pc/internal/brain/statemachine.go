@@ -17,16 +17,11 @@ type Event struct {
 }
 
 // StateMachine orchestrates the digital human's behavior.
-//
-// P1 scope: uses real TTS + audio playback instead of the P0 demo timer loop.
-// ASR and LLM are still simulated — the canned text is synthesized via
-// sherpa-onnx Matcha-TTS and played through oto/ALSA. Viseme timeline drives
-// lip-sync.
 type StateMachine struct {
 	state        State
 	stateChanges chan State
+	outbound     chan any
 	events       chan Event
-	visemes      chan VisemeEvent
 	ttsEngine    *tts.Engine
 	audioPlayer  *audio.Player
 
@@ -42,8 +37,8 @@ func NewStateMachine(ttsEngine *tts.Engine, audioPlayer *audio.Player) *StateMac
 			Emotion: EmotionNeutral,
 		},
 		stateChanges: make(chan State, 16),
+		outbound:     make(chan any, 64),
 		events:       make(chan Event, 16),
-		visemes:      make(chan VisemeEvent, 64),
 		ttsEngine:    ttsEngine,
 		audioPlayer:  audioPlayer,
 	}
@@ -63,10 +58,10 @@ func (sm *StateMachine) StateChanges() <-chan State {
 	return sm.stateChanges
 }
 
-// Visemes returns the channel of viseme events the main loop forwards
-// to the renderer for lip-sync.
-func (sm *StateMachine) Visemes() <-chan VisemeEvent {
-	return sm.visemes
+// Outbound returns the channel of arbitrary messages (viseme timelines, etc.)
+// the main loop forwards to the renderer.
+func (sm *StateMachine) Outbound() <-chan any {
+	return sm.outbound
 }
 
 // HandleEvent feeds a renderer event into the FSM.
@@ -144,10 +139,16 @@ func (sm *StateMachine) pipeline() {
 		return
 	}
 
-	// Generate viseme timeline.
-	audioDur := time.Duration(float64(len(result.Samples)) / float64(result.SampleRate) * float64(time.Second))
-	timeline := GenerateVisemeTimeline(text, audioDur)
-	log.Printf("state: viseme timeline: %d entries, total audio %.1fs", len(timeline), audioDur.Seconds())
+	// Generate viseme timeline and send it to the frontend once.
+	audioDurMs := int(float64(len(result.Samples)) / float64(result.SampleRate) * 1000)
+	timeline := GenerateVisemeTimeline(text, audioDurMs)
+	if timeline != nil {
+		log.Printf("state: viseme timeline: %d entries, audio %dms", len(timeline.Timeline), audioDurMs)
+		select {
+		case sm.outbound <- timeline:
+		default:
+		}
+	}
 
 	// Speaking.
 	sm.mu.Lock()
@@ -156,51 +157,9 @@ func (sm *StateMachine) pipeline() {
 	sm.mu.Unlock()
 	sm.emit()
 
-	// Play audio (non-blocking).
-	player, err := sm.audioPlayer.Play(result.Samples)
-	if err != nil {
-		log.Printf("state: audio play error: %v", err)
-		sm.mu.Lock()
-		sm.state.IsSpeaking = false
-		sm.mu.Unlock()
-		sm.setState(ModeIdle, EmotionNeutral, "")
-		sm.emit()
-		return
-	}
-
-	// Drive viseme timeline while audio plays.
-	startTime := time.Now()
-	timelineIdx := 0
-	for player.IsPlaying() {
-		if err := player.Err(); err != nil {
-			log.Printf("state: audio play error: %v", err)
-			break
-		}
-
-		elapsed := time.Since(startTime).Milliseconds()
-
-		// Emit any viseme entries whose start time has been reached.
-		for timelineIdx < len(timeline) && int64(timeline[timelineIdx].StartMs) <= elapsed {
-			entry := timeline[timelineIdx]
-			ev := VisemeEvent{
-				Type:   "viseme",
-				Viseme: entry.Viseme,
-				Weight: 1.0,
-			}
-			select {
-			case sm.visemes <- ev:
-			default:
-			}
-			timelineIdx++
-		}
-
-		time.Sleep(10 * time.Millisecond)
-	}
-
-	// Reset viseme to rest.
-	select {
-	case sm.visemes <- VisemeEvent{Type: "viseme", Viseme: VisemeRest, Weight: 0}:
-	default:
+	// Play audio (blocking).
+	if err := sm.audioPlayer.PlaySync(result.Samples); err != nil {
+		log.Printf("state: audio playback error: %v", err)
 	}
 
 	// Back to idle.
