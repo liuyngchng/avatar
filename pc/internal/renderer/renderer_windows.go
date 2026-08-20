@@ -48,8 +48,8 @@ func newPlatformRenderer(webFS fs.FS) (Renderer, error) {
 		AutoFocus: true,
 		WindowOptions: webview2.WindowOptions{
 			Title:  "Avatar PC",
-			Width:  1280,
-			Height: 800,
+			Width:  480,
+			Height: 720,
 		},
 	})
 

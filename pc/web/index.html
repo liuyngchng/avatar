@@ -89,6 +89,7 @@
     const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setClearColor(0x000000, 0); // fully transparent clear
     renderer.shadowMap.enabled = true;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.2;
@@ -148,29 +149,27 @@
       scene.add(vrm.scene);
       vrm.scene.position.set(0, -0.95, 0);
 
-      // ── Fix arms: rotate from T-pose to natural rest pose ──
-      // The VRM model defaults to T-pose (arms out to the sides).
-      // T-pose left arm points +X, right arm points -X.
-      // Rotate ~75° around Z toward -Y (down), leaving ~15° outward
-      // so the arms are visible from the front, not hidden by the torso.
+      // ── Fix arms: use official setNormalizedPose API ──────
+      // Rotations are quaternions [x, y, z, w] relative to the T-pose.
+      // In the T-pose the left arm points +X and the right arm points -X.
+      // A positive Z rotation turns +X toward +Y (up), so to lower the arms
+      // we rotate the LEFT arm by a NEGATIVE Z angle and the RIGHT arm by a
+      // POSITIVE Z angle. ~85° brings them nearly straight down.
       if (vrm.humanoid) {
-        const leftUpperArm = vrm.humanoid.getNormalizedBoneNode('leftUpperArm');
-        const rightUpperArm = vrm.humanoid.getNormalizedBoneNode('rightUpperArm');
-        const leftLowerArm = vrm.humanoid.getNormalizedBoneNode('leftLowerArm');
-        const rightLowerArm = vrm.humanoid.getNormalizedBoneNode('rightLowerArm');
+        const down = 85 * (Math.PI / 180);   // how far down from horizontal
+        const s = Math.sin(down / 2);        // ≈ 0.676
+        const c = Math.cos(down / 2);        // ≈ 0.737
 
-        if (leftUpperArm) {
-          leftUpperArm.rotation.set(0, 0, 1.0);   // ~57°: close to body but visible
-        }
-        if (rightUpperArm) {
-          rightUpperArm.rotation.set(0, 0, -1.0);  // ~57°: close to body but visible
-        }
-        if (leftLowerArm) {
-          leftLowerArm.rotation.set(0, 0, 0.2);
-        }
-        if (rightLowerArm) {
-          rightLowerArm.rotation.set(0, 0, -0.2);
-        }
+        // Slight elbow bend (~8°) for a relaxed, natural look
+        const eS = Math.sin(4 * (Math.PI / 180));
+        const eC = Math.cos(4 * (Math.PI / 180));
+
+        vrm.humanoid.setNormalizedPose({
+          leftUpperArm:  { rotation: [0, 0, -s, c] },  // down
+          rightUpperArm: { rotation: [0, 0,  s, c] },  // down
+          leftLowerArm:  { rotation: [0, 0,  eS, eC] },
+          rightLowerArm: { rotation: [0, 0, -eS, eC] },
+        });
       }
 
       // ── Reset blink: eyes open on startup ──

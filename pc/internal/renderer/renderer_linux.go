@@ -43,10 +43,9 @@ func newPlatformRenderer(webFS fs.FS) (Renderer, error) {
 	// --enable-transparent-visuals: allows the page background to be transparent.
 	// The WebGL-related flags force software rendering (SwiftShader/ANGLE),
 	// which is required under WSLg where a real GPU context is unavailable.
-	ui, err := lorca.New(url, "", 1280, 800,
+	ui, err := lorca.New(url, "", 480, 720,
 		"--disable-sync", "--no-first-run", "--no-sandbox",
 		"--remote-allow-origins=*",
-		"--start-fullscreen",
 		"--enable-transparent-visuals",
 		"--enable-unsafe-swiftshader",
 		"--use-gl=angle", "--use-angle=swiftshader",
