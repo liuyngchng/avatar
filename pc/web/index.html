@@ -75,12 +75,12 @@
     let visemeCurrent = { aa: 0, ih: 0, ou: 0, ee: 0, oh: 0 };
     let visemeBlendSpeed = 8.0; // how fast visemes transition
 
-    // Blink state
-    let blinkTimer = 0;
-    let blinkInterval = 3.0;    // seconds between blinks
-    let blinkValue = 0;
-    let isBlinking = false;
+    // Pending viseme timeline — deferred until mode switches to "speaking".
+    // Also handles race: if speaking state arrives before timeline, the
+    // timeline plays itself when it eventually arrives.
+    let pendingTimeline = null;
 
+    // Eyes stay open (no blinking) — see updateVRMBlink.
     // Idle micro-movement
     let idleTime = 0;
 
@@ -258,7 +258,7 @@
 
       if (vrm) {
         // Update VRM
-        updateVRMBlink(dt);
+        updateVRMBlink();
         updateVRMVisemes(dt);
         updateVRMIdleMicro(dt);
 
@@ -274,36 +274,10 @@
     }
 
     // ─── VRM: Blink ─────────────────────────────────────────
-    function updateVRMBlink(dt) {
-      blinkTimer += dt;
-
-      if (!isBlinking && blinkTimer > blinkInterval) {
-        isBlinking = true;
-        blinkTimer = 0;
-        blinkInterval = 2.5 + Math.random() * 4.0;
-        blinkValue = 0;
-      }
-
-      if (isBlinking) {
-        blinkValue += dt * 12; // fast close
-        if (blinkValue >= 1.0) {
-          blinkValue = 1.0;
-          // hold briefly then open
-          blinkTimer += dt;
-          if (blinkTimer > 0.12) {
-            blinkValue -= dt * 12;
-            if (blinkValue <= 0) {
-              blinkValue = 0;
-              isBlinking = false;
-              blinkTimer = 0;
-            }
-          }
-        }
-      }
-
-      // Apply blink (VRM1 preset name is 'blink')
-      if (vrm.expressionManager && blinkValue > 0.001) {
-        vrm.expressionManager.setValue('blink', blinkValue);
+    // Keep eyes always open — no blinking.
+    function updateVRMBlink() {
+      if (vrm.expressionManager) {
+        vrm.expressionManager.setValue('blink', 0);
       }
     }
 
@@ -430,15 +404,23 @@
 
     // ─── JS Bridge: Receive messages from Go ─────────────────
     // Called by Go via Eval: handleMessage(jsonString)
+    //
     // Viseme timeline is deferred until mode switches to "speaking",
     // so the mouth animation syncs with actual audio playback.
-    let pendingTimeline = null;
+    // Handles both possible arrival orders:
+    //   1. timeline arrives first  → stored, played when mode → speaking
+    //   2. speaking state arrives first → timeline plays itself on arrival
     window.handleMessage = function(jsonStr) {
       try {
         const msg = JSON.parse(jsonStr);
         if (msg.type === 'viseme_timeline') {
-          // Store the timeline; play it when mode switches to "speaking".
-          pendingTimeline = msg.timeline;
+          if (currentMode === 'speaking') {
+            // Already speaking — play immediately.
+            playVisemeTimeline(msg.timeline);
+          } else {
+            // Store; will be played when the mode switches to speaking.
+            pendingTimeline = msg.timeline;
+          }
           return;
         }
         if (msg.type === 'viseme') {
@@ -453,11 +435,11 @@
           if (msg.emotion) currentEmotion = msg.emotion;
           updateStatus();
           if (currentMode === 'speaking' && pendingTimeline) {
-            // Audio just started playing — fire the viseme timeline now.
+            // Audio just started — fire the stored viseme timeline.
             playVisemeTimeline(pendingTimeline);
             pendingTimeline = null;
           } else if (currentMode !== 'speaking') {
-            // Discard pending timeline if we're not about to speak.
+            // Discard any stale pending timeline.
             pendingTimeline = null;
           }
           applyModeToVRM();
