@@ -2,87 +2,68 @@
 
 package renderer
 
-/*
-#cgo pkg-config: gtk+-3.0 webkit2gtk-4.1
-#cgo CFLAGS: -Wno-deprecated-declarations
-#include <stdlib.h>
-#include <gtk/gtk.h>
-#include <webkit2/webkit2.h>
-
-// ── Thread-safe JS evaluation ──────────────────────────────
-// scheduleEval can be called from any goroutine. It queues a
-// webkit_web_view_evaluate_javascript() call on the GTK main thread.
-
-typedef struct {
-	WebKitWebView *webview;
-	char *js;
-} goEvalData;
-
-static gboolean doEvalJS(gpointer userdata) {
-	goEvalData *d = (goEvalData *)userdata;
-	webkit_web_view_evaluate_javascript(d->webview, d->js, -1, NULL, NULL, NULL, NULL, NULL);
-	g_free(d->js);
-	g_free(d);
-	return G_SOURCE_REMOVE;
-}
-
-static void scheduleEval(WebKitWebView *webview, const char *js) {
-	goEvalData *d = g_new(goEvalData, 1);
-	d->webview = webview;
-	d->js = g_strdup(js);
-	g_idle_add(doEvalJS, d);
-}
-
-// ── Forward declarations for exported Go callbacks ─────────
-extern void go_message_received_cb(WebKitUserContentManager *, WebKitJavascriptResult *, gpointer);
-extern void go_window_destroy_cb(GtkWidget *, gpointer);
-
-// g_signal_connect is a macro in GLib; use the underlying function directly.
-static gulong c_signal_connect(gpointer instance, const gchar *signal, GCallback cb, gpointer data) {
-	return g_signal_connect_data(instance, signal, cb, data, NULL, 0);
-}
-*/
-import "C"
-
 import (
+	"bufio"
 	"encoding/json"
+	"errors"
+	"io"
 	"io/fs"
 	"log"
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
-	"unsafe"
 
 	"github.com/liuyngchng/avatar-pc/internal/brain"
 )
 
-// ── Global renderer instance for C callbacks ────────────────
-var (
-	activeRenderer *gtkRenderer
-	rendererMu     sync.Mutex
-)
-
-// gtkRenderer is a Linux renderer backed by GTK3 + WebKit2GTK.
-// It creates an undecorated, transparent window showing only the WebGL avatar.
+// gtkRenderer is a Linux renderer backed by a separate GTK3 + WebKit2GTK
+// process ("avatar-ui"). Keeping WebKit in its own process avoids the signal
+// conflict between the Go runtime and WebKit's JavaScriptCore
+// (JSC_SIGNAL_FOR_GC), which is unsolvable in a single process.
+//
+// The two processes communicate over stdin/stdout pipes, one JSON object per
+// line. See PROPOSAL_GTK_IPC.md and cmd/avatar-ui/main.c for the protocol.
 type gtkRenderer struct {
-	webview *C.WebKitWebView
-	window  *C.GtkWidget
-	events  chan brain.Event
-	done    chan struct{}
+	cmd    *exec.Cmd
+	stdin  io.WriteCloser
+	events chan brain.Event
+	done   chan struct{}
+
+	mu      sync.Mutex
+	closed  bool
+	waitErr error
 }
 
 var _ Renderer = (*gtkRenderer)(nil)
 
-// newPlatformRenderer creates a Linux renderer using WebKitGTK.
+// uiBinaryName is the name of the C UI executable that must live alongside
+// the Go binary.
+const uiBinaryName = "avatar-ui"
+
+// findUIBinary locates the avatar-ui executable. It searches, in order:
+//  1. the directory of the currently running Go executable, and
+//  2. the current working directory.
+func findUIBinary() (string, error) {
+	exe, err := os.Executable()
+	if err == nil {
+		candidate := filepath.Join(filepath.Dir(exe), uiBinaryName)
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate, nil
+		}
+	}
+	if _, err := os.Stat(uiBinaryName); err == nil {
+		return uiBinaryName, nil
+	}
+	return "", errors.New("avatar-ui binary not found; build it with `make avatar-ui` or `make build`")
+}
+
+// newPlatformRenderer creates a Linux renderer using a child GTK process.
 func newPlatformRenderer(webFS fs.FS) (Renderer, error) {
-	// JSC (WebKit's JavaScript engine) uses SIGUSR1 for garbage collection
-	// by default, but Go's runtime also reserves SIGUSR1 and SIGUSR2.
-	// Tell JSC to use SIGRTMIN instead — a real-time signal that Go's
-	// runtime never touches. The env var expects a signal NAME, not a number.
-	// Valid options: SIGUSR1, SIGUSR2, SIGPIPE, SIGALRM, SIGPROF, SIGRTMIN.
-	_ = os.Setenv("JSC_SIGNAL_FOR_GC", "SIGRTMIN")
 	// Serve the embedded web assets on a random local port.
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -96,73 +77,75 @@ func newPlatformRenderer(webFS fs.FS) (Renderer, error) {
 	url := "http://127.0.0.1:" + strconv.Itoa(port) + "/index.html"
 	log.Printf("renderer: serving at %s", url)
 
-	// GTK must be initialized on the main thread (this runs in main()).
-	C.gtk_init(nil, nil)
+	// Locate and start the C UI child process.
+	uiBin, err := findUIBinary()
+	if err != nil {
+		listener.Close()
+		return nil, err
+	}
+
+	cmd := exec.Command(uiBin, url)
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		listener.Close()
+		return nil, err
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		listener.Close()
+		return nil, err
+	}
+	// Forward stderr to our own stderr so GTK/WebKit diagnostics are visible.
+	cmd.Stderr = os.Stderr
+
+	if err := cmd.Start(); err != nil {
+		listener.Close()
+		return nil, err
+	}
 
 	r := &gtkRenderer{
+		cmd:    cmd,
+		stdin:  stdin,
 		events: make(chan brain.Event, 16),
 		done:   make(chan struct{}),
 	}
 
-	rendererMu.Lock()
-	activeRenderer = r
-	rendererMu.Unlock()
+	// Read events from the C process's stdout and forward them to the events
+	// channel. Each line is a JSON object produced by the JS→Go bridge.
+	go func() {
+		scanner := bufio.NewScanner(stdout)
+		// Events are small; bump the buffer just in case of long payloads.
+		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if line == "" {
+				continue
+			}
+			var ev brain.Event
+			if err := json.Unmarshal([]byte(line), &ev); err != nil {
+				log.Printf("renderer: bad message from UI: %v (raw: %s)", err, line)
+				continue
+			}
+			select {
+			case r.events <- ev:
+			default:
+				log.Printf("renderer: dropping event (channel full): %s", ev.Type)
+			}
+		}
+		// stdout closed (UI exited) — unblock Run() if it's still waiting.
+		close(r.done)
+	}()
 
-	// ── Window: undecorated, transparent, portrait ──────────
-	window := C.gtk_window_new(C.GTK_WINDOW_TOPLEVEL)
-	C.gtk_window_set_title((*C.GtkWindow)(unsafe.Pointer(window)), C.CString("Avatar PC"))
-	C.gtk_window_set_decorated((*C.GtkWindow)(unsafe.Pointer(window)), C.FALSE) // no title bar
-	C.gtk_window_set_default_size((*C.GtkWindow)(unsafe.Pointer(window)), 480, 720)
-	C.gtk_window_set_resizable((*C.GtkWindow)(unsafe.Pointer(window)), C.FALSE)
-	C.gtk_window_set_keep_above((*C.GtkWindow)(unsafe.Pointer(window)), C.TRUE) // float on top
-
-	// Enable RGBA visual so the window background can be transparent.
-	screen := C.gtk_widget_get_screen(window)
-	visual := C.gdk_screen_get_rgba_visual(screen)
-	if visual != nil {
-		C.gtk_widget_set_visual(window, visual)
-	}
-
-	r.window = window
-
-	// ── WebView ─────────────────────────────────────────────
-	webview := C.webkit_web_view_new()
-	r.webview = (*C.WebKitWebView)(unsafe.Pointer(webview))
-	C.webkit_web_view_load_uri(r.webview, C.CString(url))
-
-	// Transparent background.
-	rgba := C.GdkRGBA{red: 0, green: 0, blue: 0, alpha: 0}
-	C.webkit_web_view_set_background_color(r.webview, &rgba)
-
-	// Enable WebGL.
-	settings := C.webkit_web_view_get_settings(r.webview)
-	C.webkit_settings_set_enable_webgl((*C.WebKitSettings)(unsafe.Pointer(settings)), C.TRUE)
-	C.webkit_settings_set_enable_write_console_messages_to_stdout(
-		(*C.WebKitSettings)(unsafe.Pointer(settings)), C.TRUE)
-
-	// Register the JS→Go bridge: window.webkit.messageHandlers.bridge.postMessage().
-	manager := C.webkit_web_view_get_user_content_manager(r.webview)
-	cBridgeName := C.CString("bridge")
-	C.webkit_user_content_manager_register_script_message_handler(manager, cBridgeName)
-	C.free(unsafe.Pointer(cBridgeName))
-
-	// Connect "script-message-received::bridge" → exported Go callback.
-	csig := C.CString("script-message-received::bridge")
-	C.c_signal_connect(C.gpointer(manager), csig, C.GCallback(C.go_message_received_cb), nil)
-	C.free(unsafe.Pointer(csig))
-
-	// Connect "destroy" → exported Go callback.
-	csig2 := C.CString("destroy")
-	C.c_signal_connect(C.gpointer(window), csig2, C.GCallback(C.go_window_destroy_cb), nil)
-	C.free(unsafe.Pointer(csig2))
-
-	C.gtk_container_add((*C.GtkContainer)(unsafe.Pointer(window)), webview)
-	C.gtk_widget_show_all(window)
+	// Reap the child process in the background.
+	go func() {
+		r.waitErr = cmd.Wait()
+		close(r.done)
+	}()
 
 	return r, nil
 }
 
-// SendMessage marshals a message and evaluates JS on the GTK main thread.
+// SendMessage marshals a message and evaluates JS in the UI process.
 func (r *gtkRenderer) SendMessage(msg any) {
 	data, err := json.Marshal(msg)
 	if err != nil {
@@ -170,9 +153,25 @@ func (r *gtkRenderer) SendMessage(msg any) {
 		return
 	}
 	js := "if(window.handleMessage)handleMessage(" + strconv.Quote(string(data)) + ")"
-	cjs := C.CString(js)
-	defer C.free(unsafe.Pointer(cjs))
-	C.scheduleEval(r.webview, cjs)
+	cmd := map[string]string{"cmd": "eval", "js": js}
+	r.writeCommand(cmd)
+}
+
+// writeCommand serializes a command to the UI process's stdin.
+func (r *gtkRenderer) writeCommand(cmd any) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.closed || r.stdin == nil {
+		return
+	}
+	data, err := json.Marshal(cmd)
+	if err != nil {
+		log.Printf("renderer: marshal error: %v", err)
+		return
+	}
+	if _, err := r.stdin.Write(append(data, '\n')); err != nil {
+		log.Printf("renderer: write to UI failed: %v", err)
+	}
 }
 
 // Events returns the channel of user events from JS.
@@ -180,54 +179,25 @@ func (r *gtkRenderer) Events() <-chan brain.Event {
 	return r.events
 }
 
-// Run blocks running the GTK main loop until the window closes.
+// Run blocks until the UI process exits.
 func (r *gtkRenderer) Run() {
-	C.gtk_main()
-	close(r.done)
+	<-r.done
 }
 
-// Close quits the GTK main loop.
+// Close quits the UI process.
 func (r *gtkRenderer) Close() {
-	C.gtk_main_quit()
-}
-
-// ── Exported C callbacks ───────────────────────────────────
-
-//export go_message_received_cb
-func go_message_received_cb(manager *C.WebKitUserContentManager, result *C.WebKitJavascriptResult, userdata C.gpointer) {
-	rendererMu.Lock()
-	r := activeRenderer
-	rendererMu.Unlock()
-	if r == nil {
+	r.mu.Lock()
+	if r.closed {
+		r.mu.Unlock()
 		return
 	}
+	r.closed = true
+	stdin := r.stdin
+	r.mu.Unlock()
 
-	jsValue := C.webkit_javascript_result_get_js_value(result)
-	if jsValue == nil {
-		return
+	if stdin != nil {
+		// Ask the UI to quit gracefully.
+		_, _ = io.WriteString(stdin, "{\"cmd\":\"quit\"}\n")
+		_ = stdin.Close()
 	}
-
-	cstr := C.jsc_value_to_string(jsValue)
-	if cstr == nil {
-		return
-	}
-	defer C.free(unsafe.Pointer(cstr))
-
-	msg := C.GoString(cstr)
-	var ev brain.Event
-	if err := json.Unmarshal([]byte(msg), &ev); err != nil {
-		log.Printf("renderer: bad message from JS: %v (raw: %s)", err, msg)
-		return
-	}
-
-	select {
-	case r.events <- ev:
-	default:
-		log.Printf("renderer: dropping event (channel full): %s", ev.Type)
-	}
-}
-
-//export go_window_destroy_cb
-func go_window_destroy_cb(widget *C.GtkWidget, userdata C.gpointer) {
-	C.gtk_main_quit()
 }
