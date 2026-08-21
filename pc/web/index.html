@@ -183,6 +183,9 @@
       console.log('Expressions:', Object.keys(vrm.expressionManager?.expressionMap || {}));
       document.getElementById('tapHint').style.display = 'block';
       updateStatus();
+
+      // Auto-fit the GTK window to just the avatar's visible bounds.
+      setTimeout(fitWindowToAvatar, 100);
     }
 
     // ─── Try to load a local VRM model, fallback to a simple placeholder ──
@@ -247,6 +250,9 @@
       console.log('Placeholder avatar created');
       document.getElementById('tapHint').style.display = 'block';
       updateStatus();
+
+      // Auto-fit the GTK window to just the avatar's visible bounds.
+      setTimeout(fitWindowToAvatar, 100);
     }
 
     // ─── Animation Loop ─────────────────────────────────────
@@ -541,6 +547,64 @@
         window.chrome.webview.postMessage(msg);
       }
       console.log('sendEvent:', type, data);
+    }
+
+    // ─── Auto-fit window to avatar bounding box ─────────────────
+    // Renders one frame, projects the scene's bounding box to screen,
+    // and sends the pixel dimensions to the native window via the
+    // "resize" message handler.
+    function fitWindowToAvatar() {
+      // Render one frame so the model is positioned.
+      renderer.render(scene, camera);
+
+      // Compute the bounding box of all visible objects in screen space.
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      const v = new THREE.Vector3();
+      const cw = renderer.domElement.clientWidth;
+      const ch = renderer.domElement.clientHeight;
+
+      scene.traverse((obj) => {
+        if (!obj.isMesh) return;
+        const box = new THREE.Box3().setFromObject(obj);
+        // 8 corners of the bounding box
+        const corners = [
+          [box.min.x, box.min.y, box.min.z],
+          [box.min.x, box.min.y, box.max.z],
+          [box.min.x, box.max.y, box.min.z],
+          [box.min.x, box.max.y, box.max.z],
+          [box.max.x, box.min.y, box.min.z],
+          [box.max.x, box.min.y, box.max.z],
+          [box.max.x, box.max.y, box.min.z],
+          [box.max.x, box.max.y, box.max.z],
+        ];
+        for (const c of corners) {
+          v.set(c[0], c[1], c[2]);
+          v.project(camera);
+          const sx = (v.x * 0.5 + 0.5) * cw;
+          const sy = (-v.y * 0.5 + 0.5) * ch;
+          if (sx < minX) minX = sx;
+          if (sy < minY) minY = sy;
+          if (sx > maxX) maxX = sx;
+          if (sy > maxY) maxY = sy;
+        }
+      });
+
+      if (!isFinite(minX)) {
+        // No meshes found — fallback to a reasonable default.
+        minX = 0; minY = 0; maxX = cw; maxY = ch;
+      }
+
+      // Add a small padding (10px) so the avatar doesn't touch the edge.
+      const pad = 10;
+      const w = Math.ceil(maxX - minX + pad * 2);
+      const h = Math.ceil(maxY - minY + pad * 2);
+
+      console.log('fitWindowToAvatar:', w, 'x', h);
+
+      // Tell the C UI to resize the window.
+      if (window.webkit?.messageHandlers?.resize) {
+        window.webkit.messageHandlers.resize.postMessage(JSON.stringify({ width: w, height: h }));
+      }
     }
 
     // ─── User Interaction ───────────────────────────────────

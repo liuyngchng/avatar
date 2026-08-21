@@ -94,6 +94,8 @@ static int json_get_string(const char *json, const char *key, char **out) {
 
 // ─── JS → Go bridge ────────────────────────────────────────────────
 
+static GtkWidget *g_window = NULL;
+
 static void on_script_message(WebKitUserContentManager *manager,
                               WebKitJavascriptResult  *result,
                               gpointer                 user_data) {
@@ -109,9 +111,33 @@ static void on_script_message(WebKitUserContentManager *manager,
     }
 }
 
-// ─── Window dragging (undecorated window has no title bar) ────────
+// ─── JS → C resize handler (auto-fit window to avatar bounds) ──────
 
-static GtkWidget *g_window = NULL;
+static void on_resize_message(WebKitUserContentManager *manager,
+                              WebKitJavascriptResult  *result,
+                              gpointer                 user_data) {
+    (void)manager;
+    (void)user_data;
+
+    JSCValue *value = webkit_javascript_result_get_js_value(result);
+    gchar *str = jsc_value_to_string(value);
+    if (!str) return;
+
+    // Parse {"width":N,"height":M} manually.
+    int w = 0, h = 0;
+    const char *p = str;
+    const char *wpos = strstr(p, "\"width\"");
+    const char *hpos = strstr(p, "\"height\"");
+    if (wpos) { wpos += 7; while (*wpos && (*wpos < '0' || *wpos > '9')) wpos++; w = (int)strtol(wpos, NULL, 10); }
+    if (hpos) { hpos += 8; while (*hpos && (*hpos < '0' || *hpos > '9')) hpos++; h = (int)strtol(hpos, NULL, 10); }
+
+    if (w >= 100 && h >= 100 && w <= 2000 && h <= 2000)
+        gtk_window_resize(GTK_WINDOW(g_window), w, h);
+
+    g_free(str);
+}
+
+// ─── Window dragging (undecorated window has no title bar) ────────
 
 // Drag state: we distinguish a "tap" (press + release without moving, which
 // the webview turns into a JS click → tap event) from a "drag" (press + move
@@ -257,24 +283,28 @@ int main(int argc, char **argv) {
     WebKitUserContentManager *manager =
         webkit_web_view_get_user_content_manager(webview);
     webkit_user_content_manager_register_script_message_handler(manager, "bridge");
+    webkit_user_content_manager_register_script_message_handler(manager, "resize");
     g_signal_connect(manager, "script-message-received::bridge",
                      G_CALLBACK(on_script_message), NULL);
+    g_signal_connect(manager, "script-message-received::resize",
+                     G_CALLBACK(on_resize_message), NULL);
 
     // Window close → quit.
     g_signal_connect(window, "destroy", G_CALLBACK(gtk_main_quit), NULL);
 
-    // Wrap the webview in an EventBox so we can capture mouse events for
-    // window dragging (undecorated windows have no title bar to grab).
-    GtkWidget *ebox = gtk_event_box_new();
-    gtk_widget_set_events(ebox,
+    // Connect drag signals directly to the WebView. The WebView has its
+    // own GDK window, so wrapping it in an EventBox won't capture events
+    // (they go to the deepest GDK window, i.e. the WebView's).
+    // We need GDK_POINTER_MOTION_MASK and GDK_BUTTON1_MOTION_MASK on the
+    // WebView's GDK window so motion-notify-event fires.
+    gtk_widget_add_events(GTK_WIDGET(webview),
         GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK |
         GDK_POINTER_MOTION_MASK | GDK_BUTTON1_MOTION_MASK);
-    g_signal_connect(ebox, "button-press-event", G_CALLBACK(on_button_press), NULL);
-    g_signal_connect(ebox, "motion-notify-event", G_CALLBACK(on_motion_notify), NULL);
-    g_signal_connect(ebox, "button-release-event", G_CALLBACK(on_button_release), NULL);
+    g_signal_connect(webview, "button-press-event", G_CALLBACK(on_button_press), NULL);
+    g_signal_connect(webview, "motion-notify-event", G_CALLBACK(on_motion_notify), NULL);
+    g_signal_connect(webview, "button-release-event", G_CALLBACK(on_button_release), NULL);
 
-    gtk_container_add(GTK_CONTAINER(ebox), GTK_WIDGET(webview));
-    gtk_container_add(GTK_CONTAINER(window), ebox);
+    gtk_container_add(GTK_CONTAINER(window), GTK_WIDGET(webview));
     gtk_widget_show_all(window);
 
     // Watch stdin for commands on the GTK main loop.
