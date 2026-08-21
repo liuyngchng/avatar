@@ -141,41 +141,63 @@ static void on_resize_message(WebKitUserContentManager *manager,
 
 // Drag state: we distinguish a "tap" (press + release without moving, which
 // the webview turns into a JS click → tap event) from a "drag" (press + move
-// past a threshold, which moves the window). Once the threshold is crossed we
-// hand control to gtk_window_begin_move_drag(), which grabs the pointer so the
-// webview never sees the release and therefore produces no click.
-static gboolean g_pressing = FALSE;
-static gdouble  g_press_x = 0;
-static gdouble  g_press_y = 0;
+// past a threshold, which moves the window). We move the window manually so we
+// can clamp it to the screen edges — gtk_window_begin_move_drag() would give
+// GTK control and we couldn't clamp.
+static gboolean g_dragging = FALSE;
+static gint     g_win_x = 0, g_win_y = 0;   // window position at drag start
+static gdouble  g_press_x = 0, g_press_y = 0; // pointer position at drag start
 
 static gboolean on_button_press(GtkWidget *w, GdkEventButton *ev, gpointer data) {
     (void)w; (void)data;
     if (ev->button == 1) {
-        g_pressing = TRUE;
+        gtk_window_get_position(GTK_WINDOW(g_window), &g_win_x, &g_win_y);
         g_press_x = ev->x_root;
         g_press_y = ev->y_root;
+        g_dragging = FALSE; // not dragging yet — wait for the threshold
     }
     return FALSE; // let the webview handle the click normally
 }
 
 static gboolean on_motion_notify(GtkWidget *w, GdkEventMotion *ev, gpointer data) {
     (void)w; (void)data;
-    if (g_pressing && (ev->state & GDK_BUTTON1_MASK)) {
+    if (!(ev->state & GDK_BUTTON1_MASK)) return FALSE;
+    if (!g_dragging) {
+        // Check if we've moved past the 5px threshold.
         gdouble dx = ev->x_root - g_press_x;
         gdouble dy = ev->y_root - g_press_y;
-        if (dx * dx + dy * dy > 25.0) { // ~5px threshold
-            g_pressing = FALSE;
-            gtk_window_begin_move_drag(GTK_WINDOW(g_window), 1,
-                                       (gint)ev->x_root, (gint)ev->y_root,
-                                       ev->time);
-        }
+        if (dx * dx + dy * dy <= 25.0) return FALSE;
+        g_dragging = TRUE;
     }
+
+    // Compute desired new window position.
+    gint new_x = (gint)(g_win_x + (ev->x_root - g_press_x));
+    gint new_y = (gint)(g_win_y + (ev->y_root - g_press_y));
+
+    // Clamp to screen bounds so the window is never fully off-screen.
+    // Keep at least 80px of the window visible on every edge.
+    GdkMonitor *monitor = gdk_display_get_primary_monitor(
+        gdk_display_get_default());
+    GdkRectangle geom;
+    gdk_monitor_get_geometry(monitor, &geom);
+    gint scr_w = geom.width;
+    gint scr_h = geom.height;
+    gint win_w = 0, win_h = 0;
+    gtk_window_get_size(GTK_WINDOW(g_window), &win_w, &win_h);
+
+    gint min_visible = 80;
+    if (new_x < min_visible - win_w) new_x = min_visible - win_w;
+    if (new_x > scr_w - min_visible) new_x = scr_w - min_visible;
+    if (new_y < min_visible - win_h) new_y = min_visible - win_h;
+    if (new_y > scr_h - min_visible) new_y = scr_h - min_visible;
+
+    gtk_window_move(GTK_WINDOW(g_window), new_x, new_y);
     return FALSE;
 }
 
 static gboolean on_button_release(GtkWidget *w, GdkEventButton *ev, gpointer data) {
     (void)w; (void)ev; (void)data;
-    g_pressing = FALSE;
+    g_dragging = FALSE;
     return FALSE;
 }
 

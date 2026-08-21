@@ -550,60 +550,54 @@
     }
 
     // ─── Auto-fit window to avatar bounding box ─────────────────
-    // Renders one frame, projects the scene's bounding box to screen,
-    // and sends the pixel dimensions to the native window via the
-    // "resize" message handler.
+    // Computes the world-space bounding box of the avatar, picks a
+    // window size that matches its aspect ratio, and adjusts the
+    // camera distance so the avatar tightly fills the frame.
     function fitWindowToAvatar() {
-      // Render one frame so the model is positioned.
-      renderer.render(scene, camera);
-
-      // Compute the bounding box of all visible objects in screen space.
-      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-      const v = new THREE.Vector3();
-      const cw = renderer.domElement.clientWidth;
-      const ch = renderer.domElement.clientHeight;
-
+      // 1. Compute world-space bounding box of all meshes.
+      const box = new THREE.Box3();
       scene.traverse((obj) => {
         if (!obj.isMesh) return;
-        const box = new THREE.Box3().setFromObject(obj);
-        // 8 corners of the bounding box
-        const corners = [
-          [box.min.x, box.min.y, box.min.z],
-          [box.min.x, box.min.y, box.max.z],
-          [box.min.x, box.max.y, box.min.z],
-          [box.min.x, box.max.y, box.max.z],
-          [box.max.x, box.min.y, box.min.z],
-          [box.max.x, box.min.y, box.max.z],
-          [box.max.x, box.max.y, box.min.z],
-          [box.max.x, box.max.y, box.max.z],
-        ];
-        for (const c of corners) {
-          v.set(c[0], c[1], c[2]);
-          v.project(camera);
-          const sx = (v.x * 0.5 + 0.5) * cw;
-          const sy = (-v.y * 0.5 + 0.5) * ch;
-          if (sx < minX) minX = sx;
-          if (sy < minY) minY = sy;
-          if (sx > maxX) maxX = sx;
-          if (sy > maxY) maxY = sy;
-        }
+        box.expandByObject(obj);
       });
+      if (box.isEmpty()) return;
 
-      if (!isFinite(minX)) {
-        // No meshes found — fallback to a reasonable default.
-        minX = 0; minY = 0; maxX = cw; maxY = ch;
-      }
+      const size = new THREE.Vector3();
+      box.getSize(size);
+      const center = new THREE.Vector3();
+      box.getCenter(center);
 
-      // Add a small padding (10px) so the avatar doesn't touch the edge.
-      const pad = 10;
-      const w = Math.ceil(maxX - minX + pad * 2);
-      const h = Math.ceil(maxY - minY + pad * 2);
+      console.log('avatar world bbox:', size.x.toFixed(2), 'x', size.y.toFixed(2),
+                  'center:', center.x.toFixed(2), center.y.toFixed(2), center.z.toFixed(2));
 
-      console.log('fitWindowToAvatar:', w, 'x', h);
+      // 2. Pick a window height and compute matching width from the
+      //    avatar's world-space proportions. 5% margin so the avatar is tight
+      //    to the window edges.
+      const margin = 1.05;
+      const targetH = 600; // window height in CSS pixels
+      const aspect = size.x / size.y;
+      const targetW = Math.round(targetH * aspect);
 
-      // Tell the C UI to resize the window.
+      // 3. Compute camera distance so the avatar's height fills the
+      //    vertical FOV with the margin.
+      const fovRad = camera.fov * Math.PI / 180;
+      const dist = (size.y * margin) / (2 * Math.tan(fovRad / 2));
+
+      // 4. Position the camera directly in front of the avatar center.
+      camera.position.set(center.x, center.y, dist);
+      camera.lookAt(center.x, center.y, center.z);
+
+      // 5. Resize the renderer and update camera aspect ratio.
+      renderer.setSize(targetW, targetH);
+      camera.aspect = targetW / targetH;
+      camera.updateProjectionMatrix();
+
+      console.log('fitWindowToAvatar:', targetW, 'x', targetH, 'camera dist:', dist.toFixed(1));
+
+      // 6. Tell the C UI to resize the window.
       if (window.webkit?.messageHandlers?.resize) {
-        window.webkit.messageHandlers.resize.postMessage(JSON.stringify({ width: w, height: h }));
+        window.webkit.messageHandlers.resize.postMessage(
+          JSON.stringify({ width: targetW, height: targetH }));
       }
     }
 
