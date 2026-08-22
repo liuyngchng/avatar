@@ -1,5 +1,10 @@
 ubuntu 24.04 LTS
 
+```
+#编译C，需要webkitgtk
+make avatar-ui
+```
+
 set up webkitgtk
 
 ```
@@ -16,4 +21,14 @@ sudo apt install libgtk-3-dev libwebkit2gtk-4.1-dev
 pkg-config --cflags --libs webkit2gtk-4.1
 ```
 
-可以在docker 中运行编译
+以上涉及到C的可以在docker 中运行编译
+
+
+接着编译C
+```
+go build -o avatar-pc .
+```
+
+下面是 go 编译需要的
+
+sudo apt install libasound2-dev
