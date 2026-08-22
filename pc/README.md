@@ -287,15 +287,65 @@ github.com/mozillazg/go-pinyin   # 中文拼音转换（viseme 映射用）
 | Windows 10/11 | WebView2 Runtime | 系统自带 (Win10 1809+) |
 | Windows 10/11 | MinGW gcc (CGo 编译) | MSYS2: `pacman -S mingw-w64-x86_64-gcc` |
 
-### 离线模型（与 iOS/Android 共用）
+### 离线模型准备
 
-| 模型 | 文件 | 大小 |
-|------|------|------|
-| ASR: SenseVoiceSmall int8 | `model.int8.onnx` + `tokens.txt` | ~158MB |
-| TTS: Matcha-TTS zh-baker | `model.onnx` + `tokens.txt` + `lexicon.txt` | ~72MB |
-| Vocoder: vocos-22khz-univ | `vocos.onnx` | ~51MB |
-| KWS: Zipformer 3.3M | `model.onnx` + `tokens.txt` | ~13MB |
-| **合计** | | **~294MB** |
+PC 复用的是 sherpa-onnx 的离线模型，与 iOS/Android 端完全同源（URL 与 Android 的 `ModelManager.kt` 一致）。模型不提交 git（`pc/models/` 已在 `.gitignore` 中），需自行下载。
+
+#### 一键下载
+
+```bash
+cd pc/scripts
+./download-models.sh              # 下载全部（约 294MB）
+./download-models.sh --asr-only   # 仅 ASR
+./download-models.sh --tts-only   # 仅 TTS + vocoder
+./download-models.sh --kws-only   # 仅 KWS
+```
+
+脚本会自动下载、解压（`--strip-components=1`）、重命名，并最终逐文件校验。依赖 `curl` + `tar` + `bunzip2`（Ubuntu：`sudo apt install curl bzip2 tar`）。
+
+#### 目录结构
+
+```
+pc/models/
+├── asr/
+│   ├── model.int8.onnx    # SenseVoiceSmall int8 量化 (~158MB)
+│   └── tokens.txt
+├── tts/
+│   ├── model.onnx         # Matcha-TTS 声学模型 (~72MB)
+│   ├── vocos.onnx         # Vocos 声码器 (~51MB)
+│   ├── tokens.txt
+│   └── lexicon.txt
+└── kws/
+    ├── encoder.onnx       # Zipformer 3.3M 三件套 (~13MB)
+    ├── decoder.onnx
+    ├── joiner.onnx
+    └── tokens.txt
+```
+
+#### 模型清单与来源
+
+| 模块 | 文件 | 大小 | 下载来源 |
+|------|------|------|---------|
+| ASR (SenseVoiceSmall int8) | `model.int8.onnx`, `tokens.txt` | ~158MB | `asr-models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09.tar.bz2` |
+| TTS (Matcha-TTS zh-baker) | `model.onnx`, `tokens.txt`, `lexicon.txt` | ~72MB | `tts-models/matcha-icefall-zh-baker.tar.bz2` |
+| Vocoder (vocos-22khz-univ) | `vocos.onnx` | ~51MB | `vocoder-models/vocos-22khz-univ.onnx` |
+| KWS (Zipformer 3.3M) | `encoder.onnx`, `decoder.onnx`, `joiner.onnx`, `tokens.txt` | ~13MB | `kws-models/sherpa-onnx-kws-zipformer-wenetspeech-3.3M-2024-01-01.tar.bz2` |
+| **合计** | | **~294MB** | |
+
+完整 URL 前缀：`https://github.com/k2-fsa/sherpa-onnx/releases/download/<上面路径>`
+
+#### 关键注意点
+
+1. **TTS 必须是 Matcha-TTS，不是 VITS**。代码在 `internal/tts/engine.go` 里写死 `OfflineTtsMatchaModelConfig`，根目录那份 `download-models.sh` 下载的 VITS-aishell3 模型在 PC 上无法加载。要用本目录 `scripts/download-models.sh`。
+
+2. **Vocoder 需单独下载**。Matcha-TTS 包内不含声码器，`vocos-22khz-univ.onnx` 是独立文件，需单独下载并重命名为 `vocos.onnx`。
+
+3. **重命名规则**（脚本已自动处理，对齐 Android `RENAME_MAP`）：
+   - TTS: `model-steps-3.onnx` → `model.onnx`
+   - Vocoder: `vocos-22khz-univ.onnx` → `vocos.onnx`
+   - KWS: `encoder-epoch-*.onnx` → `encoder.onnx`（decoder/joiner 同理）
+
+4. **KWS 文件名可容错**：`internal/kws/engine.go` 的 `findFile()` 会按关键字（`encoder`/`decoder`/`joiner`/`tokens`）扫描目录，即使不重命名也能找到带 epoch/avg 后缀的文件，但推荐重命名为短名保持整洁。
 
 ## VRM 模型来源
 
