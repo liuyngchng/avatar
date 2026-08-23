@@ -198,18 +198,21 @@ static gdouble  g_press_x = 0, g_press_y = 0; // pointer position at drag start
 
 static gboolean on_button_press(GtkWidget *w, GdkEventButton *ev, gpointer data) {
     (void)w; (void)data;
-    if (ev->button == 1) {
+    // Only start a window drag when Ctrl is held.
+    if (ev->button == 1 && (ev->state & GDK_CONTROL_MASK)) {
         gtk_window_get_position(GTK_WINDOW(g_window), &g_win_x, &g_win_y);
         g_press_x = ev->x_root;
         g_press_y = ev->y_root;
-        g_dragging = FALSE; // not dragging yet — wait for the threshold
+        g_dragging = FALSE;
     }
-    return FALSE; // let the webview handle the click normally
+    return FALSE;
 }
 
 static gboolean on_motion_notify(GtkWidget *w, GdkEventMotion *ev, gpointer data) {
     (void)w; (void)data;
     if (!(ev->state & GDK_BUTTON1_MASK)) return FALSE;
+    // Only drag the window when Ctrl is held.
+    if (!(ev->state & GDK_CONTROL_MASK)) return FALSE;
     if (!g_dragging) {
         // Check if we've moved past the 5px threshold.
         gdouble dx = ev->x_root - g_press_x;
@@ -330,6 +333,14 @@ int main(int argc, char **argv) {
     GdkVisual *visual = gdk_screen_get_rgba_visual(screen);
     if (visual)
         gtk_widget_set_visual(window, visual);
+
+    // Position window at bottom-right corner of the screen.
+    gtk_window_set_gravity(GTK_WINDOW(window), GDK_GRAVITY_SOUTH_EAST);
+    GdkRectangle geom;
+    GdkMonitor *monitor = gdk_display_get_primary_monitor(
+        gdk_display_get_default());
+    gdk_monitor_get_geometry(monitor, &geom);
+    gtk_window_move(GTK_WINDOW(window), geom.x + geom.width, geom.y + geom.height);
 
     // ── WebView ──
     WebKitWebView *webview = WEBKIT_WEB_VIEW(webkit_web_view_new());

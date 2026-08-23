@@ -225,6 +225,7 @@ func (sm *StateMachine) pipeline() {
 	}()
 
 	// ── Phase 1: LISTENING — capture audio for ASR ──────────
+	log.Println("[ASR] 开始聆听...")
 	sm.setState(ModeListening, EmotionNeutral, "")
 	sm.mu.Lock()
 	sm.state.IsSpeaking = false
@@ -265,7 +266,7 @@ func (sm *StateMachine) pipeline() {
 			return
 		}
 		userText = strings.TrimSpace(result.Text)
-		log.Printf("state: ASR result=%q, lang=%s, emotion=%s", userText, result.Lang, result.Emotion)
+		log.Printf("[ASR] 结束: result=%q, lang=%s, emotion=%s", userText, result.Lang, result.Emotion)
 	}
 
 	if userText == "" {
@@ -277,7 +278,10 @@ func (sm *StateMachine) pipeline() {
 	sm.mu.Unlock()
 
 	// Call LLM.
+	log.Printf("[LLM] 请求开始: user=%q", userText)
+	llmStart := time.Now()
 	llmText := sm.callLLM(userText)
+	log.Printf("[LLM] 请求结束: 耗时=%v, chars=%d", time.Since(llmStart).Round(time.Millisecond), len(llmText))
 	if llmText == "" {
 		llmText = "你好，我是企业数字人，请问有什么可以帮你的？"
 	}
@@ -289,15 +293,19 @@ func (sm *StateMachine) pipeline() {
 	sm.emit()
 
 	// ── Phase 3: SPEAKING — TTS synthesis + playback ─────────
+	log.Printf("[TTS] 合成开始: text=%q", cleanText)
+	ttsStart := time.Now()
 	result, err := sm.ttsEngine.Synthesize(cleanText, 1.0)
 	if err != nil {
-		log.Printf("state: TTS synthesis failed: %v", err)
+		log.Printf("[TTS] 合成失败: %v", err)
 		sm.setState(ModeIdle, EmotionNeutral, "")
 		sm.emit()
 		return
 	}
 
 	audioDurMs := int(float64(len(result.Samples)) / float64(result.SampleRate) * 1000)
+	log.Printf("[TTS] 合成结束: 耗时=%v, 音频=%dms, samples=%d",
+		time.Since(ttsStart).Round(time.Millisecond), audioDurMs, len(result.Samples))
 	timeline := GenerateVisemeTimeline(cleanText, audioDurMs)
 	if timeline != nil {
 		log.Printf("state: viseme timeline: %d entries, audio %dms", len(timeline.Timeline), audioDurMs)
@@ -314,8 +322,9 @@ func (sm *StateMachine) pipeline() {
 	sm.emit()
 
 	if err := sm.audioPlayer.PlaySync(result.Samples); err != nil {
-		log.Printf("state: audio playback error: %v", err)
+		log.Printf("[TTS] 播放错误: %v", err)
 	}
+	log.Printf("[TTS] 播放结束, 对话回合完成")
 
 	sm.mu.Lock()
 	sm.state.IsSpeaking = false
@@ -439,10 +448,11 @@ func computeRMS(samples []float32) float64 {
 }
 
 func truncate(s string, maxLen int) string {
-	if len(s) <= maxLen {
+	runes := []rune(s)
+	if len(runes) <= maxLen {
 		return s
 	}
-	return s[:maxLen] + "..."
+	return string(runes[:maxLen]) + "..."
 }
 
 func (sm *StateMachine) setState(mode Mode, emotion Emotion, responseText string) {
@@ -450,9 +460,6 @@ func (sm *StateMachine) setState(mode Mode, emotion Emotion, responseText string
 	defer sm.mu.Unlock()
 	sm.state.Mode = mode
 	sm.state.Emotion = emotion
-	if responseText != "" {
-		sm.state.ResponseText = responseText
-	}
 }
 
 // EmotionFromString converts a string to an Emotion enum.

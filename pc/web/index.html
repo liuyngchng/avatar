@@ -7,7 +7,9 @@
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     html, body { width: 100%; height: 100%; overflow: hidden; background: transparent; }
-    #canvas { display: block; }
+    #canvas { display: block; opacity: 0; transition: opacity 1s ease-out; }
+    #canvas.visible { opacity: 1; }
+    #canvas.fading { opacity: 0; }
 
     /* Status overlay */
     .status {
@@ -19,30 +21,10 @@
     }
     .status.hidden { opacity: 0; }
 
-    /* Subtitle bar */
-    .subtitle {
-      position: fixed; bottom: 80px; left: 10%; right: 10%;
-      text-align: center; color: rgba(255,255,255,0.85);
-      font-family: 'PingFang SC', 'Microsoft YaHei', sans-serif;
-      font-size: 20px; pointer-events: none;
-      text-shadow: 0 0 8px rgba(0,0,0,0.5);
-      transition: opacity 0.3s;
-      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-    }
-    .subtitle.hidden { opacity: 0; }
-
-    /* Click anywhere */
-    .tap-hint {
-      position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%);
-      color: rgba(255,255,255,0.25); font-size: 14px; pointer-events: none;
-      font-family: 'PingFang SC', 'Microsoft YaHei', sans-serif;
-    }
   </style>
 </head>
 <body>
   <canvas id="canvas"></canvas>
-  <div class="tap-hint" id="tapHint">点击屏幕开始对话</div>
-  <div class="subtitle hidden" id="subtitle"></div>
   <div class="status" id="status"></div>
 
   <!-- All JS loaded locally (no CDN, for air-gapped deployment) -->
@@ -69,7 +51,6 @@
     let currentMode = 'idle';
     let currentEmotion = 'neutral';
     let isSpeaking = false;
-    let responseText = '';
 
     // Viseme state (for smooth lerp)
     // VRM1 uses: aa, ih, ou, ee, oh (not A/I/U/E/O)
@@ -114,8 +95,21 @@
     let mixer = null;              // THREE.AnimationMixer
     let animationMap = new Map();  // name → THREE.AnimationAction
     let currentAnimation = null;   // currently playing action name
-    let crossFadeTarget = null;    // action being faded to
     const animCrossFadeDuration = 0.35; // seconds for cross-fade
+
+    // Idle animation system: after 5s of idle, randomly play FBX animations.
+    // When user interacts, stop animations and restore default standing pose.
+    const IDLE_ANIM_DELAY = 10; // seconds before starting idle animations
+    let idleAnimTimer = 0;     // counts up when in idle mode with no animation
+    let idleAnimActive = false; // true when random idle animations are playing
+    let idleAnimNextSwitch = 0; // time when we should switch to the next random anim
+
+    // Idle animation pool — all 11 FBX animations for random idle playback.
+    const idleAnimPool = [
+      'Bored', 'CrossJumps', 'FightIdle', 'JumpingRope', 'Looking',
+      'LookingAround', 'MagicSpellCasting', 'OffensiveIdle',
+      'SearchingFilesHigh', 'StandingMagicAttack', 'TextingWhileStanding'
+    ];
 
     // Animation → mode mapping. Each mode/emotion picks one animation.
     // FBX files we have:
@@ -184,10 +178,10 @@
     rimLight.position.set(0.3, 1.5, -2.5);
     scene.add(rimLight);
 
-    // ─── Ground: shadow disc ────────────────────────────────
+    // ─── Ground: grid + shadow disc ─────────────────────────
     // The shadow disc is invisible but catches the avatar's shadow,
-    // anchoring it to the "ground". No grid — the transparent background
-    // already shows the desktop.
+    // anchoring it to the "ground". The grid gives the 3D world reference
+    // without blocking the desktop background.
     const groundY = AVATAR_Y; // y-level of the avatar's feet
 
     const shadowDisc = new THREE.Mesh(
@@ -198,6 +192,12 @@
     shadowDisc.position.y = groundY;
     shadowDisc.receiveShadow = true;
     scene.add(shadowDisc);
+
+    const gridHelper = new THREE.GridHelper(20, 40, 0x888888, 0xcccccc);
+    gridHelper.position.y = groundY;
+    gridHelper.material.opacity = 0.18;
+    gridHelper.material.transparent = true;
+    scene.add(gridHelper);
 
     // ─── Load VRM ───────────────────────────────────────────
     async function loadVRM(url) {
@@ -219,28 +219,8 @@
         if (obj.isMesh) { obj.castShadow = true; obj.receiveShadow = true; }
       });
 
-      // ── Fix arms: use official setNormalizedPose API ──────
-      // Rotations are quaternions [x, y, z, w] relative to the T-pose.
-      // In the T-pose the left arm points +X and the right arm points -X.
-      // A positive Z rotation turns +X toward +Y (up), so to lower the arms
-      // we rotate the LEFT arm by a NEGATIVE Z angle and the RIGHT arm by a
-      // POSITIVE Z angle. ~85° brings them nearly straight down.
-      if (vrm.humanoid) {
-        const down = 85 * (Math.PI / 180);   // how far down from horizontal
-        const s = Math.sin(down / 2);        // ≈ 0.676
-        const c = Math.cos(down / 2);        // ≈ 0.737
-
-        // Slight elbow bend (~8°) for a relaxed, natural look
-        const eS = Math.sin(4 * (Math.PI / 180));
-        const eC = Math.cos(4 * (Math.PI / 180));
-
-        vrm.humanoid.setNormalizedPose({
-          leftUpperArm:  { rotation: [0, 0, -s, c] },  // down
-          rightUpperArm: { rotation: [0, 0,  s, c] },  // down
-          leftLowerArm:  { rotation: [0, 0,  eS, eC] },
-          rightLowerArm: { rotation: [0, 0, -eS, eC] },
-        });
-      }
+      // ── Fix arms and fingers to natural standing pose ──
+      restoreDefaultPose();
 
       // ── Reset blink: eyes open on startup ──
       if (vrm.expressionManager) {
@@ -251,7 +231,6 @@
 
       console.log('VRM loaded:', vrm.meta?.metaVersion);
       console.log('Expressions:', Object.keys(vrm.expressionManager?.expressionMap || {}));
-      document.getElementById('tapHint').style.display = 'block';
       updateStatus();
 
       // Load FBX animations and initialize the mixer.
@@ -261,6 +240,90 @@
 
       // Auto-fit the GTK window to just the avatar's visible bounds.
       setTimeout(fitWindowToAvatar, 100);
+
+      // Fade the avatar in once everything is ready.
+      setTimeout(() => {
+        canvas.classList.add('visible');
+        console.log('[INFO] 数字人淡入完成');
+      }, 300);
+    }
+
+    // Restore arms and fingers to the natural standing pose.
+    // Called when returning from FBX animation to idle default pose.
+    function restoreDefaultPose() {
+      if (!vrm?.humanoid) return;
+      const down = 77.4 * (Math.PI / 180);
+      const s = Math.sin(down / 2);
+      const c = Math.cos(down / 2);
+      const eS = Math.sin(4 * (Math.PI / 180));
+      const eC = Math.cos(4 * (Math.PI / 180));
+
+      // Build the full normalized pose: arms + fingers + reset all other bones.
+      const pose = {
+        leftUpperArm:  { rotation: [0, 0, -s, c] },
+        rightUpperArm: { rotation: [0, 0,  s, c] },
+        leftLowerArm:  { rotation: [0, 0,  eS, eC] },
+        rightLowerArm: { rotation: [0, 0, -eS, eC] },
+      };
+
+      // Reset all finger bones to identity (T-pose), then add curl.
+      const fingerBones = [
+        'leftThumbMetacarpal','leftThumbProximal','leftThumbIntermediate','leftThumbDistal',
+        'leftIndexProximal','leftIndexIntermediate','leftIndexDistal',
+        'leftMiddleProximal','leftMiddleIntermediate','leftMiddleDistal',
+        'leftRingProximal','leftRingIntermediate','leftRingDistal',
+        'leftLittleProximal','leftLittleIntermediate','leftLittleDistal',
+        'rightThumbMetacarpal','rightThumbProximal','rightThumbIntermediate','rightThumbDistal',
+        'rightIndexProximal','rightIndexIntermediate','rightIndexDistal',
+        'rightMiddleProximal','rightMiddleIntermediate','rightMiddleDistal',
+        'rightRingProximal','rightRingIntermediate','rightRingDistal',
+        'rightLittleProximal','rightLittleIntermediate','rightLittleDistal',
+      ];
+      const identity = [0, 0, 0, 1];
+      for (const name of fingerBones) {
+        pose[name] = { rotation: identity };
+      }
+
+      // Apply finger curl as quaternion rotations around the local Z axis.
+      const fingerCurl = {
+        index:  { proximal: 0.15, intermediate: 0.25, distal: 0.15 },
+        middle: { proximal: 0.12, intermediate: 0.20, distal: 0.12 },
+        ring:   { proximal: 0.18, intermediate: 0.28, distal: 0.18 },
+        little: { proximal: 0.22, intermediate: 0.35, distal: 0.22 },
+      };
+      const thumbCurl = { meta: 0.10, prox: 0.15, inter: 0.10, dist: 0.08 };
+
+      const sides = ['left', 'right'];
+      for (const side of sides) {
+        const curlDir = side === 'left' ? -1 : 1;
+
+        for (const [finger, angles] of Object.entries(fingerCurl)) {
+          const cap = finger.charAt(0).toUpperCase() + finger.slice(1);
+          for (const [joint, angle] of Object.entries(angles)) {
+            const jointName = joint.charAt(0).toUpperCase() + joint.slice(1);
+            const boneName = side + cap + jointName;
+            const a = curlDir * angle;
+            const hs = Math.sin(a / 2);
+            const hc = Math.cos(a / 2);
+            pose[boneName] = { rotation: [0, 0, hs, hc] };
+          }
+        }
+
+        // Thumb
+        pose[side + 'ThumbMetacarpal']    = { rotation: [0, 0, Math.sin(curlDir * thumbCurl.meta / 2),  Math.cos(curlDir * thumbCurl.meta / 2)] };
+        pose[side + 'ThumbProximal']      = { rotation: [0, 0, Math.sin(curlDir * thumbCurl.prox / 2),  Math.cos(curlDir * thumbCurl.prox / 2)] };
+        pose[side + 'ThumbIntermediate']  = { rotation: [0, 0, Math.sin(curlDir * thumbCurl.inter / 2), Math.cos(curlDir * thumbCurl.inter / 2)] };
+        pose[side + 'ThumbDistal']        = { rotation: [0, 0, Math.sin(curlDir * thumbCurl.dist / 2),  Math.cos(curlDir * thumbCurl.dist / 2)] };
+      }
+
+      vrm.humanoid.setNormalizedPose(pose);
+    }
+
+    // Curl finger bones into a natural relaxed hand pose.
+    // Deprecated in favor of restoreDefaultPose() which handles everything via
+    // setNormalizedPose. Kept for backward compatibility.
+    function setFingerPose() {
+      restoreDefaultPose();
     }
 
     // ─── Try to load a local VRM model, fallback to a simple placeholder ──
@@ -323,7 +386,6 @@
       window._placeholder = { group, headGroup, mouth, leftEye, rightEye };
 
       console.log('Placeholder avatar created');
-      document.getElementById('tapHint').style.display = 'block';
       updateStatus();
 
       // Auto-fit the GTK window to just the avatar's visible bounds.
@@ -351,6 +413,20 @@
         updateVRMVisemes(dt);
         updateVRMIdleMicro(dt);
         updateWindowMove(dt);
+
+        // Idle animation timer: start random FBX animations after 5s of idle.
+        if (currentMode === 'idle' && mixer && animationMap.size > 0) {
+          if (!idleAnimActive && !isSpeaking) {
+            idleAnimTimer += dt;
+            if (idleAnimTimer >= IDLE_ANIM_DELAY) {
+              startIdleAnimations();
+            }
+          }
+          // Rotate to next random animation when the current one's time is up.
+          if (idleAnimActive && idleAnimNextSwitch > 0 && idleTime >= idleAnimNextSwitch) {
+            playRandomIdleAnim();
+          }
+        }
 
         // VRM needs to be updated each frame for expressions to apply
         vrm.update(dt);
@@ -446,6 +522,8 @@
     function updateVRMIdleMicro(dt) {
       if (currentMode !== 'idle') return;
       if (!vrm?.scene) return;
+      // When FBX idle animation is playing, the animation drives body movement.
+      if (idleAnimActive) return;
 
       const t = idleTime;
       // Subtle breathing (layered on top of the fixed root height)
@@ -548,30 +626,19 @@
     // ─── Status UI ──────────────────────────────────────────
     function updateStatus() {
       const el = document.getElementById('status');
-      const sub = document.getElementById('subtitle');
-      const hint = document.getElementById('tapHint');
 
       switch (currentMode) {
         case 'idle':
           el.textContent = '';
-          sub.classList.add('hidden');
-          hint.style.display = 'block';
           break;
         case 'listening':
           el.textContent = '聆听中...';
-          sub.classList.add('hidden');
-          hint.style.display = 'none';
           break;
         case 'thinking':
           el.textContent = '思考中...';
-          sub.classList.add('hidden');
-          hint.style.display = 'none';
           break;
         case 'speaking':
           el.textContent = '';
-          sub.textContent = responseText || '';
-          sub.classList.remove('hidden');
-          hint.style.display = 'none';
           break;
       }
     }
@@ -587,6 +654,10 @@
     window.handleMessage = function(jsonStr) {
       try {
         const msg = JSON.parse(jsonStr);
+        if (msg.cmd === 'fade_out') {
+          fadeOutAvatar();
+          return;
+        }
         if (msg.type === 'viseme_timeline') {
           if (currentMode === 'speaking') {
             // Already speaking — play immediately.
@@ -605,9 +676,18 @@
         if (msg.mode) {
           currentMode = msg.mode;
           isSpeaking = msg.isSpeaking || false;
-          responseText = msg.responseText || '';
           if (msg.emotion) currentEmotion = msg.emotion;
           updateStatus();
+
+          // Stop idle FBX animations when entering conversation modes.
+          if (currentMode !== 'idle') {
+            stopIdleAnimations();
+            idleAnimTimer = 0;
+          } else {
+            // Reset idle timer when returning to idle (fresh 5s countdown).
+            idleAnimTimer = 0;
+          }
+
           if (currentMode === 'speaking' && pendingTimeline) {
             // Audio just started — fire the stored viseme timeline.
             playVisemeTimeline(pendingTimeline);
@@ -698,8 +778,8 @@
         applyViseme('rest', 0);
       }
 
-      // Switch FBX animation to match the current mode + emotion.
-      playAnimation(currentMode, currentEmotion);
+      // Note: FBX animations are now managed by the idle animation system
+      // (startIdleAnimations / stopIdleAnimations), not by mode/emotion here.
     }
 
     // ─── JS Bridge: Send events to Go ───────────────────────
@@ -741,7 +821,7 @@
       const box = new THREE.Box3();
       scene.traverse((obj) => {
         // Skip the ground helpers — they're huge and would distort the bbox.
-        if (!obj.isMesh || obj === shadowDisc) return;
+        if (!obj.isMesh || obj === shadowDisc || obj === gridHelper) return;
         box.expandByObject(obj);
       });
       if (box.isEmpty()) return;
@@ -751,25 +831,25 @@
       const center = new THREE.Vector3();
       box.getCenter(center);
 
-      console.log('avatar world bbox:', size.x.toFixed(2), 'x', size.y.toFixed(2),
-                  'center:', center.x.toFixed(2), center.y.toFixed(2), center.z.toFixed(2));
+      console.log('[INFO] 角色包围盒: 宽=' + size.x.toFixed(2) + ' 高=' + size.y.toFixed(2) +
+                  ' 中心=(' + center.x.toFixed(2) + ', ' + center.y.toFixed(2) + ', ' + center.z.toFixed(2) + ')');
 
       // Store world-space extents for camera fit.
       avatarBounds.worldW = size.x;
       avatarBounds.worldH = size.y;
       avatarBounds.worldCenter.copy(center);
 
-      // Target: avatar height = half the screen height.
+      // Target: avatar height = 60% of the screen height.
       const screenH = screen.height || 1080; // fallback if screen is unavailable
-      const targetPxH = Math.round(screenH * 0.5);
+      const targetPxH = Math.round(screenH * 0.6);
       const winH = targetPxH;
       // Square window — width follows the avatar height, not the avatar
       // width, so the avatar has room to rotate (drag to orbit) and the grid
       // extends on both sides without clipping.
       const winW = winH;
 
-      console.log('fitWindowToAvatar: target px height:', targetPxH,
-                  'window:', winW, 'x', winH);
+      console.log('[INFO] 窗口尺寸: ' + winW + '×' + winH +
+                  ' (屏幕高度=' + screenH + ', 占比=60%)');
 
       // Tell the C UI to resize the window.
       if (window.webkit?.messageHandlers?.resize) {
@@ -785,7 +865,9 @@
     function fitCameraToWindow() {
       if (!avatarBounds.worldH) return;
 
-      const margin = 1.02;
+      // Larger vertical margin leaves empty space above the head AND below
+      // the feet, so forward-leaning animation poses don't clip the feet.
+      const margin = 1.33; // 1/0.75, avatar occupies 75% of window height
       const fovRad = camera.fov * Math.PI / 180;
 
       const distH = (avatarBounds.worldW * margin) / (2 * Math.tan(fovRad / 2) * camera.aspect);
@@ -797,8 +879,8 @@
       camera.updateProjectionMatrix();
       updateOrbitCamera(); // uses current orbitTheta/orbitPhi/orbitDist
 
-      console.log('fitCameraToWindow: dist:', dist.toFixed(1),
-                  'pos:', camera.position.x.toFixed(2), camera.position.y.toFixed(2));
+      console.log('[INFO] 相机: 距离=' + dist.toFixed(1) +
+                  ' margin=' + margin.toFixed(2) + ' fov=' + camera.fov + '°');
     }
 
     // ─── FBX Animation Loading & Retargeting ─────────────────
@@ -850,7 +932,7 @@
     // Retarget a single Mixamo AnimationClip to the VRM skeleton using the
     // official three-vrm approach (quaternion space transform).
     function retargetMixamoClip(rawClip, fbxGroup, vrm) {
-      const clip = THREE.AnimationClip.findByName(rawClip, 'mixamo.com') || rawClip;
+      const clip = rawClip; // rawClip is already clips[0] from loadFBXAnimations
 
       const tracks = [];
 
@@ -930,9 +1012,81 @@
       // Free raw clip data (no longer needed).
       rawClipMap.clear();
 
-      // Play the idle animation immediately.
-      playAnimation('idle');
-      console.log(`AnimationMixer initialized with ${animationMap.size} actions`);
+      console.log(`[FBX] AnimationMixer initialized with ${animationMap.size} actions`);
+      console.log(`[FBX] 空闲动画将在 ${IDLE_ANIM_DELAY}s 后开始随机播放`);
+    }
+
+    // ─── Idle Animation Control ─────────────────────────────
+    // Start playing random idle animations. Called when the idle timer expires.
+    function startIdleAnimations() {
+      if (idleAnimActive) return;
+      if (!mixer || animationMap.size === 0) return;
+      idleAnimActive = true;
+      playRandomIdleAnim();
+      console.log('[FBX] 空闲动画开始播放');
+    }
+
+    // Stop all animations and restore the default standing pose.
+    function stopIdleAnimations() {
+      if (!idleAnimActive) return;
+      idleAnimActive = false;
+      idleAnimNextSwitch = 0;
+
+      // Fade out all running actions, then restore the default pose.
+      // The pose restore is deferred because the mixer keeps writing bone
+      // transforms during the fadeOut period.
+      if (mixer && currentAnimation) {
+        const action = animationMap.get(currentAnimation);
+        if (action && action.isRunning()) {
+          action.fadeOut(animCrossFadeDuration);
+        }
+      }
+      currentAnimation = null;
+
+      // Defer pose restore until after the fadeOut completes.
+      setTimeout(() => {
+        if (!idleAnimActive) {
+          restoreDefaultPose();
+        }
+      }, animCrossFadeDuration * 1000 + 50);
+
+      console.log('[FBX] 空闲动画停止, 恢复默认站姿');
+    }
+
+    // Fade the avatar canvas out gracefully on shutdown.
+    function fadeOutAvatar() {
+      canvas.classList.add('fading');
+      console.log('[INFO] 数字人淡出中...');
+    }
+
+    // Pick and play a random animation from the idle pool.
+    function playRandomIdleAnim() {
+      if (!mixer || !idleAnimActive) return;
+
+      // Pick a random animation different from the current one.
+      let pool = idleAnimPool;
+      if (currentAnimation && pool.length > 1) {
+        pool = pool.filter(n => n !== currentAnimation);
+      }
+      const animName = pool[Math.floor(Math.random() * pool.length)];
+      const action = animationMap.get(animName);
+      if (!action) return;
+
+      const prevAction = currentAnimation ? animationMap.get(currentAnimation) : null;
+      currentAnimation = animName;
+
+      if (prevAction && prevAction.isRunning()) {
+        action.reset().play();
+        action.crossFadeFrom(prevAction, animCrossFadeDuration, true);
+      } else {
+        action.reset().play();
+        action.setEffectiveWeight(1.0);
+      }
+
+      // Schedule next switch: play for 4-8 seconds.
+      const duration = 4 + Math.random() * 4;
+      idleAnimNextSwitch = idleTime + duration;
+      console.log(`[FBX] 播放动画: ${animName} (${duration.toFixed(1)}s)`);
     }
 
     // ─── Animation State Machine ──────────────────────────────
@@ -995,22 +1149,24 @@
       return hits.length > 0;
     }
 
-    // Ctrl+drag moves the window; a plain drag orbits the camera.
-    // { startX, startY, lastX, lastY, moved, isOrbit }
+    // Ctrl+drag moves the window (handled by GTK layer).
+    // Plain drag orbits the camera.
+    // { startX, startY, lastX, lastY, moved }
     let dragWindow = null;
 
     document.addEventListener('mousedown', (e) => {
       if (e.button !== 0) return; // left button only
 
-      // Ctrl+drag → move the window. Plain drag → orbit the camera.
-      const isOrbit = !keys.ctrl;
+      // Ctrl+drag → GTK handles window move, JS does nothing.
+      if (keys.ctrl) return;
+
+      // Plain drag → orbit the camera.
       dragWindow = {
         startX: e.screenX,
         startY: e.screenY,
         lastX: e.screenX,
         lastY: e.screenY,
         moved: false,
-        isOrbit,
       };
     });
 
@@ -1035,16 +1191,11 @@
       }
 
       if (dragWindow.moved) {
-        if (dragWindow.isOrbit) {
-          // Plain drag: orbit the camera around the avatar.
-          orbitTheta -= dx * orbitSpeed;
-          orbitPhi += dy * orbitSpeed;
-          // Clamp vertical angle so the camera doesn't flip.
-          orbitPhi = Math.max(-1.4, Math.min(1.4, orbitPhi));
-        } else if (window.goBridge_moveWindow) {
-          // Ctrl+drag: move the window.
-          window.goBridge_moveWindow(dx, dy);
-        }
+        // Plain drag: orbit the camera around the avatar.
+        orbitTheta -= dx * orbitSpeed;
+        orbitPhi += dy * orbitSpeed;
+        // Clamp vertical angle so the camera doesn't flip.
+        orbitPhi = Math.max(-1.4, Math.min(1.4, orbitPhi));
       }
 
       dragWindow.lastX = e.screenX;
@@ -1057,6 +1208,7 @@
       dragWindow = null;
       canvas.style.cursor = 'default';
       if (!wasDrag) {
+        console.log('[INPUT] 鼠标点击 (tap)');
         sendEvent('tap', {});
       }
     });
@@ -1067,6 +1219,7 @@
 
       if (e.key === ' ' || e.key === 'Enter') {
         e.preventDefault();
+        console.log('[INPUT] 键盘触发 (key=' + e.key + ')');
         sendEvent('tap', {});
         return;
       }

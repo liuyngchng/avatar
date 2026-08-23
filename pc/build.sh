@@ -1,21 +1,38 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-cd "$(dirname "$0")"
-
-# ─── Check avatar-ui ──────────────────────────────────────────
-if [ ! -f avatar-ui ]; then
-  echo "⚠️  avatar-ui not found (C binary, needs WebKitGTK to compile)."
-  echo "   Build it in Docker:"
-  echo ""
-  echo "   docker run --rm -v \$(pwd):/workspace -w /workspace ubuntu:24.04 bash -c '"
-  echo "     apt update && apt install -y build-essential pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev &&"
-  echo "     make avatar-ui"
-  echo "   '"
-  echo ""
+# ─── 1. Check we're in the pc directory ──────────────────────────
+if [[ ! -f "main.go" ]] || [[ ! -f "go.mod" ]]; then
+  echo "❌ ERROR: run this script from the pc/ directory"
+  exit 1
 fi
+echo "✔ OK: current directory = $(pwd)"
 
-# ─── Build Go backend ─────────────────────────────────────────
-echo "Building avatar-pc..."
+# ─── 2. Check docker is available ────────────────────────────────
+if ! command -v docker &>/dev/null; then
+  echo "❌ ERROR: docker not found, please install Docker first"
+  exit 1
+fi
+echo "✔ OK: docker found"
+
+# ─── 3. Check the build image exists ─────────────────────────────
+IMAGE="avatar_webkit_gtk:1.0"
+if ! docker image inspect "$IMAGE" &>/dev/null; then
+  echo "❌ ERROR: Docker image $IMAGE does not exist"
+  echo "       build it first (see README.md for instructions)"
+  exit 1
+fi
+echo "✔ OK: image $IMAGE ready"
+
+# ─── 4. Build avatar-ui (C) in Docker ────────────────────────────
+echo "🔨 Building avatar-ui (in Docker)..."
+docker run --rm -v "$(pwd)":/workspace -w /workspace "$IMAGE" make avatar-ui
+echo "✔ OK: avatar-ui built"
+
+# ─── 5. Build avatar-pc (Go) ─────────────────────────────────────
+echo "🔨 Building avatar-pc..."
 go build -o avatar-pc .
-echo "✔ avatar-pc built"
+echo "✔ OK: avatar-pc built"
+
+echo ""
+echo "✅ Done: avatar-ui + avatar-pc"

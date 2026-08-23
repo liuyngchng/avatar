@@ -40,6 +40,10 @@ docker rm my_webkitgtk
 
 ```sh
 cd avatar/pc
+
+docker run --rm -v $(pwd):/workspace -w /workspace avatar_webkit_gtk:1.0 make avatar-ui
+
+# 分步骤执行
 docker run -dit --rm --name my_webkitgtk -v $(pwd):/workspace -w /workspace avatar_webkit_gtk:1.0
 docker exec -it my_webkitgtk bash
 make avatar-ui
@@ -180,8 +184,8 @@ pc/
 | 后端 | C, Go, js |
 | 窗口 | GTK3 + WebKit2GTK（Linux）、WebView2（Windows） |
 | 3D 渲染 | three.js + three-vrm（WebGL） |
-| ASR | sherpa-onnx SenseVoiceSmall int8 |
+| ASR | sherpa-onnx SenseVoiceSmall |
 | TTS | sherpa-onnx Matcha-TTS + vocos |
-| 唤醒词 | sherpa-onnx KWS Zipformer 3.3M |
+| 唤醒词 | sherpa-onnx KWS Zipformer |
 | 对话 | LLM HTTP 流式 API（OpenAI 兼容） |
 | 3D 模型 | VRM 格式（VRoid Studio 免费制作） |

@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"syscall"
+	"time"
 
 	"github.com/liuyngchng/avatar-pc/internal/asr"
 	"github.com/liuyngchng/avatar-pc/internal/audio"
@@ -160,6 +161,9 @@ func main() {
 	go func() {
 		<-sigCh
 		log.Println("Avatar PC shutting down...")
+		// Send fade-out before closing.
+		r.SendMessage(map[string]string{"cmd": "fade_out"})
+		time.Sleep(1100 * time.Millisecond)
 		r.Close()
 	}()
 
