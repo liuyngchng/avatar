@@ -4,31 +4,57 @@
 
 **Go 做大脑（状态机、ASR/TTS/KWS、LLM 对话），WebKitGTK 做脸（three.js + three-vrm 渲染），中间 JS Bridge 通信。**
 
-## 快速开始
 
-### 前提
+
+# 前提
 
 - Ubuntu 24.04 桌面版
 - `~/Desktop/siri_models/` 目录下已有模型文件（见下方「模型准备」）
 
-### 1. 构建
+# 1. C build
+
+
+
+**（1）首次构建**
 
 ```bash
+cd ~/workspace/avatar/pc
 # avatar-ui（C 程序，需 WebKitGTK 开发库，放 Docker 里编译）
-docker run --rm -v $(pwd):/workspace -w /workspace ubuntu:24.04 bash -c '
-  apt update && apt install -y build-essential pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev &&
-  make avatar-ui
-'
+docker run -dit --name my_webkitgtk -v $(pwd):/workspace -w /workspace ubuntu:24.04
 
-# avatar-pc（Go 后端，本地编译）
-./build.sh
+docker exec -it my_webkitgtk bash
+apt update
+# 中间需要手动输入时区之类的
+apt install -y build-essential pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev
+make avatar-ui
+exit
+# 提交保存镜像
+docker commit my_webkitgtk avatar_webkit_gtk:1.0
+docker stop my_webkitgtk
+docker rm my_webkitgtk
+
+
 ```
 
-产物：`avatar-ui` + `avatar-pc`
+**（2）后续构建**
 
-### 2. 模型准备
+```sh
+docker run -dit --name my_webkitgtk -v $(pwd):/workspace -w /workspace avatar_webkit_gtk:1.0
+docker exec -it my_webkitgtk bash
+make avatar-ui
+```
 
-假定 `~/Desktop/siri_models/` 下已有以下文件：
+**（3）修改权限**
+
+```sh
+sudo chown rd:rd avatar-ui
+```
+
+最终产物：`avatar-ui`
+
+# 2. 模型准备
+
+在目录`~/siri_models/` 下准备以下文件：
 
 ```
 siri_models/
@@ -45,6 +71,7 @@ SRC=~/Desktop/siri_models
 DST=models
 
 # ASR
+cd avatar/pc
 mkdir -p $DST/asr
 tar xf $SRC/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09.tar \
     --strip-components=1 -C $DST/asr
@@ -85,13 +112,29 @@ models/
     └── tokens.txt
 ```
 
-### 3. 运行
+# 3. go build
+
+```sh
+sudo apt update
+sudo apt install -y pkg-config
+# 语音输入（录音）的核心库
+sudo apt install -y libasound2-dev
+# 国内用户先设置代理
+go env -w GOPROXY=https://goproxy.cn,direct   
+./build.sh
+```
+
+
+
+最终产物：`avatar-ui` + `avatar-pc` 
+
+# 4. 运行
 
 ```bash
 ./avatar-pc
 ```
 
-## 项目结构
+## 4.1 项目结构
 
 ```
 pc/
@@ -120,7 +163,7 @@ pc/
     └── kws/
 ```
 
-## 技术栈
+## 4.2 技术栈
 
 | 层 | 技术 |
 |----|------|
