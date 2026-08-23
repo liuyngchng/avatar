@@ -1,0 +1,38 @@
+# Avatar Web 配置文件模板
+# 复制此文件为 cfg.yml 并填入实际值
+
+# LLM 对话
+llm:
+  base_url: "https://api.deepseek.com"
+  api_key: "sk-123456"
+  model: "deepseek-v4-flash"
+
+# 唤醒词（sherpa-onnx 关键词格式: "音素序列 @中文显示名"）
+# 默认: "x iǎo h uǒ x iǎo h uǒ @小火小火"
+wake_word: "x iǎo h uǒ x iǎo h uǒ @小火小火"
+
+# ASR 语音识别: "offline" 使用本地 sherpa-onnx, "online" 使用云端 API
+asr:
+  mode: "offline"
+  # 在线 ASR 配置（仅 mode=online 时需要）
+  base_url: "https://api.openai.com/v1"
+  api_key: ""
+  model: "whisper-1"
+
+# TTS 语音合成: "offline" 使用本地 Matcha-TTS, "online" 使用云端 API
+tts:
+  mode: "offline"
+  # 在线 TTS 配置（仅 mode=online 时需要）
+  base_url: "https://api.openai.com/v1"
+  api_key: ""
+  model: "tts-1"
+  voice: "alloy"
+
+# HTTP 服务器
+server:
+  port: 8080
+  static_dir: "web"
+  # TLS 证书（可选）: 如果 cert.pem/key.pem 存在则自动启用 HTTPS
+  # 用 ./avatar-server -gen-cert 生成自签名证书
+  # cert_file: "cert.pem"
+  # key_file: "key.pem"

@@ -1,0 +1,16 @@
+module github.com/liuyngchng/avatar-web
+
+go 1.24.13
+
+require (
+	github.com/gorilla/websocket v1.5.3
+	github.com/k2-fsa/sherpa-onnx-go v1.13.6
+	github.com/mozillazg/go-pinyin v0.21.0
+	gopkg.in/yaml.v3 v3.0.1
+)
+
+require (
+	github.com/k2-fsa/sherpa-onnx-go-linux v1.13.6 // indirect
+	github.com/k2-fsa/sherpa-onnx-go-macos v1.13.6 // indirect
+	github.com/k2-fsa/sherpa-onnx-go-windows v1.13.6 // indirect
+)

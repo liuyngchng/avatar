@@ -70,6 +70,13 @@ pc/models/*
 !pc/models/README.md
 pc/cfg.yml
 
+# ── Web (Go) ───────────────────────────────────────────
+web/avatar-server
+web/avatar-server.exe
+web/cfg.yml
+web/cert.pem
+web/key.pem
+
 # ── Secrets ───────────────────────────────────────────
 *.keystore
 *.jks
