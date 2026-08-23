@@ -137,6 +137,54 @@ static void on_resize_message(WebKitUserContentManager *manager,
     g_free(str);
 }
 
+// ─── JS → C move handler (WASD / Ctrl+drag → move window) ────
+
+static void on_move_message(WebKitUserContentManager *manager,
+                            WebKitJavascriptResult  *result,
+                            gpointer                 user_data) {
+    (void)manager;
+    (void)user_data;
+
+    JSCValue *value = webkit_javascript_result_get_js_value(result);
+    gchar *str = jsc_value_to_string(value);
+    if (!str) return;
+
+    // Parse {"dx":N,"dy":M} manually.
+    int dx = 0, dy = 0;
+    const char *dxpos = strstr(str, "\"dx\"");
+    const char *dypos = strstr(str, "\"dy\"");
+    if (dxpos) { dxpos += 4; while (*dxpos && *dxpos != '-' && (*dxpos < '0' || *dxpos > '9')) dxpos++; dx = (int)strtol(dxpos, NULL, 10); }
+    if (dypos) { dypos += 4; while (*dypos && *dypos != '-' && (*dypos < '0' || *dypos > '9')) dypos++; dy = (int)strtol(dypos, NULL, 10); }
+
+    if (dx != 0 || dy != 0) {
+        gint wx, wy;
+        gtk_window_get_position(GTK_WINDOW(g_window), &wx, &wy);
+        gint new_x = wx + dx;
+        gint new_y = wy + dy;
+
+        // Clamp to screen bounds so the window is never fully off-screen.
+        // Keep at least 80px of the window visible on every edge.
+        GdkMonitor *monitor = gdk_display_get_primary_monitor(
+            gdk_display_get_default());
+        GdkRectangle geom;
+        gdk_monitor_get_geometry(monitor, &geom);
+        gint scr_w = geom.width;
+        gint scr_h = geom.height;
+        gint win_w = 0, win_h = 0;
+        gtk_window_get_size(GTK_WINDOW(g_window), &win_w, &win_h);
+
+        gint min_visible = 80;
+        if (new_x < min_visible - win_w) new_x = min_visible - win_w;
+        if (new_x > scr_w - min_visible) new_x = scr_w - min_visible;
+        if (new_y < min_visible - win_h) new_y = min_visible - win_h;
+        if (new_y > scr_h - min_visible) new_y = scr_h - min_visible;
+
+        gtk_window_move(GTK_WINDOW(g_window), new_x, new_y);
+    }
+
+    g_free(str);
+}
+
 // ─── Window dragging (undecorated window has no title bar) ────────
 
 // Drag state: we distinguish a "tap" (press + release without moving, which
@@ -306,10 +354,13 @@ int main(int argc, char **argv) {
         webkit_web_view_get_user_content_manager(webview);
     webkit_user_content_manager_register_script_message_handler(manager, "bridge");
     webkit_user_content_manager_register_script_message_handler(manager, "resize");
+    webkit_user_content_manager_register_script_message_handler(manager, "move");
     g_signal_connect(manager, "script-message-received::bridge",
                      G_CALLBACK(on_script_message), NULL);
     g_signal_connect(manager, "script-message-received::resize",
                      G_CALLBACK(on_resize_message), NULL);
+    g_signal_connect(manager, "script-message-received::move",
+                     G_CALLBACK(on_move_message), NULL);
 
     // Window close → quit.
     g_signal_connect(window, "destroy", G_CALLBACK(gtk_main_quit), NULL);

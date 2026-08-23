@@ -57,8 +57,10 @@ func findUIBinary() (string, error) {
 			return candidate, nil
 		}
 	}
+	// Check current working directory (covers "go run ." case).
+	// Use "./avatar-ui" so exec.Command finds it in the current directory.
 	if _, err := os.Stat(uiBinaryName); err == nil {
-		return uiBinaryName, nil
+		return "./" + uiBinaryName, nil
 	}
 	return "", errors.New("avatar-ui binary not found; build it with `make avatar-ui` or `make build`")
 }

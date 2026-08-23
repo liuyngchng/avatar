@@ -59,6 +59,8 @@
   <script type="module">
     import * as THREE from 'three';
     import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+    import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
+    import { mixamoVRMRigMap } from './js/mixamoVRMRigMap.js';
     import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm';
 
     // ─── Globals ────────────────────────────────────────────
@@ -80,9 +82,57 @@
     // timeline plays itself when it eventually arrives.
     let pendingTimeline = null;
 
-    // Eyes stay open (no blinking) — see updateVRMBlink.
-    // Idle micro-movement
+    // Blink state (4-phase state machine: open → closing → closed → opening → open)
+    let blinkTimer = 0;
+    let blinkInterval = 3.0;    // seconds between blinks
+    let blinkValue = 0;
+    let blinkPhase = 'open';    // 'open' | 'closing' | 'closed' | 'opening'
     let idleTime = 0;
+
+    // Avatar is always centered in the window. Movement is done by moving the
+    // entire window (via the IPC bridge), not by repositioning the avatar
+    // within the window.
+    const AVATAR_Y = -0.95;
+
+    // Measured avatar world-space extents. Populated by fitWindowToAvatar()
+    // once the model's bounding box is known.
+    const avatarBounds = { worldW: 1.1, worldH: 1.7, worldCenter: new THREE.Vector3(0, 0.85, 0) };
+
+    // Keyboard movement state — WASD + arrow keys → move the window.
+    const keys = { left: false, right: false, up: false, down: false, ctrl: false };
+    const winMoveSpeed = 250; // pixels per second
+
+    // Orbit state — Ctrl + drag rotates the view around the avatar.
+    // The camera orbits around avatarBounds.worldCenter (the avatar's pivot).
+    let orbitActive = false;
+    let orbitTheta = 0;     // horizontal angle (radians), 0 = look from front
+    let orbitPhi = 0;       // vertical angle, positive = look from above
+    let orbitDist = 3.5;    // distance from camera to pivot
+    const orbitSpeed = 0.006; // radians per pixel of drag
+
+    // ─── FBX Animation System ────────────────────────────────
+    let mixer = null;              // THREE.AnimationMixer
+    let animationMap = new Map();  // name → THREE.AnimationAction
+    let currentAnimation = null;   // currently playing action name
+    let crossFadeTarget = null;    // action being faded to
+    const animCrossFadeDuration = 0.35; // seconds for cross-fade
+
+    // Animation → mode mapping. Each mode/emotion picks one animation.
+    // FBX files we have:
+    //   Bored, CrossJumps, FightIdle, JumpingRope, Looking, LookingAround,
+    //   MagicSpellCasting, OffensiveIdle, SearchingFilesHigh,
+    //   StandingMagicAttack, TextingWhileStanding
+    const animConfig = {
+      idle:            'LookingAround',      // idle → looking around naturally
+      listening:       'SearchingFilesHigh', // listening → searching pose
+      thinking:        'MagicSpellCasting',  // thinking → magic casting
+      speaking:        'TextingWhileStanding', // speaking → texting while standing
+      emotion_happy:   'JumpingRope',
+      emotion_angry:   'FightIdle',
+      emotion_sad:     'Bored',
+      emotion_surprised: 'OffensiveIdle',
+      emotion_relaxed: 'Looking',
+    };
 
     // ─── Three.js Setup ─────────────────────────────────────
     const canvas = document.getElementById('canvas');
@@ -91,8 +141,9 @@
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.setClearColor(0x000000, 0); // fully transparent clear
     renderer.shadowMap.enabled = true;
-    renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.2;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap; // soft-edged shadows
+    renderer.toneMapping = THREE.NoToneMapping;
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
 
     const scene = new THREE.Scene();
     // Transparent background: no scene.background, no fog.
@@ -103,37 +154,50 @@
     camera.lookAt(0, 0.7, 0);
 
     // ─── Lighting ───────────────────────────────────────────
-    // Ambient
-    scene.add(new THREE.AmbientLight('#ffffff', 1.2));
+    // Ambient — moderate ambient so the material's base color is visible.
+    scene.add(new THREE.AmbientLight('#ffffff', 0.8));
 
-    // Key light (warm)
-    const keyLight = new THREE.DirectionalLight('#fff5e6', 3.5);
+    // Key light (from upper-right-front) — the main light source.
+    const keyLight = new THREE.DirectionalLight('#ffffff', 0.8);
     keyLight.position.set(1.5, 2.5, 2);
+    keyLight.target.position.set(0, -0.5, 0); // aim at the avatar's body
     keyLight.castShadow = true;
     keyLight.shadow.mapSize.set(1024, 1024);
     keyLight.shadow.camera.near = 0.1;
     keyLight.shadow.camera.far = 20;
+    keyLight.shadow.camera.left = -3;
+    keyLight.shadow.camera.right = 3;
+    keyLight.shadow.camera.top = 3;
+    keyLight.shadow.camera.bottom = -3;
+    keyLight.shadow.bias = -0.0005;
     scene.add(keyLight);
+    scene.add(keyLight.target); // must add target to scene for .target to take effect
 
-    // Fill light (cool)
-    const fillLight = new THREE.DirectionalLight('#d0e8ff', 1.5);
-    fillLight.position.set(-1, 0.5, -1);
+    // Fill light (from lower-left) — softens shadows without killing them.
+    const fillLight = new THREE.DirectionalLight('#d0e8ff', 0.4);
+    fillLight.position.set(-1, 0.3, -0.5);
     scene.add(fillLight);
 
-    // Rim light
-    const rimLight = new THREE.DirectionalLight('#ffffff', 2.0);
-    rimLight.position.set(0, 0.2, -2);
+    // Rim light (from behind and above) — creates a bright edge/contour
+    // that separates the avatar from the background.
+    const rimLight = new THREE.DirectionalLight('#ffffff', 0.3);
+    rimLight.position.set(0.3, 1.5, -2.5);
     scene.add(rimLight);
 
-    // ─── Ground plane ───────────────────────────────────────
-    // Disabled for transparent background (would show as a visible dark plane).
-    // const groundGeo = new THREE.PlaneGeometry(8, 8);
-    // const groundMat = new THREE.MeshStandardMaterial({ color: '#1a1a2e', roughness: 0.9 });
-    // const ground = new THREE.Mesh(groundGeo, groundMat);
-    // ground.rotation.x = -Math.PI / 2;
-    // ground.position.y = -1.5;
-    // ground.receiveShadow = true;
-    // scene.add(ground);
+    // ─── Ground: shadow disc ────────────────────────────────
+    // The shadow disc is invisible but catches the avatar's shadow,
+    // anchoring it to the "ground". No grid — the transparent background
+    // already shows the desktop.
+    const groundY = AVATAR_Y; // y-level of the avatar's feet
+
+    const shadowDisc = new THREE.Mesh(
+      new THREE.CircleGeometry(8, 48),
+      new THREE.ShadowMaterial({ opacity: 0.3 })
+    );
+    shadowDisc.rotation.x = -Math.PI / 2;
+    shadowDisc.position.y = groundY;
+    shadowDisc.receiveShadow = true;
+    scene.add(shadowDisc);
 
     // ─── Load VRM ───────────────────────────────────────────
     async function loadVRM(url) {
@@ -147,7 +211,13 @@
       VRMUtils.rotateVRM0(vrm);
 
       scene.add(vrm.scene);
-      vrm.scene.position.set(0, -0.95, 0);
+      vrm.scene.position.set(0, AVATAR_Y, 0);
+
+      // Enable shadow casting on all VRM meshes so the ground plane
+      // can receive the avatar's shadow.
+      vrm.scene.traverse((obj) => {
+        if (obj.isMesh) { obj.castShadow = true; obj.receiveShadow = true; }
+      });
 
       // ── Fix arms: use official setNormalizedPose API ──────
       // Rotations are quaternions [x, y, z, w] relative to the T-pose.
@@ -183,6 +253,11 @@
       console.log('Expressions:', Object.keys(vrm.expressionManager?.expressionMap || {}));
       document.getElementById('tapHint').style.display = 'block';
       updateStatus();
+
+      // Load FBX animations and initialize the mixer.
+      loadFBXAnimations().then(() => {
+        initAnimationMixer();
+      });
 
       // Auto-fit the GTK window to just the avatar's visible bounds.
       setTimeout(fitWindowToAvatar, 100);
@@ -241,7 +316,7 @@
       headGroup.add(mouth);
 
       group.add(headGroup);
-      group.position.set(0, -0.95, 0);
+      group.position.set(0, AVATAR_Y, 0);
       scene.add(group);
 
       // Store references for animation
@@ -262,11 +337,20 @@
       const dt = Math.min(clock.getDelta(), 0.1);
       idleTime += dt;
 
+      // Update orbit camera position from spherical coords.
+      updateOrbitCamera();
+
+      // Update FBX animation mixer (retargeted skeleton animation).
+      if (mixer) {
+        mixer.update(dt);
+      }
+
       if (vrm) {
         // Update VRM
-        updateVRMBlink();
+        updateVRMBlink(dt);
         updateVRMVisemes(dt);
         updateVRMIdleMicro(dt);
+        updateWindowMove(dt);
 
         // VRM needs to be updated each frame for expressions to apply
         vrm.update(dt);
@@ -274,16 +358,74 @@
         updatePlaceholderBlink(dt);
         updatePlaceholderMouth(dt);
         updatePlaceholderIdle(dt);
+        updateWindowMove(dt);
       }
 
       renderer.render(scene, camera);
     }
 
-    // ─── VRM: Blink ─────────────────────────────────────────
-    // Keep eyes always open — no blinking.
-    function updateVRMBlink() {
-      if (vrm.expressionManager) {
-        vrm.expressionManager.setValue('blink', 0);
+    // ─── Orbit camera ──────────────────────────────────────
+    // Recomputes the camera position from the spherical orbit
+    // coordinates (theta, phi, dist) around the avatar center.
+    function updateOrbitCamera() {
+      const center = avatarBounds.worldCenter;
+      const sp = Math.sin(orbitPhi);
+      const cp = Math.cos(orbitPhi);
+      const st = Math.sin(orbitTheta);
+      const ct = Math.cos(orbitTheta);
+
+      camera.position.set(
+        center.x + orbitDist * cp * st,
+        center.y + orbitDist * sp,
+        center.z + orbitDist * cp * ct
+      );
+      camera.lookAt(center.x, center.y, center.z);
+    }
+
+    // ─── VRM: Blink (4-phase state machine) ──────────────────
+    function updateVRMBlink(dt) {
+      // Apply blink (VRM1 preset name is 'blink') every frame.
+      if (vrm.expressionManager && blinkValue > 0.001) {
+        vrm.expressionManager.setValue('blink', blinkValue);
+      }
+
+      // Waiting for the next blink.
+      if (blinkPhase === 'open') {
+        blinkTimer += dt;
+        if (blinkTimer > blinkInterval) {
+          blinkPhase = 'closing';
+          blinkTimer = 0;
+          blinkInterval = 2.5 + Math.random() * 4.0;
+        }
+        return;
+      }
+
+      if (blinkPhase === 'closing') {
+        blinkValue += dt * 12; // fast close
+        if (blinkValue >= 1.0) {
+          blinkValue = 1.0;
+          blinkPhase = 'closed';
+          blinkTimer = 0;
+        }
+        return;
+      }
+
+      if (blinkPhase === 'closed') {
+        blinkTimer += dt;
+        if (blinkTimer > 0.12) {
+          blinkPhase = 'opening';
+        }
+        return;
+      }
+
+      if (blinkPhase === 'opening') {
+        blinkValue -= dt * 12; // open
+        if (blinkValue <= 0) {
+          blinkValue = 0;
+          blinkPhase = 'open';
+          blinkTimer = 0;
+        }
+        return;
       }
     }
 
@@ -306,12 +448,19 @@
       if (!vrm?.scene) return;
 
       const t = idleTime;
-      // Subtle breathing
+      // Subtle breathing (layered on top of the fixed root height)
       const breathe = Math.sin(t * 1.4) * 0.008;
-      vrm.scene.position.y = -0.95 + breathe;
+      vrm.scene.position.y = AVATAR_Y + breathe;
       // Subtle side-to-side sway
+      vrm.scene.position.x = Math.sin(t * 0.7) * 0.015;
       vrm.scene.rotation.z = Math.sin(t * 0.7) * 0.015;
-      vrm.scene.rotation.y = Math.sin(t * 0.5) * 0.02;
+      // Gentle body turn so the side profile is occasionally visible —
+      // this is what makes the 3D volume read as "solid" rather than flat.
+      vrm.scene.rotation.y = Math.sin(t * 0.4) * 0.18;
+
+      // Keep the mouth slightly parted in idle so it's always visible.
+      // A natural resting expression has the lips just barely apart.
+      visemeTargets['aa'] = 0.04 + Math.sin(t * 1.4) * 0.01;
     }
 
     // ─── Placeholder: Blink ─────────────────────────────────
@@ -373,8 +522,27 @@
       const { group } = window._placeholder;
       if (!group) return;
       const t = idleTime;
-      group.position.y = -0.95 + Math.sin(t * 1.4) * 0.005;
+      group.position.y = AVATAR_Y + Math.sin(t * 1.4) * 0.005;
+      group.position.x = Math.sin(t * 0.7) * 0.01;
       group.rotation.z = Math.sin(t * 0.7) * 0.01;
+    }
+
+    // ─── Window move via keyboard (per-frame) ─────────────────
+    function updateWindowMove(dt) {
+      let dx = 0, dy = 0;
+      if (keys.left)  dx -= 1;
+      if (keys.right) dx += 1;
+      if (keys.down)  dy += 1;
+      if (keys.up)    dy -= 1;
+      if (dx === 0 && dy === 0) return;
+
+      const px = Math.round(dx * winMoveSpeed * dt);
+      const py = Math.round(dy * winMoveSpeed * dt);
+      if (px !== 0 || py !== 0) {
+        if (window.goBridge_moveWindow) {
+          window.goBridge_moveWindow(px, py);
+        }
+      }
     }
 
     // ─── Status UI ──────────────────────────────────────────
@@ -529,35 +697,51 @@
       if (!isSpeaking) {
         applyViseme('rest', 0);
       }
+
+      // Switch FBX animation to match the current mode + emotion.
+      playAnimation(currentMode, currentEmotion);
     }
 
     // ─── JS Bridge: Send events to Go ───────────────────────
     function sendEvent(type, data) {
       const msg = JSON.stringify({ type, data });
-      // WebKitGTK path (Linux)
+      // WebKitGTK path (Linux) — bridge handler
       if (window.webkit?.messageHandlers?.bridge) {
         window.webkit.messageHandlers.bridge.postMessage(msg);
       }
-      // Lorca bind path (deprecated, kept for reference)
+      // WebView2 path (Windows)
       if (window.goBridge_sendEvent) {
         window.goBridge_sendEvent(msg);
       }
-      // WebView2 path (Windows)
       if (window.chrome?.webview) {
         window.chrome.webview.postMessage(msg);
       }
       console.log('sendEvent:', type, data);
     }
 
+    // ─── JS Bridge: window move (Go ⇄ JS) ─────────────────
+    // Set up goBridge_moveWindow once, based on the available bridge.
+    //   - Linux (WebKitGTK): window.webkit.messageHandlers.move
+    //   - Windows (WebView2): goBridge_moveWindow bound by Go
+    (function setupMoveBridge() {
+      if (window.webkit?.messageHandlers?.move) {
+        window.goBridge_moveWindow = function(dx, dy) {
+          window.webkit.messageHandlers.move.postMessage(
+            JSON.stringify({ dx, dy }));
+        };
+      }
+      // On Windows, goBridge_moveWindow is bound directly by Go; leave as-is.
+    })();
+
     // ─── Auto-fit window to avatar bounding box ─────────────────
-    // Computes the world-space bounding box of the avatar, picks a
-    // window size that matches its aspect ratio, and adjusts the
-    // camera distance so the avatar tightly fills the frame.
+    // Measures the avatar's bounding box, then resizes the window so the
+    // avatar's on-screen height equals half the screen height.  The window
+    // aspect ratio matches the avatar's width/height ratio.
     function fitWindowToAvatar() {
-      // 1. Compute world-space bounding box of all meshes.
       const box = new THREE.Box3();
       scene.traverse((obj) => {
-        if (!obj.isMesh) return;
+        // Skip the ground helpers — they're huge and would distort the bbox.
+        if (!obj.isMesh || obj === shadowDisc) return;
         box.expandByObject(obj);
       });
       if (box.isEmpty()) return;
@@ -570,46 +754,340 @@
       console.log('avatar world bbox:', size.x.toFixed(2), 'x', size.y.toFixed(2),
                   'center:', center.x.toFixed(2), center.y.toFixed(2), center.z.toFixed(2));
 
-      // 2. Pick a window height and compute matching width from the
-      //    avatar's world-space proportions. 5% margin so the avatar is tight
-      //    to the window edges.
-      const margin = 1.05;
-      const targetH = 600; // window height in CSS pixels
-      const aspect = size.x / size.y;
-      const targetW = Math.round(targetH * aspect);
+      // Store world-space extents for camera fit.
+      avatarBounds.worldW = size.x;
+      avatarBounds.worldH = size.y;
+      avatarBounds.worldCenter.copy(center);
 
-      // 3. Compute camera distance so the avatar's height fills the
-      //    vertical FOV with the margin.
-      const fovRad = camera.fov * Math.PI / 180;
-      const dist = (size.y * margin) / (2 * Math.tan(fovRad / 2));
+      // Target: avatar height = half the screen height.
+      const screenH = screen.height || 1080; // fallback if screen is unavailable
+      const targetPxH = Math.round(screenH * 0.5);
+      const winH = targetPxH;
+      // Square window — width follows the avatar height, not the avatar
+      // width, so the avatar has room to rotate (drag to orbit) and the grid
+      // extends on both sides without clipping.
+      const winW = winH;
 
-      // 4. Position the camera directly in front of the avatar center.
-      camera.position.set(center.x, center.y, dist);
-      camera.lookAt(center.x, center.y, center.z);
+      console.log('fitWindowToAvatar: target px height:', targetPxH,
+                  'window:', winW, 'x', winH);
 
-      // 5. Resize the renderer and update camera aspect ratio.
-      renderer.setSize(targetW, targetH);
-      camera.aspect = targetW / targetH;
-      camera.updateProjectionMatrix();
-
-      console.log('fitWindowToAvatar:', targetW, 'x', targetH, 'camera dist:', dist.toFixed(1));
-
-      // 6. Tell the C UI to resize the window.
+      // Tell the C UI to resize the window.
       if (window.webkit?.messageHandlers?.resize) {
         window.webkit.messageHandlers.resize.postMessage(
-          JSON.stringify({ width: targetW, height: targetH }));
+          JSON.stringify({ width: winW, height: winH }));
       }
+      // Defer camera fit to next frame — the window may not have resized yet.
+      setTimeout(fitCameraToWindow, 50);
     }
 
-    // ─── User Interaction ───────────────────────────────────
-    document.addEventListener('click', () => {
-      sendEvent('tap', {});
+    // Adjusts the camera distance so the avatar fills the current window,
+    // keeping the same margin. Called on resize and after initial window fit.
+    function fitCameraToWindow() {
+      if (!avatarBounds.worldH) return;
+
+      const margin = 1.02;
+      const fovRad = camera.fov * Math.PI / 180;
+
+      const distH = (avatarBounds.worldW * margin) / (2 * Math.tan(fovRad / 2) * camera.aspect);
+      const distV = (avatarBounds.worldH * margin) / (2 * Math.tan(fovRad / 2));
+      const dist = Math.max(distH, distV);
+
+      orbitDist = dist;
+      camera.near = Math.max(0.01, dist * 0.1);
+      camera.updateProjectionMatrix();
+      updateOrbitCamera(); // uses current orbitTheta/orbitPhi/orbitDist
+
+      console.log('fitCameraToWindow: dist:', dist.toFixed(1),
+                  'pos:', camera.position.x.toFixed(2), camera.position.y.toFixed(2));
+    }
+
+    // ─── FBX Animation Loading & Retargeting ─────────────────
+    // Uses the official three-vrm Mixamo animation retargeting approach:
+    //   - mixamoVRMRigMap: Mixamo bone name → VRM humanoid bone name
+    //   - Quaternion space transform: parent rest rotation × track rotation × inverse rest rotation
+    // This produces correct skeleton animation even when the Mixamo skeleton
+    // has a different rest pose than the VRM skeleton.
+
+    // Stores loaded but not-yet-retargeted clips (name → AnimationClip).
+    let rawClipMap = new Map();
+
+    // Load all FBX animations from /models/animations/.
+    async function loadFBXAnimations() {
+      const animNames = [
+        'Bored', 'CrossJumps', 'FightIdle', 'JumpingRope', 'Looking',
+        'LookingAround', 'MagicSpellCasting', 'OffensiveIdle',
+        'SearchingFilesHigh', 'StandingMagicAttack', 'TextingWhileStanding'
+      ];
+
+      const fbxLoader = new FBXLoader();
+      const results = await Promise.allSettled(
+        animNames.map(name =>
+          fbxLoader.loadAsync(`/models/animations/${name}.fbx`)
+            .then(group => ({ name, group }))
+        )
+      );
+
+      for (const result of results) {
+        if (result.status !== 'fulfilled') {
+          console.warn('FBX load failed:', result.reason?.message);
+          continue;
+        }
+        const { name, group } = result.value;
+        const clips = group.animations;
+        if (!clips || clips.length === 0) {
+          console.warn(`FBX ${name}: no animation clips found`);
+          continue;
+        }
+
+        // Store the raw clip + its FBX group for retargeting.
+        rawClipMap.set(name, { clip: clips[0], group });
+        console.log(`FBX loaded: ${name} (${clips[0].duration.toFixed(1)}s)`);
+      }
+
+      console.log(`FBX animations loaded: ${rawClipMap.size}/${animNames.length}`);
+    }
+
+    // Retarget a single Mixamo AnimationClip to the VRM skeleton using the
+    // official three-vrm approach (quaternion space transform).
+    function retargetMixamoClip(rawClip, fbxGroup, vrm) {
+      const clip = THREE.AnimationClip.findByName(rawClip, 'mixamo.com') || rawClip;
+
+      const tracks = [];
+
+      const restRotationInverse = new THREE.Quaternion();
+      const parentRestWorldRotation = new THREE.Quaternion();
+      const _quatA = new THREE.Quaternion();
+
+      // Adjust position with reference to hips height.
+      const motionHipsNode = fbxGroup.getObjectByName('mixamorigHips');
+      const motionHipsHeight = motionHipsNode ? motionHipsNode.position.y : 0;
+      const vrmHipsY = vrm.humanoid.normalizedRestPose.hips.position[1];
+      const hipsPositionScale = vrmHipsY / (motionHipsHeight || 1);
+
+      clip.tracks.forEach((track) => {
+        const trackSplitted = track.name.split('.');
+        const mixamoRigName = trackSplitted[0];
+        const vrmBoneName = mixamoVRMRigMap[mixamoRigName];
+        const vrmNodeName = vrm.humanoid?.getNormalizedBoneNode(vrmBoneName)?.name;
+        const mixamoRigNode = fbxGroup.getObjectByName(mixamoRigName);
+
+        if (vrmNodeName != null && mixamoRigNode != null) {
+          const propertyName = trackSplitted[1];
+
+          // Store rest-pose world rotations.
+          mixamoRigNode.getWorldQuaternion(restRotationInverse).invert();
+          mixamoRigNode.parent.getWorldQuaternion(parentRestWorldRotation);
+
+          if (track instanceof THREE.QuaternionKeyframeTrack) {
+            // Retarget rotation from Mixamo rig to VRM normalized bone.
+            for (let i = 0; i < track.values.length; i += 4) {
+              const flatQuaternion = track.values.slice(i, i + 4);
+              _quatA.fromArray(flatQuaternion);
+              // parent rest rotation × track rotation × inverse rest rotation
+              _quatA.premultiply(parentRestWorldRotation).multiply(restRotationInverse);
+              _quatA.toArray(flatQuaternion);
+              flatQuaternion.forEach((v, index) => {
+                track.values[index + i] = v;
+              });
+            }
+
+            tracks.push(
+              new THREE.QuaternionKeyframeTrack(
+                `${vrmNodeName}.${propertyName}`,
+                track.times,
+                track.values.map((v, i) => (
+                  vrm.meta?.metaVersion === '0' && i % 2 === 0 ? -v : v
+                )),
+              ),
+            );
+          } else if (track instanceof THREE.VectorKeyframeTrack) {
+            const value = track.values.map(
+              (v, i) => (vrm.meta?.metaVersion === '0' && i % 3 !== 1 ? -v : v) * hipsPositionScale
+            );
+            tracks.push(new THREE.VectorKeyframeTrack(`${vrmNodeName}.${propertyName}`, track.times, value));
+          }
+        }
+      });
+
+      return new THREE.AnimationClip('vrmAnimation', clip.duration, tracks);
+    }
+
+    // Create the AnimationMixer and retarget all loaded clips.
+    function initAnimationMixer() {
+      if (!vrm?.scene) return;
+      if (rawClipMap.size === 0) return;
+
+      mixer = new THREE.AnimationMixer(vrm.scene);
+
+      for (const [name, { clip, group }] of rawClipMap) {
+        const retargetedClip = retargetMixamoClip(clip, group, vrm);
+        const action = mixer.clipAction(retargetedClip);
+        action.setLoop(THREE.LoopRepeat);
+        action.clampWhenFinished = false;
+        animationMap.set(name, action);
+      }
+
+      // Free raw clip data (no longer needed).
+      rawClipMap.clear();
+
+      // Play the idle animation immediately.
+      playAnimation('idle');
+      console.log(`AnimationMixer initialized with ${animationMap.size} actions`);
+    }
+
+    // ─── Animation State Machine ──────────────────────────────
+    // Picks the right animation for the current mode/emotion and cross-fades.
+    function playAnimation(mode, emotion) {
+      if (!mixer) return;
+
+      // Determine the animation name.
+      let animName = null;
+      if (emotion && emotion !== 'neutral') {
+        animName = animConfig[`emotion_${emotion}`] || null;
+      }
+      if (!animName) {
+        animName = animConfig[mode] || null;
+      }
+      if (!animName) return;
+
+      const action = animationMap.get(animName);
+      if (!action) {
+        console.warn(`Animation not found: ${animName}`);
+        return;
+      }
+      if (currentAnimation === animName) return;
+
+      const prevAction = animationMap.get(currentAnimation);
+      currentAnimation = animName;
+
+      if (prevAction && prevAction.isRunning()) {
+        // Cross-fade from previous to new.
+        action.reset().play();
+        action.crossFadeFrom(prevAction, animCrossFadeDuration, true);
+        console.log(`Animation cross-fade: ${prevAction.getClip().name} → ${animName}`);
+      } else {
+        // No previous animation — just play.
+        action.reset().play();
+        action.setEffectiveWeight(1.0);
+        console.log(`Animation play: ${animName}`);
+      }
+    }
+    // The window is borderless, so Windows provides no drag handle.
+    // All dragging moves the window; the avatar stays fixed in the center.
+    // A press without movement counts as a tap (starts the conversation).
+
+    const raycaster = new THREE.Raycaster();
+    const _ndc = new THREE.Vector2();
+
+    function eventNDC(e) {
+      _ndc.x = (e.clientX / window.innerWidth) * 2 - 1;
+      _ndc.y = -(e.clientY / window.innerHeight) * 2 + 1;
+      return _ndc;
+    }
+
+    // Returns true if the pointer is over the avatar mesh.
+    function hitAvatar(e) {
+      const avatarObj = vrm ? vrm.scene : (window._placeholder ? window._placeholder.group : null);
+      if (!avatarObj) return false;
+
+      raycaster.setFromCamera(eventNDC(e), camera);
+      const hits = raycaster.intersectObject(avatarObj, true);
+      return hits.length > 0;
+    }
+
+    // Ctrl+drag moves the window; a plain drag orbits the camera.
+    // { startX, startY, lastX, lastY, moved, isOrbit }
+    let dragWindow = null;
+
+    document.addEventListener('mousedown', (e) => {
+      if (e.button !== 0) return; // left button only
+
+      // Ctrl+drag → move the window. Plain drag → orbit the camera.
+      const isOrbit = !keys.ctrl;
+      dragWindow = {
+        startX: e.screenX,
+        startY: e.screenY,
+        lastX: e.screenX,
+        lastY: e.screenY,
+        moved: false,
+        isOrbit,
+      };
+    });
+
+    document.addEventListener('mousemove', (e) => {
+      if (!dragWindow) {
+        // Hover cursor: 'grab' for orbit (plain), 'move' for window move (Ctrl).
+        canvas.style.cursor = keys.ctrl
+          ? (hitAvatar(e) ? 'move' : 'default')
+          : (hitAvatar(e) ? 'grab' : 'default');
+        return;
+      }
+
+      const dx = e.screenX - dragWindow.lastX;
+      const dy = e.screenY - dragWindow.lastY;
+
+      // Ignore tiny jitter; only start dragging past a threshold so a
+      // normal click still registers as a tap.
+      if (!dragWindow.moved &&
+          (Math.abs(e.screenX - dragWindow.startX) > 4 ||
+           Math.abs(e.screenY - dragWindow.startY) > 4)) {
+        dragWindow.moved = true;
+      }
+
+      if (dragWindow.moved) {
+        if (dragWindow.isOrbit) {
+          // Plain drag: orbit the camera around the avatar.
+          orbitTheta -= dx * orbitSpeed;
+          orbitPhi += dy * orbitSpeed;
+          // Clamp vertical angle so the camera doesn't flip.
+          orbitPhi = Math.max(-1.4, Math.min(1.4, orbitPhi));
+        } else if (window.goBridge_moveWindow) {
+          // Ctrl+drag: move the window.
+          window.goBridge_moveWindow(dx, dy);
+        }
+      }
+
+      dragWindow.lastX = e.screenX;
+      dragWindow.lastY = e.screenY;
+    });
+
+    document.addEventListener('mouseup', (e) => {
+      if (!dragWindow) return;
+      const wasDrag = dragWindow.moved;
+      dragWindow = null;
+      canvas.style.cursor = 'default';
+      if (!wasDrag) {
+        sendEvent('tap', {});
+      }
     });
 
     document.addEventListener('keydown', (e) => {
+      // Don't consume shortcuts when the user is typing in an input.
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+
       if (e.key === ' ' || e.key === 'Enter') {
         e.preventDefault();
         sendEvent('tap', {});
+        return;
+      }
+
+      // WASD + arrow keys for window movement.
+      switch (e.key) {
+        case 'w': case 'W': case 'ArrowUp':    keys.up    = true; e.preventDefault(); break;
+        case 's': case 'S': case 'ArrowDown':  keys.down  = true; e.preventDefault(); break;
+        case 'a': case 'A': case 'ArrowLeft':  keys.left  = true; e.preventDefault(); break;
+        case 'd': case 'D': case 'ArrowRight': keys.right = true; e.preventDefault(); break;
+        case 'Control': keys.ctrl = true; break;
+      }
+    });
+
+    document.addEventListener('keyup', (e) => {
+      switch (e.key) {
+        case 'w': case 'W': case 'ArrowUp':    keys.up    = false; break;
+        case 's': case 'S': case 'ArrowDown':  keys.down  = false; break;
+        case 'a': case 'A': case 'ArrowLeft':  keys.left  = false; break;
+        case 'd': case 'D': case 'ArrowRight': keys.right = false; break;
+        case 'Control': keys.ctrl = false; break;
       }
     });
 
@@ -617,7 +1095,14 @@
     window.addEventListener('resize', () => {
       renderer.setSize(window.innerWidth, window.innerHeight);
       camera.aspect = window.innerWidth / window.innerHeight;
-      camera.updateProjectionMatrix();
+      // Re-fit the camera so the avatar fills the (now different) window.
+      fitCameraToWindow();
+      // Restore the avatar to its fixed center position.
+      if (vrm) {
+        vrm.scene.position.set(0, AVATAR_Y, 0);
+      } else if (window._placeholder) {
+        window._placeholder.group.position.set(0, AVATAR_Y, 0);
+      }
     });
 
     // ─── Start ──────────────────────────────────────────────

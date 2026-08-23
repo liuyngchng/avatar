@@ -39,9 +39,12 @@ docker rm my_webkitgtk
 **（2）后续构建**
 
 ```sh
-docker run -dit --name my_webkitgtk -v $(pwd):/workspace -w /workspace avatar_webkit_gtk:1.0
+cd avatar/pc
+docker run -dit --rm --name my_webkitgtk -v $(pwd):/workspace -w /workspace avatar_webkit_gtk:1.0
 docker exec -it my_webkitgtk bash
 make avatar-ui
+exit
+docker stop my_webkitgtk
 ```
 
 **（3）修改权限**
@@ -121,7 +124,7 @@ sudo apt install -y pkg-config
 # 语音输入（录音）的核心库
 sudo apt install -y libasound2-dev
 # 国内用户先设置代理
-go env -w GOPROXY=https://goproxy.cn,direct   
+go env -w GOPROXY=https://goproxy.cn,direct
 ./build.sh
 ```
 
