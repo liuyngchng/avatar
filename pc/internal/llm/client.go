@@ -255,15 +255,18 @@ func defaultSystemPrompt() string {
 // "neutral" and the original text.
 func ParseEmotion(text string) (emotion string, cleanText string) {
 	text = strings.TrimSpace(text)
-	if strings.HasPrefix(text, "[emotion:") {
+	const prefix = "[emotion:"
+	if strings.HasPrefix(text, prefix) {
 		end := strings.Index(text, "]")
 		if end > 0 {
-			emotion = text[10:end]
+			raw := text[len(prefix):end]
 			cleanText = strings.TrimSpace(text[end+1:])
-			// Validate emotion.
-			switch emotion {
+			switch raw {
 			case "neutral", "happy", "curious", "surprised", "shy", "sleepy", "sad":
-				return emotion, cleanText
+				return raw, cleanText
+			default:
+				// Unknown tag: still strip it, keep emotion neutral.
+				return "neutral", cleanText
 			}
 		}
 	}

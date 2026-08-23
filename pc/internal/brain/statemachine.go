@@ -392,12 +392,17 @@ func (sm *StateMachine) callLLM(userText string) string {
 		return ""
 	}
 
+	sm.mu.Lock()
 	sm.conversation = append(sm.conversation, llm.Message{
 		Role: "user", Content: userText,
 	})
+	// Keep at most 10 complete rounds (20 messages). Drop oldest
+	// user+assistant pair when the limit is exceeded so the history
+	// always starts with a "user" message.
 	if len(sm.conversation) > 20 {
-		sm.conversation = sm.conversation[len(sm.conversation)-20:]
+		sm.conversation = sm.conversation[2:]
 	}
+	sm.mu.Unlock()
 
 	chunkCh, errCh := sm.llmClient.ChatStream(sm.conversation, llm.DefaultParams())
 
@@ -425,12 +430,14 @@ func (sm *StateMachine) callLLM(userText string) string {
 
 	if response != "" {
 		_, cleanText := llm.ParseEmotion(response)
+		sm.mu.Lock()
 		sm.conversation = append(sm.conversation, llm.Message{
 			Role: "assistant", Content: cleanText,
 		})
 		if len(sm.conversation) > 20 {
-			sm.conversation = sm.conversation[len(sm.conversation)-20:]
+			sm.conversation = sm.conversation[2:]
 		}
+		sm.mu.Unlock()
 	}
 
 	return response
