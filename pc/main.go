@@ -38,6 +38,7 @@ func main() {
 				BaseURL: os.Getenv("AVATAR_LLM_BASE_URL"),
 				APIKey:  os.Getenv("AVATAR_LLM_API_KEY"),
 				Model:   os.Getenv("AVATAR_LLM_MODEL"),
+				Name:    "小然",
 			},
 		}
 	}
@@ -50,6 +51,10 @@ func main() {
 	}
 	if v := os.Getenv("AVATAR_LLM_MODEL"); v != "" {
 		cfg.LLM.Model = v
+	}
+	// Default character name (used in system prompt and wake word).
+	if cfg.LLM.Name == "" {
+		cfg.LLM.Name = "小然"
 	}
 
 	// ── Initialize TTS engine (Matcha-TTS + vocos) ──────────
@@ -90,7 +95,14 @@ func main() {
 	// ── Initialize KWS engine (Zipformer wake word) ──────────
 	kwsDir := kws.ModelsDir()
 	var kwsEngine *kws.Engine
-	kwsEngine, err = kws.New(kwsDir, cfg.WakeWord)
+
+	// Wake word: use the configured value, otherwise auto-generate from the
+	// character name (name repeated twice, e.g. "小然" → "小然小然").
+	wakeWord := cfg.WakeWord
+	if wakeWord == "" {
+		wakeWord = kws.GenerateWakeWord(cfg.LLM.Name)
+	}
+	kwsEngine, err = kws.New(kwsDir, wakeWord)
 	if err != nil {
 		log.Printf("Warning: KWS engine init failed (continuing without wake word): %v", err)
 		kwsEngine = nil
@@ -112,6 +124,7 @@ func main() {
 		BaseURL: cfg.LLM.BaseURL,
 		APIKey:  cfg.LLM.APIKey,
 		Model:   cfg.LLM.Model,
+		Name:    cfg.LLM.Name,
 	})
 	if llmClient.IsConfigured() {
 		log.Println("LLM client configured (streaming enabled)")
@@ -120,7 +133,7 @@ func main() {
 	}
 
 	// ── Create the renderer window (platform-specific) ──────
-	r, err := renderer.New(webAssets)
+	r, err := renderer.New(webAssets, cfg.IsFBXEnabled())
 	if err != nil {
 		log.Fatalf("Failed to create renderer: %v", err)
 	}

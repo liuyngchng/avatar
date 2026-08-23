@@ -24,6 +24,8 @@ type Config struct {
 	Model string
 	// SystemPrompt overrides the default system prompt.
 	SystemPrompt string
+	// Name is the character name used in the system prompt (default: "小然").
+	Name string
 }
 
 // Message is a single chat message.
@@ -63,6 +65,9 @@ func New(cfg Config) *Client {
 	if cfg.Model == "" {
 		cfg.Model = "gpt-4o-mini"
 	}
+	if cfg.Name == "" {
+		cfg.Name = "小然"
+	}
 
 	return &Client{
 		config: cfg,
@@ -76,7 +81,7 @@ func New(cfg Config) *Client {
 				TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 			},
 		},
-		system: defaultSystemPrompt(),
+		system: defaultSystemPrompt(cfg.Name),
 	}
 }
 
@@ -237,9 +242,9 @@ func (c *Client) buildBody(messages []Message, params ChatParams, stream bool) [
 
 // defaultSystemPrompt returns the system prompt used by the digital human.
 // Matches the iOS/Android prompt.
-func defaultSystemPrompt() string {
+func defaultSystemPrompt(name string) string {
 	now := time.Now().Format("2006年1月2日 Monday")
-	return "你是一个语音助手，名字叫「小火」。用口语化的中文回复，自然友好、直接明了。" +
+	return "你是一个语音助手，名字叫「" + name + "」。用口语化的中文回复，自然友好、直接明了。" +
 		"闲聊或简单问题控制在1-3句话（80字以内）；" +
 		"知识类问题可以适当展开解释，但保持简洁，不超过150字。" +
 		"围绕用户的问题回答，不要偏离话题。" +

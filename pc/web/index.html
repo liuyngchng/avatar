@@ -52,6 +52,10 @@
     let currentEmotion = 'neutral';
     let isSpeaking = false;
 
+    // FBX animation toggle — read from URL query parameter.
+    // Defaults to true (enabled). Set enable_fbx=0 to disable.
+    const enableFBX = !(new URLSearchParams(window.location.search).get('enable_fbx') === '0');
+
     // Viseme state (for smooth lerp)
     // VRM1 uses: aa, ih, ou, ee, oh (not A/I/U/E/O)
     let visemeTargets = { aa: 0, ih: 0, ou: 0, ee: 0, oh: 0 };
@@ -233,10 +237,14 @@
       console.log('Expressions:', Object.keys(vrm.expressionManager?.expressionMap || {}));
       updateStatus();
 
-      // Load FBX animations and initialize the mixer.
-      loadFBXAnimations().then(() => {
-        initAnimationMixer();
-      });
+      // Load FBX animations and initialize the mixer (if enabled).
+      if (enableFBX) {
+        loadFBXAnimations().then(() => {
+          initAnimationMixer();
+        });
+      } else {
+        console.log('[FBX] FBX animation disabled by config (enable_fbx=0)');
+      }
 
       // Auto-fit the GTK window to just the avatar's visible bounds.
       setTimeout(fitWindowToAvatar, 100);

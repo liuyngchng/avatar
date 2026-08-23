@@ -66,7 +66,7 @@ func findUIBinary() (string, error) {
 }
 
 // newPlatformRenderer creates a Linux renderer using a child GTK process.
-func newPlatformRenderer(webFS fs.FS) (Renderer, error) {
+func newPlatformRenderer(webFS fs.FS, enableFBX bool) (Renderer, error) {
 	// Serve the embedded web assets on a random local port.
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -78,6 +78,9 @@ func newPlatformRenderer(webFS fs.FS) (Renderer, error) {
 	go srv.Serve(listener)
 
 	url := "http://127.0.0.1:" + strconv.Itoa(port) + "/index.html"
+	if !enableFBX {
+		url += "?enable_fbx=0"
+	}
 	log.Printf("renderer: serving at %s", url)
 
 	// Locate and start the C UI child process.

@@ -11,8 +11,9 @@ import (
 
 // Config holds all application configuration.
 type Config struct {
-	LLM      LLMConfig `yaml:"llm"`
-	WakeWord string    `yaml:"wake_word"`
+	LLM       LLMConfig `yaml:"llm"`
+	WakeWord  string    `yaml:"wake_word"`
+	EnableFBX *bool     `yaml:"enable_fbx"` // nil = not set, defaults to true
 }
 
 // LLMConfig holds the LLM API connection parameters.
@@ -20,6 +21,7 @@ type LLMConfig struct {
 	BaseURL string `yaml:"base_url"`
 	APIKey  string `yaml:"api_key"`
 	Model   string `yaml:"model"`
+	Name    string `yaml:"name"` // character name, defaults to "小然"
 }
 
 // Load reads cfg.yml from the working directory or alongside the binary.
@@ -55,4 +57,13 @@ func findCfg() string {
 		}
 	}
 	return ""
+}
+
+// IsFBXEnabled returns true if FBX animation should be loaded.
+// Defaults to true when the config key is not set.
+func (c *Config) IsFBXEnabled() bool {
+	if c.EnableFBX == nil {
+		return true
+	}
+	return *c.EnableFBX
 }
