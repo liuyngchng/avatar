@@ -54,18 +54,6 @@
 
 **开发工作流：** Ubuntu 上开发/预览效果 → 代码同步到 Windows → Windows 编译 `.exe` → 拷贝到客户大屏机器。
 
-## 与现有 iOS/Android 版本的对比
-
-| | iOS/Android | PC (本方案) |
-|--|-------------|-------------|
-| 大脑 | Swift/Kotlin 调 sherpa-onnx C API | Go + CGo 调 sherpa-onnx C API |
-| 模型 | SenseVoiceSmall + Matcha-TTS + KWS | 同模型，复用 |
-| LLM | HTTP 流式客户端 | 同，Logic 平移 |
-| 脸 | Core Graphics/Canvas 2D 矢量 / 火柴人 | three.js + three-vrm 3D 数字人 |
-| 口型 | 假（0.12s 定时器随机翻 speakAmount） | 真（中文拼音→viseme 映射，逐字驱动） |
-| 人脸跟踪 | Vision/ML Kit 表情模仿 | 企业大屏不需要，不实现 |
-| 部署 | App Store / APK | 单一 exe / Linux 二进制 |
-
 ## 核心升级：中文拼音→Viseme 口型同步
 
 这是"玩具→数字人"的关键质变。现有版本 `speakAmount` 是假口型（一个 0.12s 定时器在 `0.2↔1.0` 之间来回翻），本方案做真口型。
@@ -271,29 +259,29 @@ cd pc/scripts
 如果已经拿到 `.tar.bz2` 压缩包，直接解压到对应目录即可。注意 sherpa-onnx 的 tar 包解压后带一层顶层目录，必须用 `--strip-components=1` 去掉，否则文件会多套一层目录。
 
 ```bash
-cd pc
+cd pc/models
 
 # ASR：SenseVoiceSmall int8 → models/asr/
-mkdir -p models/asr
+mkdir asr
 tar xf sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09.tar.bz2 \
-    --strip-components=1 -C models/asr
+    --strip-components=1 -C asr
 
 # TTS：Matcha-TTS → models/tts/
-mkdir -p models/tts
+mkdir tts
 tar xf matcha-icefall-zh-baker.tar.bz2 \
-    --strip-components=1 -C models/tts
-mv models/tts/model-steps-3.onnx models/tts/model.onnx   # 声学模型重命名
+    --strip-components=1 -C tts
+mv tts/model-steps-3.onnx models/tts/model.onnx   # 声学模型重命名
 
 # Vocoder：单独 .onnx 文件（不在 tar 里）→ models/tts/
-cp vocos-22khz-univ.onnx models/tts/vocos.onnx           # 需重命名
+cp vocos-22khz-univ.onnx tts/vocos.onnx           # 需重命名
 
 # KWS：Zipformer 3.3M → models/kws/
-mkdir -p models/kws
+mkdir kws
 tar xf sherpa-onnx-kws-zipformer-wenetspeech-3.3M-2024-01-01.tar.bz2 \
-    --strip-components=1 -C models/kws
-mv models/kws/encoder-*.onnx models/kws/encoder.onnx
-mv models/kws/decoder-*.onnx models/kws/decoder.onnx
-mv models/kws/joiner-*.onnx  models/kws/joiner.onnx
+    --strip-components=1 -C kws
+mv kws/encoder-*.onnx kws/encoder.onnx
+mv kws/decoder-*.onnx kws/decoder.onnx
+mv kws/joiner-*.onnx  kws/joiner.onnx
 ```
 
 解压后的文件清单以「目录结构」为准。注意 **ASR 的 tar 里已含正确命名的 `model.int8.onnx`，无需重命名**；TTS 的声学模型默认叫 `model-steps-3.onnx`，Vocoder 默认叫 `vocos-22khz-univ.onnx`，这两处必须重命名（详见「关键注意点」）。
