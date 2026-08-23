@@ -34,9 +34,10 @@ type gtkRenderer struct {
 	events chan brain.Event
 	done   chan struct{}
 
-	mu      sync.Mutex
-	closed  bool
-	waitErr error
+	mu       sync.Mutex
+	closed   bool
+	waitErr  error
+	doneOnce sync.Once
 }
 
 var _ Renderer = (*gtkRenderer)(nil)
@@ -133,13 +134,13 @@ func newPlatformRenderer(webFS fs.FS) (Renderer, error) {
 			}
 		}
 		// stdout closed (UI exited) — unblock Run() if it's still waiting.
-		close(r.done)
+		r.doneOnce.Do(func() { close(r.done) })
 	}()
 
 	// Reap the child process in the background.
 	go func() {
 		r.waitErr = cmd.Wait()
-		close(r.done)
+		r.doneOnce.Do(func() { close(r.done) })
 	}()
 
 	return r, nil
