@@ -229,43 +229,6 @@ Go 通过 `window.external` 或 `eval` 向 WebView 注入消息，WebView 通过
 {"type": "wake_detected"}
 ```
 
-## 开发阶段
-
-### P0 — 渲染验证（1-2 周）
-
-- [ ] Go 项目骨架：`go.mod`、`main.go`、目录结构
-- [ ] WebView2 窗口（Windows）+ Lorca 窗口（Linux）
-- [ ] 加载 `web/index.html`，three.js + three-vrm 加载 VRM 模型
-- [ ] idle 动画：呼吸、眨眼、眼神微动
-- [ ] 验收：**窗口里站着一个 3D 数字人，会眨眼、有呼吸**
-
-### P1 — 大脑平移（1-2 周）
-
-- [ ] CGo 接入 sherpa-onnx ASR（SenseVoiceSmall）
-- [ ] CGo 接入 sherpa-onnx TTS（Matcha-TTS + vocos）+ 文本归一化
-- [ ] 音频 I/O：malgo 麦克风采集 + 扬声器播放
-- [ ] 拼音→viseme 映射表 + 时间线生成
-- [ ] JS Bridge：viseme 时间线 → three-vrm 口型驱动
-- [ ] 验收：**说一句话，嘴型跟得上**
-
-### P2 — 表情+对话（1-2 周）
-
-- [ ] LLM HTTP 流式客户端
-- [ ] 状态机实现（idle/listening/thinking/speaking）
-- [ ] 情绪标签解析 + 表情 blendshape 驱动
-- [ ] 完整对话链路：唤醒/点击 → 录音 → ASR → LLM → TTS → 口型+表情
-- [ ] 验收：**完整对话，有表情、有口型**
-
-### P3 — 大屏加固（1-2 周）
-
-- [ ] 全屏 kiosk 模式（无边框、无任务栏、防退出）
-- [ ] 开机自启（Windows 注册表/启动文件夹）
-- [ ] 崩溃自恢复（watchdog）
-- [ ] 待机动画（长时间无人交互时切 idle 循环）
-- [ ] 字幕显示（LLM 回复文本实时滚动）
-- [ ] 设置页面（LLM endpoint 配置、模型管理、音量）
-- [ ] 验收：**可交付的大屏数字人**
-
 ## 关键依赖
 
 ### Go 依赖
@@ -302,6 +265,38 @@ cd pc/scripts
 ```
 
 脚本会自动下载、解压（`--strip-components=1`）、重命名，并最终逐文件校验。依赖 `curl` + `tar` + `bunzip2`（Ubuntu：`sudo apt install curl bzip2 tar`）。
+
+#### 手动解压（已下载 tar 文件）
+
+如果已经拿到 `.tar.bz2` 压缩包，直接解压到对应目录即可。注意 sherpa-onnx 的 tar 包解压后带一层顶层目录，必须用 `--strip-components=1` 去掉，否则文件会多套一层目录。
+
+```bash
+cd pc
+
+# ASR：SenseVoiceSmall int8 → models/asr/
+mkdir -p models/asr
+tar xf sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09.tar.bz2 \
+    --strip-components=1 -C models/asr
+
+# TTS：Matcha-TTS → models/tts/
+mkdir -p models/tts
+tar xf matcha-icefall-zh-baker.tar.bz2 \
+    --strip-components=1 -C models/tts
+mv models/tts/model-steps-3.onnx models/tts/model.onnx   # 声学模型重命名
+
+# Vocoder：单独 .onnx 文件（不在 tar 里）→ models/tts/
+cp vocos-22khz-univ.onnx models/tts/vocos.onnx           # 需重命名
+
+# KWS：Zipformer 3.3M → models/kws/
+mkdir -p models/kws
+tar xf sherpa-onnx-kws-zipformer-wenetspeech-3.3M-2024-01-01.tar.bz2 \
+    --strip-components=1 -C models/kws
+mv models/kws/encoder-*.onnx models/kws/encoder.onnx
+mv models/kws/decoder-*.onnx models/kws/decoder.onnx
+mv models/kws/joiner-*.onnx  models/kws/joiner.onnx
+```
+
+解压后的文件清单以「目录结构」为准。注意 **ASR 的 tar 里已含正确命名的 `model.int8.onnx`，无需重命名**；TTS 的声学模型默认叫 `model-steps-3.onnx`，Vocoder 默认叫 `vocos-22khz-univ.onnx`，这两处必须重命名（详见「关键注意点」）。
 
 #### 目录结构
 
