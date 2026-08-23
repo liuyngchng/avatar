@@ -134,7 +134,7 @@ go env -w GOPROXY=https://goproxy.cn,direct
 
 
 
-最终产物：`avatar-ui` + `avatar-pc` 
+最终产物：`avatar-ui` + `avatar-desktop` 
 
 # 4. 运行
 
@@ -145,13 +145,13 @@ cd avatar/pc
 cp cfg.yml.template cfg.yml
 # 填写相关模型信息
 vi cfg.yml
-./avatar-pc
+./avatar-desktop
 ```
 
 ## 4.1 项目结构
 
 ```
-pc/
+desktop/
 ├── main.go                     # 入口
 ├── go.mod / go.sum
 ├── Makefile                    # avatar-ui 编译目标

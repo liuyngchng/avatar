@@ -6,11 +6,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/liuyngchng/avatar-pc/internal/asr"
-	"github.com/liuyngchng/avatar-pc/internal/audio"
-	"github.com/liuyngchng/avatar-pc/internal/kws"
-	"github.com/liuyngchng/avatar-pc/internal/llm"
-	"github.com/liuyngchng/avatar-pc/internal/tts"
+	"github.com/liuyngchng/avatar-desktop/internal/asr"
+	"github.com/liuyngchng/avatar-desktop/internal/audio"
+	"github.com/liuyngchng/avatar-desktop/internal/kws"
+	"github.com/liuyngchng/avatar-desktop/internal/llm"
+	"github.com/liuyngchng/avatar-desktop/internal/tts"
 )
 
 // Event is a message coming from the renderer (user interaction).

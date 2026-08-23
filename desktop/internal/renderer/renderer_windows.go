@@ -11,7 +11,7 @@ import (
 	"strconv"
 
 	"github.com/jchv/go-webview2"
-	"github.com/liuyngchng/avatar-pc/internal/brain"
+	"github.com/liuyngchng/avatar-desktop/internal/brain"
 )
 
 type webviewRenderer struct {

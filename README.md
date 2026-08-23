@@ -67,7 +67,7 @@
 
 1. 进入 PC 目录：
    ```
-   cd pc/
+   cd desktop/
    ```
 
 2. 下载模型文件：
@@ -90,10 +90,10 @@
    或编译后运行：
    ```
    make build
-   ./avatar-pc
+   ./avatar-desktop
    ```
 
-详细说明见 [pc/README.md](pc/README.md)。
+详细说明见 [desktop/README.md](desktop/README.md)。
 
 ### 需要的模型
 
@@ -217,7 +217,7 @@ avatar/
 │   │       └── TextReaderScreen.kt    # 文字朗读
 │   └── app/src/main/cpp/              # JNI 原生代码 (sherpa-onnx)
 │
-├── pc/                                   # PC 大屏 3D 数字人
+├── desktop/                                   # PC 大屏 3D 数字人
 │   ├── main.go                           # 入口，启动窗口 + 大脑
 │   ├── Makefile
 │   ├── cfg.yml.template                  # LLM 配置模板
@@ -285,7 +285,7 @@ avatar/
 
 ### 模型兼容
 
-iOS、Android 和 PC 使用完全相同的离线模型文件（SenseVoiceSmall / Matcha-TTS / Zipformer KWS）——只需下载一次，三个平台通用。注意 PC 端 TTS 用 Matcha-TTS 而非 VITS，需用 `pc/scripts/download-models.sh` 下载。
+iOS、Android 和 PC 使用完全相同的离线模型文件（SenseVoiceSmall / Matcha-TTS / Zipformer KWS）——只需下载一次，三个平台通用。注意 PC 端 TTS 用 Matcha-TTS 而非 VITS，需用 `desktop/scripts/download-models.sh` 下载。
 
 ### 代码风格
 

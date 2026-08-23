@@ -12,14 +12,14 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/liuyngchng/avatar-pc/internal/asr"
-	"github.com/liuyngchng/avatar-pc/internal/audio"
-	"github.com/liuyngchng/avatar-pc/internal/brain"
-	"github.com/liuyngchng/avatar-pc/internal/config"
-	"github.com/liuyngchng/avatar-pc/internal/kws"
-	"github.com/liuyngchng/avatar-pc/internal/llm"
-	"github.com/liuyngchng/avatar-pc/internal/renderer"
-	"github.com/liuyngchng/avatar-pc/internal/tts"
+	"github.com/liuyngchng/avatar-desktop/internal/asr"
+	"github.com/liuyngchng/avatar-desktop/internal/audio"
+	"github.com/liuyngchng/avatar-desktop/internal/brain"
+	"github.com/liuyngchng/avatar-desktop/internal/config"
+	"github.com/liuyngchng/avatar-desktop/internal/kws"
+	"github.com/liuyngchng/avatar-desktop/internal/llm"
+	"github.com/liuyngchng/avatar-desktop/internal/renderer"
+	"github.com/liuyngchng/avatar-desktop/internal/tts"
 )
 
 //go:embed web

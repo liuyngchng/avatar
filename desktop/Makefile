@@ -1,9 +1,9 @@
-.PHONY: all build avatar-ui avatar-pc run clean
+.PHONY: all build avatar-ui avatar-desktop run clean
 
 # Default target
 all: build
 
-build: avatar-ui avatar-pc
+build: avatar-ui avatar-desktop
 
 # ── C UI program (GTK3 + WebKit2GTK) ──────────────────────────────
 avatar-ui:
@@ -11,13 +11,13 @@ avatar-ui:
 		$(shell pkg-config --cflags --libs gtk+-3.0 webkit2gtk-4.1)
 
 # ── Go backend ────────────────────────────────────────────────────
-avatar-pc:
-	go build -o avatar-pc .
+avatar-desktop:
+	go build -o avatar-desktop .
 
 # ── Run (builds everything first) ─────────────────────────────────
 run: build
-	./avatar-pc
+	./avatar-desktop
 
 # ── Clean ─────────────────────────────────────────────────────────
 clean:
-	rm -f avatar-ui avatar-pc
+	rm -f avatar-ui avatar-desktop

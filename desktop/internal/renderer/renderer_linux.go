@@ -18,7 +18,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/liuyngchng/avatar-pc/internal/brain"
+	"github.com/liuyngchng/avatar-desktop/internal/brain"
 )
 
 // gtkRenderer is a Linux renderer backed by a separate GTK3 + WebKit2GTK

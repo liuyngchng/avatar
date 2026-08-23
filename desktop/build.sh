@@ -3,7 +3,7 @@ set -euo pipefail
 
 # ─── 1. Check we're in the pc directory ──────────────────────────
 if [[ ! -f "main.go" ]] || [[ ! -f "go.mod" ]]; then
-  echo "❌ ERROR: run this script from the pc/ directory"
+  echo "❌ ERROR: run this script from the desktop/ directory"
   exit 1
 fi
 echo "✔ OK: current directory = $(pwd)"
@@ -29,10 +29,10 @@ echo "🔨 Building avatar-ui (in Docker)..."
 docker run --rm -v "$(pwd)":/workspace -w /workspace "$IMAGE" make avatar-ui
 echo "✔ OK: avatar-ui built"
 
-# ─── 5. Build avatar-pc (Go) ─────────────────────────────────────
-echo "🔨 Building avatar-pc..."
-go build -o avatar-pc .
-echo "✔ OK: avatar-pc built"
+# ─── 5. Build avatar-desktop (Go) ─────────────────────────────────────
+echo "🔨 Building avatar-desktop..."
+go build -o avatar-desktop .
+echo "✔ OK: avatar-desktop built"
 
 echo ""
-echo "✅ Done: avatar-ui + avatar-pc"
+echo "✅ Done: avatar-ui + avatar-desktop"

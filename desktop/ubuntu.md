@@ -7,7 +7,7 @@
 | 组件 | 语言 | 说明 |
 |------|------|------|
 | `avatar-ui` | C | 窗口宿主（GTK3 + WebKit2GTK），负责透明窗口和 WebGL 渲染 |
-| `avatar-pc` | Go | 后端主程序，ASR/TTS/KWS/LLM 引擎，音频 I/O，状态机 |
+| `avatar-desktop` | Go | 后端主程序，ASR/TTS/KWS/LLM 引擎，音频 I/O，状态机 |
 
 `avatar-ui` 编译需要 WebKitGTK 开发库，折腾起来麻烦。**C 编译放 Docker 里做，Go 编译本地做。**
 
@@ -32,14 +32,14 @@ docker run --rm -v $(pwd):/workspace -w /workspace ubuntu:24.04 bash -c '
 
 ---
 
-## 二、编译 avatar-pc（Go，本地）
+## 二、编译 avatar-desktop（Go，本地）
 
 Go 编译只需 ALSA 开发头文件，安装后直接 `make` 或 `go build`：
 
 ```bash
 sudo apt install libasound2-dev
-make avatar-pc
-# 或: go build -o avatar-pc .
+make avatar-desktop
+# 或: go build -o avatar-desktop .
 ```
 
 ---
@@ -73,7 +73,7 @@ docker run --rm -v $(pwd):/workspace -w /workspace ubuntu:24.04 bash -c '
 
 # 2. 本地编译 Go
 sudo apt install libasound2-dev
-make avatar-pc
+make avatar-desktop
 ```
 
-产物：`./avatar-ui` + `./avatar-pc`，在同目录下放进 `web/` 和 `models/` 即可运行。
+产物：`./avatar-ui` + `./avatar-desktop`，在同目录下放进 `web/` 和 `models/` 即可运行。

@@ -64,11 +64,11 @@ android/local.properties
 .model_cache/
 
 # ── PC (Go) ───────────────────────────────────────────
-pc/avatar-pc
-pc/avatar-pc.exe
-pc/models/*
-!pc/models/README.md
-pc/cfg.yml
+desktop/avatar-desktop
+desktop/avatar-desktop.exe
+desktop/models/*
+!desktop/models/README.md
+desktop/cfg.yml
 
 # ── Web (Go) ───────────────────────────────────────────
 web/avatar-server

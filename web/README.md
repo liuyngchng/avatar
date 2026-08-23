@@ -113,7 +113,7 @@ web/
 │   ├── index.html                # 3D 渲染 + WebSocket + Web Audio
 │   ├── js/                       # three.js / three-vrm
 │   └── models/                   # VRM 模型 + FBX 动画
-└── models/ -> ../pc/models/      # 符号链接到离线模型
+└── models/ -> ../desktop/models/      # 符号链接到离线模型
 ```
 
 ## WebSocket 协议
