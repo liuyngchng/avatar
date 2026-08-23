@@ -80,6 +80,7 @@ tar xf $SRC/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09.tar \
 mkdir -p $DST/tts
 tar xf $SRC/matcha-icefall-zh-baker.tar \
     --strip-components=1 -C $DST/tts
+    
 mv $DST/tts/model-steps-3.onnx $DST/tts/model.onnx
 
 # Vocoder
@@ -131,6 +132,12 @@ go env -w GOPROXY=https://goproxy.cn,direct
 # 4. 运行
 
 ```bash
+# 进入工作目录
+cd avatar/pc
+# 创建配置文件
+cp cfg.yml.template cfg.yml
+# 填写相关模型信息
+vi cfg.yml
 ./avatar-pc
 ```
 
@@ -167,7 +174,7 @@ pc/
 
 | 层 | 技术 |
 |----|------|
-| 后端 | Go |
+| 后端 | C, Go, js |
 | 窗口 | GTK3 + WebKit2GTK（Linux）、WebView2（Windows） |
 | 3D 渲染 | three.js + three-vrm（WebGL） |
 | ASR | sherpa-onnx SenseVoiceSmall int8 |
