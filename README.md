@@ -1,8 +1,8 @@
-# Avatar — 手机里的数字人
+# Avatar — 数字人
 
-一个跑在 iPhone / Android 手机上的数字人。她能听懂你说的话、用自然的声音回答你，有丰富的表情动画。你也可以给她一段文字，让她念出来。
+一个跑在 iPhone / Android 手机和大屏 PC 上的数字人。她能听懂你说的话、用自然的声音回答你，有丰富的表情动画。你也可以给她一段文字，让她念出来。
 
-**不需要任何外部硬件。** 只有你的手机，和一个住在屏幕里的她。
+**不需要任何外部硬件。** 一部手机，或一台大屏 PC，和一个住在屏幕里的她。
 
 ## 她能做什么
 
@@ -10,22 +10,23 @@
 - 🔄 **多轮对话** — 唤醒后持续对话，直到你停下来（最多连续沉默 3 轮后自动结束）
 - 📝 **文字朗读** — 贴一段文字给她，她用自然的声音念出来
 - 🎤 **唤醒词** — 喊"小火小火"，她应一声"哎，我在呢"，然后听你说话
-- 🎨 **丰富表情** — 8 种情绪（中性/开心/好奇/惊讶/害羞/困倦/难过/搞怪）+ 眨眼 + 说话时嘴巴张合，由状态机驱动
+- 🎨 **丰富表情** — 8 种情绪（中性/开心/好奇/惊讶/害羞/困倦/难过/搞怪）+ 眨眼 + 说话时嘴巴张合，由状态机驱动（PC 端升级为 3D blendshape 真口型同步）
 - 🤪 **随机搞怪** — 空闲时偶尔做鬼脸、说俏皮话
+- 🖥️ **3D 数字人 (PC)** — 基于 three.js + three-vrm，真口型同步（拼音→viseme），支持 VRM blendshape 表情
 - 🌐 **多 LLM 支持** — 内置阿里百炼、DeepSeek、硅基流动预设，也支持自定义 OpenAI 兼容 API
 
 ## 平台支持
 
-| | iOS | Android |
-|---|---|---|
-| **UI** | SwiftUI + UIKit (Core Graphics) | Jetpack Compose (Canvas) |
-| **最低系统** | iOS 14.0 | Android 12 (API 31) |
-| **语音识别** | sherpa-onnx SenseVoiceSmall (离线) | sherpa-onnx SenseVoiceSmall (离线) |
-| **语音合成** | sherpa-onnx Matcha-TTS + vocos (离线) | sherpa-onnx Matcha-TTS + vocos (离线) |
-| **唤醒词** | sherpa-onnx Zipformer KWS (离线) | sherpa-onnx Zipformer KWS + 前台服务 |
-| **对话** | LLM API（可配置） | LLM API（可配置） |
+| | iOS | Android | PC |
+|---|---|---|---|
+| **UI** | SwiftUI + UIKit (Core Graphics) | Jetpack Compose (Canvas) | Go + three.js + three-vrm (3D) |
+| **最低系统** | iOS 14.0 | Android 12 (API 31) | Windows 10 1809+ / Ubuntu 24.04 |
+| **语音识别** | sherpa-onnx SenseVoiceSmall (离线) | sherpa-onnx SenseVoiceSmall (离线) | sherpa-onnx SenseVoiceSmall (离线) |
+| **语音合成** | sherpa-onnx Matcha-TTS + vocos (离线) | sherpa-onnx Matcha-TTS + vocos (离线) | sherpa-onnx Matcha-TTS + vocos (离线) |
+| **唤醒词** | sherpa-onnx Zipformer KWS (离线) | sherpa-onnx Zipformer KWS + 前台服务 | sherpa-onnx Zipformer KWS (离线) |
+| **对话** | LLM API（可配置） | LLM API（可配置） | LLM API（可配置） |
 
-两个平台功能完全对齐，共享相同的模型文件。
+三个平台功能对齐，共享相同的离线模型文件。PC 端升级为 3D VRM 数字人，支持真口型同步（拼音→viseme）和表情 blendshape。
 
 ## 快速开始
 
@@ -62,6 +63,38 @@
 
 5. 首次启动授权**麦克风**
 
+### PC
+
+1. 进入 PC 目录：
+   ```
+   cd pc/
+   ```
+
+2. 下载模型文件：
+   ```
+   cd scripts/ && ./download-models.sh && cd ..
+   ```
+
+3. 准备 VRM 3D 模型（用 VRoid Studio 免费制作，或下载 CC0 模型），放到 `web/models/avatar.vrm`
+
+4. 配置 LLM：
+   ```
+   cp cfg.yml.template cfg.yml
+   # 编辑 cfg.yml，填入 API key 和 model
+   ```
+
+5. 运行：
+   ```
+   make run
+   ```
+   或编译后运行：
+   ```
+   make build
+   ./avatar-pc
+   ```
+
+详细说明见 [pc/README.md](pc/README.md)。
+
 ### 需要的模型
 
 | 模型 | 用途 | 大小 |
@@ -74,21 +107,21 @@ App 内置模型管理界面，支持从手机上传/解压 `.tar` / `.tar.bz2` 
 
 ## 开始互动
 
-- 点击屏幕 — 说话 — 她回答
+- 点击屏幕 — 说话 — 她回答（PC 端支持鼠标点击）
 - 或喊"**小火小火**"唤醒她，进入多轮对话模式
 - 长按屏幕 → 进入设置（配置 LLM、管理模型、文字朗读）
 
 ## 技术栈
 
-| 层 | iOS | Android |
-|----|-----|---------|
-| **UI** | SwiftUI + UIKit (Core Graphics 绘制脸部) | Jetpack Compose (Canvas 绘制脸部) |
-| **语音识别** | sherpa-onnx SenseVoiceSmall (离线) | sherpa-onnx SenseVoiceSmall (离线 JNI) |
-| **语音合成** | sherpa-onnx Matcha-TTS + vocos (离线) | sherpa-onnx Matcha-TTS + vocos (离线 JNI) |
-| **唤醒词** | sherpa-onnx Zipformer KWS (离线) | sherpa-onnx Zipformer KWS + Foreground Service |
-| **对话** | LLM API（兼容 OpenAI 接口） | LLM API（兼容 OpenAI 接口） |
-| **状态管理** | Combine + Swift Concurrency | Kotlin Coroutines + StateFlow |
-| **最低系统** | iOS 14.0 | Android 12 (API 31) |
+| 层 | iOS | Android | PC |
+|----|-----|---------|-----|
+| **UI** | SwiftUI + UIKit (Core Graphics 绘制脸部) | Jetpack Compose (Canvas 绘制脸部) | Go + three.js + three-vrm (WebGL 3D) |
+| **语音识别** | sherpa-onnx SenseVoiceSmall (离线) | sherpa-onnx SenseVoiceSmall (离线 JNI) | sherpa-onnx SenseVoiceSmall (离线 CGo) |
+| **语音合成** | sherpa-onnx Matcha-TTS + vocos (离线) | sherpa-onnx Matcha-TTS + vocos (离线 JNI) | sherpa-onnx Matcha-TTS + vocos (离线 CGo) |
+| **唤醒词** | sherpa-onnx Zipformer KWS (离线) | sherpa-onnx Zipformer KWS + Foreground Service | sherpa-onnx Zipformer KWS (离线 CGo) |
+| **对话** | LLM API（兼容 OpenAI 接口） | LLM API（兼容 OpenAI 接口） | LLM API（兼容 OpenAI 接口） |
+| **状态管理** | Combine + Swift Concurrency | Kotlin Coroutines + StateFlow | Go Channel + State Machine |
+| **最低系统** | iOS 14.0 | Android 12 (API 31) | Windows 10 1809+ / Ubuntu 24.04 |
 
 ## 项目结构
 
@@ -184,6 +217,30 @@ avatar/
 │   │       └── TextReaderScreen.kt    # 文字朗读
 │   └── app/src/main/cpp/              # JNI 原生代码 (sherpa-onnx)
 │
+├── pc/                                   # PC 大屏 3D 数字人
+│   ├── main.go                           # 入口，启动窗口 + 大脑
+│   ├── Makefile
+│   ├── cfg.yml.template                  # LLM 配置模板
+│   ├── cmd/avatar-ui/main.c              # GTK3 + WebKit2GTK 窗口宿主 (Linux)
+│   ├── internal/
+│   │   ├── brain/                        # 状态机 + 情绪 + 拼音→viseme 映射
+│   │   ├── asr/                          # CGo 封装 sherpa-onnx ASR
+│   │   ├── tts/                          # CGo 封装 sherpa-onnx TTS + 文本归一化
+│   │   ├── kws/                          # CGo 封装 sherpa-onnx KWS 唤醒词
+│   │   ├── llm/                          # LLM HTTP 流式客户端
+│   │   ├── audio/                        # 音频 I/O (malgo)
+│   │   └── renderer/                     # WebView2 (Win) / GTK+WebKit (Linux) 渲染器 + JS Bridge
+│   ├── web/                              # 前端渲染 (three.js + three-vrm)
+│   │   ├── index.html
+│   │   ├── js/
+│   │   └── models/                       # VRM 3D 模型
+│   ├── models/                           # 离线模型（不提交 git）
+│   │   ├── asr/
+│   │   ├── tts/
+│   │   └── kws/
+│   └── scripts/
+│       └── download-models.sh
+│
 ├── firmware/esp32/                     # ESP32 硬件伴侣 (WIP)
 ├── docs/architecture.md                # 系统架构文档
 ├── download-models.sh                  # 模型下载脚本
@@ -209,7 +266,7 @@ avatar/
 
 ## 对话引擎
 
-App 支持两层对话：
+支持两层对话：
 
 | 引擎 | 说明 |
 |------|------|
@@ -220,16 +277,16 @@ App 支持两层对话：
 
 ### 纯离线模式
 
-如果你只让她念文字（不上传 LLM API key），那她**完全离线**：模型在本地，ASR 在本地，TTS 在本地，唤醒词在本地。不需要任何网络连接。
+如果不配置 LLM API key，数字人**完全离线**运行：模型在本地，ASR 在本地，TTS 在本地，唤醒词在本地。移动端支持文字朗读（TTS 念文字），PC 端使用内置规则引擎作为对话后备。不需要任何网络连接。
 
 ### 对话模式
 
-配置 LLM API 后，语音对话功能启用。API key 通过 Keychain (iOS) / EncryptedSharedPreferences (Android) 安全存储。
+配置 LLM API 后，语音对话功能启用。API key 通过 Keychain (iOS) / EncryptedSharedPreferences (Android) / 本地 cfg.yml (PC) 安全存储。
 
 ### 模型兼容
 
-iOS 和 Android 使用完全相同的模型文件——只需下载一次，两个平台通用。
+iOS、Android 和 PC 使用完全相同的离线模型文件（SenseVoiceSmall / Matcha-TTS / Zipformer KWS）——只需下载一次，三个平台通用。注意 PC 端 TTS 用 Matcha-TTS 而非 VITS，需用 `pc/scripts/download-models.sh` 下载。
 
 ### 代码风格
 
-iOS 和 Android 代码结构完全镜像，文件名和模块划分一致，方便跨平台对照维护。
+iOS 和 Android 代码结构完全镜像，文件名和模块划分一致，方便跨平台对照维护。PC 端用 Go 重写同一套状态机和链路，模块划分（brain / asr / tts / kws / llm / audio）一一对应。
