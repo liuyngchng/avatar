@@ -4,7 +4,6 @@ package config
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 
 	"gopkg.in/yaml.v3"
 )
@@ -24,16 +23,14 @@ type LLMConfig struct {
 	Name    string `yaml:"name"` // character name, defaults to "小然"
 }
 
-// Load reads cfg.yml from the working directory or alongside the binary.
+// Load reads cfg.yml from the current working directory only.
+// Returns an error if the file is not found or cannot be parsed.
 func Load() (*Config, error) {
-	path := findCfg()
-	if path == "" {
-		return nil, fmt.Errorf("config: cfg.yml not found")
-	}
+	const path = "cfg.yml"
 
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("config: read %s: %w", path, err)
+		return nil, fmt.Errorf("config: %s not found in current directory: %w", path, err)
 	}
 
 	var cfg Config
@@ -42,21 +39,6 @@ func Load() (*Config, error) {
 	}
 
 	return &cfg, nil
-}
-
-// findCfg searches for cfg.yml in standard locations.
-func findCfg() string {
-	candidates := []string{
-		"cfg.yml",
-		"../cfg.yml",
-		filepath.Join(filepath.Dir(os.Args[0]), "cfg.yml"),
-	}
-	for _, p := range candidates {
-		if _, err := os.Stat(p); err == nil {
-			return p
-		}
-	}
-	return ""
 }
 
 // IsFBXEnabled returns true if FBX animation should be loaded.

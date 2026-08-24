@@ -66,6 +66,7 @@ android/local.properties
 # ── PC (Go) ───────────────────────────────────────────
 desktop/avatar-desktop
 desktop/avatar-desktop.exe
+desktop/avatar-ui
 desktop/models/*
 !desktop/models/README.md
 desktop/cfg.yml

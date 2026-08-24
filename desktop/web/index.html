@@ -718,8 +718,7 @@
       if (!timeline || !timeline.length) return;
 
       // Clear any previous pending timers.
-      for (const t of visemeTimers) clearTimeout(t);
-      visemeTimers = [];
+      clearVisemeTimers();
 
       const start = performance.now();
 
@@ -762,6 +761,13 @@
       for (const name of mouthVisemes) {
         visemeTargets[name] = (name === viseme) ? weight : 0;
       }
+    }
+
+    // Clear all pending viseme timers. Called when a new timeline starts
+    // or when the page is about to be unloaded.
+    function clearVisemeTimers() {
+      for (const t of visemeTimers) clearTimeout(t);
+      visemeTimers = [];
     }
 
     // ─── Apply mode/emotion/speaking state to VRM ──────────────
@@ -1269,6 +1275,14 @@
     // ─── Start ──────────────────────────────────────────────
     initAvatar().then(() => {
       animate();
+    });
+
+    // Clean up timers when the page is unloaded or hidden.
+    window.addEventListener('beforeunload', () => {
+      clearVisemeTimers();
+    });
+    window.addEventListener('pagehide', () => {
+      clearVisemeTimers();
     });
   </script>
 </body>

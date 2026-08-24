@@ -2,6 +2,7 @@ package brain
 
 import (
 	"log"
+	"math"
 	"strings"
 	"sync"
 	"time"
@@ -344,7 +345,7 @@ func (sm *StateMachine) collectSpeech() []float32 {
 	}
 
 	const (
-		silenceThreshold = 0.005
+		silenceThreshold = 0.01
 		silenceHangover  = 15
 		maxDuration      = 15 * time.Second
 		minSpeechBuffers = 5
@@ -451,7 +452,7 @@ func computeRMS(samples []float32) float64 {
 	for _, s := range samples {
 		sum += float64(s) * float64(s)
 	}
-	return sum / float64(len(samples))
+	return math.Sqrt(sum / float64(len(samples)))
 }
 
 func truncate(s string, maxLen int) string {

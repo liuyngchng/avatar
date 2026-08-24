@@ -97,18 +97,18 @@
 
 ### 需要的模型
 
-| 模型 | 用途 | 大小 |
-|------|------|------|
-| SenseVoiceSmall (int8) | 语音识别 (ASR) | ~158MB |
-| Matcha-TTS + vocos | 语音合成 (TTS) | ~116MB |
-| Zipformer KWS | 唤醒词 | ~13MB |
+| 模型 | 用途 |
+|------|------|
+| SenseVoice | 语音识别 (`ASR`) |
+| Matcha-TTS + vocos | 语音合成 (`TTS`) |
+| Zipformer KWS | 唤醒词 |
 
-App 内置模型管理界面，支持从手机上传/解压 `.tar` / `.tar.bz2` 文件。
+`App` 内置模型管理界面，支持从手机上传/解压 `.tar` / `.tar.bz2` 文件。
 
 ## 开始互动
 
 - 点击屏幕 — 说话 — 她回答（PC 端支持鼠标点击）
-- 或喊"**小火小火**"唤醒她，进入多轮对话模式
+- 或喊"**小冉小冉**"唤醒她，进入多轮对话模式
 - 长按屏幕 → 进入设置（配置 LLM、管理模型、文字朗读）
 
 ## 技术栈
@@ -116,12 +116,12 @@ App 内置模型管理界面，支持从手机上传/解压 `.tar` / `.tar.bz2` 
 | 层 | iOS | Android | PC |
 |----|-----|---------|-----|
 | **UI** | SwiftUI + UIKit (Core Graphics 绘制脸部) | Jetpack Compose (Canvas 绘制脸部) | Go + three.js + three-vrm (WebGL 3D) |
-| **语音识别** | sherpa-onnx SenseVoiceSmall (离线) | sherpa-onnx SenseVoiceSmall (离线 JNI) | sherpa-onnx SenseVoiceSmall (离线 CGo) |
-| **语音合成** | sherpa-onnx Matcha-TTS + vocos (离线) | sherpa-onnx Matcha-TTS + vocos (离线 JNI) | sherpa-onnx Matcha-TTS + vocos (离线 CGo) |
-| **唤醒词** | sherpa-onnx Zipformer KWS (离线) | sherpa-onnx Zipformer KWS + Foreground Service | sherpa-onnx Zipformer KWS (离线 CGo) |
-| **对话** | LLM API（兼容 OpenAI 接口） | LLM API（兼容 OpenAI 接口） | LLM API（兼容 OpenAI 接口） |
+| **语音识别** | sherpa-onnx SenseVoiceSmall (离线) | sherpa-onnx SenseVoice (离线 JNI) | sherpa-onnx SenseVoice(离线 `CGo`) |
+| **语音合成** | sherpa-onnx Matcha-TTS + vocos (离线) | sherpa-onnx Matcha-TTS + vocos (离线 JNI) | sherpa-onnx Matcha-TTS + vocos (离线 `CGo`) |
+| **唤醒词** | sherpa-onnx Zipformer KWS (离线) | sherpa-onnx Zipformer KWS + Foreground Service | sherpa-onnx Zipformer KWS (离线 `CGo`) |
+| **对话** | `LLM` `API`（兼容 `OpenAI` 接口） | `LLM` `API`（兼容 `OpenAI` 接口） | `LLM` `API`（兼容 `OpenAI` 接口） |
 | **状态管理** | Combine + Swift Concurrency | Kotlin Coroutines + StateFlow | Go Channel + State Machine |
-| **最低系统** | iOS 14.0 | Android 12 (API 31) | Windows 10 1809+ / Ubuntu 24.04 |
+| **最低系统** | iOS 14.0 | Android 12 (`API` 31) | Windows 10 1809+ / Ubuntu 24.04 |
 
 ## 项目结构
 
@@ -217,7 +217,7 @@ avatar/
 │   │       └── TextReaderScreen.kt    # 文字朗读
 │   └── app/src/main/cpp/              # JNI 原生代码 (sherpa-onnx)
 │
-├── desktop/                                   # PC 大屏 3D 数字人
+├── desktop/                                  # PC 大屏 3D 数字人
 │   ├── main.go                           # 入口，启动窗口 + 大脑
 │   ├── Makefile
 │   ├── cfg.yml.template                  # LLM 配置模板

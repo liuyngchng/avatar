@@ -77,7 +77,11 @@ var finalToViseme = map[string]VisemeName{
 	"ao": VisemeO,
 }
 
-// bilabialInitials are consonants that produce a closed-mouth shape.
+// bilabialInitials are consonants that produce a closed-mouth shape ONLY
+// at the very start of the syllable. The viseme for the full character
+// should be determined by the final (韵母), not the initial, so we no
+// longer force VisemeRest for bilabial initials. This map is kept as
+// reference but is not currently used.
 var bilabialInitials = map[string]bool{
 	"b": true,
 	"p": true,
@@ -104,11 +108,10 @@ func GetViseme(char rune) VisemeName {
 	// Strip tone number/diacritic to get the base syllable.
 	base := stripTone(py[0])
 
-	// Check bilabial initials first.
-	initial, final := splitInitialFinal(base)
-	if bilabialInitials[initial] {
-		return VisemeRest
-	}
+	// Look up the final (韵母) to determine the mouth shape. The initial
+	// (声母) is ignored — the final determines the sustained mouth shape,
+	// which is what the viseme should reflect.
+	_, final := splitInitialFinal(base)
 
 	// Look up the final.
 	if viseme, ok := finalToViseme[final]; ok {
@@ -226,16 +229,57 @@ func stripTone(py string) string {
 
 // splitInitialFinal splits a pinyin syllable into initial (声母) and final (韵母).
 // e.g. "hao" → ("h", "ao"), "ni" → ("n", "i"), "a" → ("", "a")
+//
+// y/w are NOT real initials — they mark zero-initial syllables. They are
+// folded back into the final by restoring the medial vowel, so the final
+// correctly maps to a viseme (e.g. "yao" → final "iao", not "ao").
 func splitInitialFinal(py string) (initial, final string) {
-	// Common initials in pinyin (single char).
+	// Multi-char initials: zh, ch, sh.
+	if len(py) >= 2 && (py[:2] == "zh" || py[:2] == "ch" || py[:2] == "sh") {
+		return py[:2], py[2:]
+	}
+
+	// y → restore i / ü medial.
+	if strings.HasPrefix(py, "y") {
+		rest := py[1:]
+		switch rest {
+		case "i":
+			return "", "i" // yi
+		case "in":
+			return "", "in" // yin
+		case "ing":
+			return "", "ing" // ying
+		case "ou":
+			return "", "iu" // you
+		case "u":
+			return "", "v" // yu (ü)
+		case "ue":
+			return "", "ue" // yue (üe)
+		case "un":
+			return "", "un" // yun (ün)
+		case "ong":
+			return "", "iong" // yong
+		}
+		return "", "i" + rest // ya→ia, yan→ian, yao→iao, yang→iang, ye→ie
+	}
+
+	// w → restore u medial.
+	if strings.HasPrefix(py, "w") {
+		rest := py[1:]
+		switch rest {
+		case "u":
+			return "", "u" // wu
+		case "ei":
+			return "", "ui" // wei
+		}
+		return "", "u" + rest // wa→ua, wo→uo, wan→uan, wen→uen
+	}
+
+	// Single-char initials.
 	singleInitials := []string{"b", "p", "m", "f", "d", "t", "n", "l",
-		"g", "k", "h", "j", "q", "x", "r", "z", "c", "s", "y", "w"}
+		"g", "k", "h", "j", "q", "x", "r", "z", "c", "s"}
 	for _, ini := range singleInitials {
 		if strings.HasPrefix(py, ini) {
-			// Check for zh, ch, sh
-			if (ini == "z" || ini == "c" || ini == "s") && len(py) > 1 && py[1] == 'h' {
-				return py[:2], py[2:]
-			}
 			return ini, py[len(ini):]
 		}
 	}

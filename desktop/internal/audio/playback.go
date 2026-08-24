@@ -85,7 +85,11 @@ func waitDone(player *oto.Player) error {
 	return player.Err()
 }
 
-// Close releases the audio context.
+// Close releases the audio device.
 func (p *Player) Close() {
-	// oto Context doesn't have an explicit Close; GC handles cleanup.
+	if p.ctx != nil {
+		if err := p.ctx.Suspend(); err != nil {
+			log.Printf("audio: player suspend error: %v", err)
+		}
+	}
 }

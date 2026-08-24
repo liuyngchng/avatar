@@ -18,7 +18,7 @@
 **（1）首次构建**
 
 ```bash
-cd ~/workspace/avatar/pc
+cd ~/workspace/avatar/desktop
 # avatar-ui（C 程序，需 WebKitGTK 开发库，放 Docker 里编译）
 docker run -dit --name my_webkitgtk -v $(pwd):/workspace -w /workspace ubuntu:24.04
 
@@ -39,7 +39,7 @@ docker rm my_webkitgtk
 **（2）后续构建**
 
 ```sh
-cd avatar/pc
+cd avatar/desktop
 
 docker run --rm -v $(pwd):/workspace -w /workspace avatar_webkit_gtk:1.0 make avatar-ui
 
@@ -78,7 +78,7 @@ SRC=~/Desktop/siri_models
 DST=models
 
 # ASR
-cd avatar/pc
+cd avatar/desktop
 mkdir -p $DST/asr
 tar xf $SRC/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09.tar \
     --strip-components=1 -C $DST/asr
@@ -140,7 +140,7 @@ go env -w GOPROXY=https://goproxy.cn,direct
 
 ```bash
 # 进入工作目录
-cd avatar/pc
+cd avatar/desktop
 # 创建配置文件
 cp cfg.yml.template cfg.yml
 # 填写相关模型信息
@@ -166,7 +166,7 @@ desktop/
 │   ├── llm/                    # LLM HTTP 流式客户端
 │   ├── audio/                  # 音频采集与播放
 │   ├── config/                 # YAML 配置解析
-│   └── renderer/               # 渲染器抽象 + Linux/Windows 实现
+│   └── renderer/               # 渲染器抽象（Linux: GTK3 + WebKit2GTK）
 ├── web/
 │   ├── index.html              # 3D 渲染页面（three.js + three-vrm）
 │   ├── js/                     # three.js / three-vrm / GLTFLoader
@@ -182,7 +182,7 @@ desktop/
 | 层 | 技术 |
 |----|------|
 | 后端 | C, Go, js |
-| 窗口 | GTK3 + WebKit2GTK（Linux）、WebView2（Windows） |
+| 窗口 | GTK3 + WebKit2GTK（Linux） |
 | 3D 渲染 | three.js + three-vrm（WebGL） |
 | ASR | sherpa-onnx SenseVoiceSmall |
 | TTS | sherpa-onnx Matcha-TTS + vocos |
