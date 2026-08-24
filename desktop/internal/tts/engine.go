@@ -90,6 +90,10 @@ func (e *Engine) Synthesize(text string, speed float32) (*SynthesizeResult, erro
 		speed = 1.0
 	}
 
+	// Matcha-TTS does not convert Arabic numerals to Chinese readings, so
+	// pre-normalize dates/times/numbers before synthesis (see normalize.go).
+	text = Normalize(text)
+
 	audio := e.tts.Generate(text, 0 /* sid */, speed)
 	if audio == nil {
 		return nil, fmt.Errorf("tts: synthesis produced no audio")
