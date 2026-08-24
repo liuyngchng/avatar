@@ -32,7 +32,7 @@ func main() {
 	// ── Load config ────────────────────────────────────────
 	cfg, err := config.Load()
 	if err != nil {
-		log.Printf("Warning: cfg.yml not found in current directory — 无法进行对话，数字人将使用默认响应 (error: %v)", err)
+		log.Printf("Warning: cfg.yml 加载失败 — 无法进行对话，数字人将使用默认响应 (error: %v)", err)
 		cfg = &config.Config{
 			LLM: config.LLMConfig{
 				BaseURL: os.Getenv("AVATAR_LLM_BASE_URL"),

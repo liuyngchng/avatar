@@ -475,14 +475,12 @@ func EmotionFromString(s string) Emotion {
 	switch strings.ToLower(s) {
 	case "happy":
 		return EmotionHappy
-	case "curious":
-		return EmotionCurious
+	case "angry":
+		return EmotionAngry
 	case "surprised":
 		return EmotionSurprised
-	case "shy":
-		return EmotionShy
-	case "sleepy":
-		return EmotionSleepy
+	case "relaxed":
+		return EmotionRelaxed
 	case "sad":
 		return EmotionSad
 	default:

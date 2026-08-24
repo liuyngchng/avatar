@@ -52,6 +52,23 @@
     let currentEmotion = 'neutral';
     let isSpeaking = false;
 
+    // ─── Emotion → upper-face morph mapping ────────────────────
+    // We drive the per-part eyebrow (BRW) and eye (EYE) morphs directly
+    // instead of the VRM preset expressions, because the presets
+    // (e.g. "happy" = Fcl_ALL_Joy) also move the mouth and fight with
+    // viseme lip-sync. Mouth stays 100% viseme-controlled.
+    const emotionMorphNames = {
+      happy:     ['Face_Blendshape.Fcl_BRW_Joy',      'Face_Blendshape.Fcl_EYE_Joy'],
+      angry:     ['Face_Blendshape.Fcl_BRW_Angry',    'Face_Blendshape.Fcl_EYE_Angry'],
+      sad:       ['Face_Blendshape.Fcl_BRW_Sorrow',   'Face_Blendshape.Fcl_EYE_Sorrow'],
+      surprised: ['Face_Blendshape.Fcl_BRW_Surprised','Face_Blendshape.Fcl_EYE_Surprised'],
+      relaxed:   ['Face_Blendshape.Fcl_BRW_Fun',      'Face_Blendshape.Fcl_EYE_Fun'],
+    };
+    let faceMesh = null;                       // first Face mesh (for morphTargetDictionary lookup)
+    let faceMeshes = [];                       // all Face mesh primitives (need morphs on all)
+    let emotionMorphMap = {};                  // emotion -> [morphIndex, ...]
+    let managedEmotionIndices = [];            // every index we touch, for clearing
+
     // FBX animation toggle — read from URL query parameter.
     // Defaults to true (enabled). Set enable_fbx=0 to disable.
     const enableFBX = !(new URLSearchParams(window.location.search).get('enable_fbx') === '0');
@@ -235,6 +252,12 @@
 
       console.log('VRM loaded:', vrm.meta?.metaVersion);
       console.log('Expressions:', Object.keys(vrm.expressionManager?.expressionMap || {}));
+
+      // Build the emotion → morphTargetInfluences map. We locate the Face
+      // mesh by name and resolve each morph name to its index so we can
+      // drive upper-face morphs directly (see emotionMorphNames above).
+      buildEmotionMorphMap();
+
       updateStatus();
 
       // Load FBX animations and initialize the mixer (if enabled).
@@ -438,6 +461,7 @@
 
         // VRM needs to be updated each frame for expressions to apply
         vrm.update(dt);
+        updateEmotionMorphs();
       } else if (window._placeholder) {
         updatePlaceholderBlink(dt);
         updatePlaceholderMouth(dt);
@@ -771,19 +795,12 @@
     }
 
     // ─── Apply mode/emotion/speaking state to VRM ──────────────
+    // Emotion no longer uses vrm.expressionManager presets (those move the
+    // mouth and clash with visemes). Instead updateEmotionMorphs() drives
+    // eyebrow/eye morphs directly every frame. This function only handles
+    // the non-face parts: resetting the mouth when not speaking.
     function applyModeToVRM() {
       if (!vrm?.expressionManager) return;
-
-      // Reset all preset expressions to neutral
-      const presets = ['happy', 'angry', 'sad', 'surprised', 'relaxed', 'neutral'];
-      for (const p of presets) {
-        vrm.expressionManager.setValue(p, 0);
-      }
-
-      // Apply emotion
-      if (currentEmotion !== 'neutral' && presets.includes(currentEmotion)) {
-        vrm.expressionManager.setValue(currentEmotion, 1.0);
-      }
 
       // Visemes are driven by real-time viseme messages from Go,
       // not by the mode/emotion state. When not speaking, reset
@@ -794,6 +811,66 @@
 
       // Note: FBX animations are now managed by the idle animation system
       // (startIdleAnimations / stopIdleAnimations), not by mode/emotion here.
+    }
+
+    // ─── Resolve emotion morph names to face-mesh indices ─────
+    function buildEmotionMorphMap() {
+      faceMesh = null;
+      faceMeshes = [];
+      emotionMorphMap = {};
+      managedEmotionIndices = [];
+
+      if (!vrm?.scene) return;
+
+      vrm.scene.traverse((obj) => {
+        // The Face mesh is split into 7 primitives, named "Face", "Face_1",
+        // ... by GLTFLoader. We must drive morphs on all of them.
+        if (obj.isMesh && typeof obj.name === 'string' && obj.name.startsWith('Face')) {
+          if (!faceMesh && obj.morphTargetDictionary) faceMesh = obj;
+          faceMeshes.push(obj);
+        }
+      });
+
+      if (!faceMesh || !faceMesh.morphTargetDictionary) {
+        console.warn('[emotion] Face mesh or morphTargetDictionary not found; emotion disabled');
+        return;
+      }
+
+      for (const [emotion, names] of Object.entries(emotionMorphNames)) {
+        const binds = [];
+        for (const name of names) {
+          const idx = faceMesh.morphTargetDictionary[name];
+          if (idx === undefined) continue;
+          binds.push(idx);
+          managedEmotionIndices.push(idx);
+        }
+        if (binds.length) emotionMorphMap[emotion] = binds;
+      }
+    }
+
+    // ─── Drive upper-face (brow/eye) morphs for current emotion ─
+    // Runs after vrm.update() every frame. vrm.update() resets all
+    // expression-driven morph influences; we re-apply ours on top, so
+    // emotion weights never bleed into the mouth visemes.
+    function updateEmotionMorphs() {
+      if (!faceMeshes.length) return;
+
+      const binds = emotionMorphMap[currentEmotion];
+
+      for (const mesh of faceMeshes) {
+        if (!mesh.morphTargetInfluences) continue;
+
+        // Clear all indices we manage.
+        for (const idx of managedEmotionIndices) {
+          mesh.morphTargetInfluences[idx] = 0;
+        }
+
+        // Apply the current emotion's upper-face morphs at full weight.
+        if (!binds) continue;
+        for (const idx of binds) {
+          mesh.morphTargetInfluences[idx] = 1.0;
+        }
+      }
     }
 
     // ─── JS Bridge: Send events to Go ───────────────────────

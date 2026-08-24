@@ -47,11 +47,10 @@ type Emotion string
 const (
 	EmotionNeutral   Emotion = "neutral"
 	EmotionHappy     Emotion = "happy"
-	EmotionCurious   Emotion = "curious"
-	EmotionSurprised Emotion = "surprised"
-	EmotionShy       Emotion = "shy"
-	EmotionSleepy    Emotion = "sleepy"
+	EmotionAngry     Emotion = "angry"
 	EmotionSad       Emotion = "sad"
+	EmotionSurprised Emotion = "surprised"
+	EmotionRelaxed   Emotion = "relaxed"
 )
 
 // State is the current state of the digital human, consumed by the UI.

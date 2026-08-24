@@ -251,7 +251,7 @@ func defaultSystemPrompt(name string) string {
 		"当前日期是" + now + "（仅当需要判断时间时参考，不要主动报日期）。" +
 		"这是一个多轮对话，记住之前聊过的话题，保持一致的语气。" +
 		"训练数据中有的知识可以直接回答；确实不知道的事情，诚实说明即可。" +
-		"回复时可以在开头用[emotion:表情]标签标注情绪，可选表情：neutral/happy/curious/surprised/shy/sleepy/sad。" +
+		"回复时可以在开头用[emotion:表情]标签标注情绪，可选表情：neutral/happy/angry/sad/surprised/relaxed。" +
 		"例如：[emotion:happy]你好呀！今天天气真不错！"
 }
 
@@ -267,7 +267,7 @@ func ParseEmotion(text string) (emotion string, cleanText string) {
 			raw := text[len(prefix):end]
 			cleanText = strings.TrimSpace(text[end+1:])
 			switch raw {
-			case "neutral", "happy", "curious", "surprised", "shy", "sleepy", "sad":
+			case "neutral", "happy", "angry", "sad", "surprised", "relaxed":
 				return raw, cleanText
 			default:
 				// Unknown tag: still strip it, keep emotion neutral.
