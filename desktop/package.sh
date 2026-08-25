@@ -130,6 +130,10 @@ fi
 mkdir -p dist
 tar czf "$ARCHIVE" -C dist "$PKG_NAME"
 
+# 打包完成后清理解压目录，只保留 tar.gz
+rm -rf "$DIST_DIR"
+echo "✔ 已清理临时解压目录"
+
 # ── 9. 输出摘要 ───────────────────────────────────────────────────────
 ARCHIVE_SIZE="$(du -h "$ARCHIVE" | cut -f1)"
 echo ""
