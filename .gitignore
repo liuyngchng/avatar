@@ -70,6 +70,7 @@ desktop/avatar-ui
 desktop/models/*
 !desktop/models/README.md
 desktop/cfg.yml
+desktop/dist/
 
 # ── Web (Go) ───────────────────────────────────────────
 web/avatar-server
