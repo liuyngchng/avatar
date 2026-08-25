@@ -6,11 +6,11 @@ llm:
   api_key: "sk-123456"
   model: "deepseek-v4-flash"
   # 人偶的名字（会写入系统提示词，可自行修改）
-  name: "小然"
+  name: "小冉"
 
 # 唤醒词（sherpa-onnx 关键词格式: "音素序列 @中文显示名"）
 # 留空则自动从 llm.name 生成（名称重复两遍，拼音自动拆分）
-# 例如 name="小然" → "x iǎo r án x iǎo r án @小然小然"
+# 例如 name="小冉" → "x iǎo r ǎn x iǎo r ǎn @小冉小冉"
 wake_word: ""
 
 # 是否在初始化后播放 FBX 动画（默认 true）

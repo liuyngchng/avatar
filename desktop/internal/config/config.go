@@ -20,7 +20,7 @@ type LLMConfig struct {
 	BaseURL string `yaml:"base_url"`
 	APIKey  string `yaml:"api_key"`
 	Model   string `yaml:"model"`
-	Name    string `yaml:"name"` // character name, defaults to "小然"
+	Name    string `yaml:"name"` // character name, defaults to "小冉"
 }
 
 // Load reads cfg.yml from the current working directory only.

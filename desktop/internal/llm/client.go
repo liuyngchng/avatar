@@ -24,7 +24,7 @@ type Config struct {
 	Model string
 	// SystemPrompt overrides the default system prompt.
 	SystemPrompt string
-	// Name is the character name used in the system prompt (default: "小然").
+	// Name is the character name used in the system prompt (default: "小冉").
 	Name string
 }
 
@@ -66,7 +66,7 @@ func New(cfg Config) *Client {
 		cfg.Model = "gpt-4o-mini"
 	}
 	if cfg.Name == "" {
-		cfg.Name = "小然"
+		cfg.Name = "小冉"
 	}
 
 	return &Client{

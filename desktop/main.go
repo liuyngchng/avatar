@@ -38,7 +38,7 @@ func main() {
 				BaseURL: os.Getenv("AVATAR_LLM_BASE_URL"),
 				APIKey:  os.Getenv("AVATAR_LLM_API_KEY"),
 				Model:   os.Getenv("AVATAR_LLM_MODEL"),
-				Name:    "小然",
+				Name:    "小冉",
 			},
 		}
 	}
@@ -54,7 +54,7 @@ func main() {
 	}
 	// Default character name (used in system prompt and wake word).
 	if cfg.LLM.Name == "" {
-		cfg.LLM.Name = "小然"
+		cfg.LLM.Name = "小冉"
 	}
 
 	// ── Initialize TTS engine (Matcha-TTS + vocos) ──────────
@@ -97,7 +97,7 @@ func main() {
 	var kwsEngine *kws.Engine
 
 	// Wake word: use the configured value, otherwise auto-generate from the
-	// character name (name repeated twice, e.g. "小然" → "小然小然").
+	// character name (name repeated twice, e.g. "小冉" → "小冉小冉").
 	wakeWord := cfg.WakeWord
 	if wakeWord == "" {
 		wakeWord = kws.GenerateWakeWord(cfg.LLM.Name)
