@@ -21,9 +21,39 @@
     }
     .status.hidden { opacity: 0; }
 
+    /* Loading overlay */
+    .loading-overlay {
+      position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      background: transparent; z-index: 999;
+      transition: opacity 0.5s ease-out;
+      pointer-events: none;
+    }
+    .loading-overlay.hidden {
+      opacity: 0; pointer-events: none;
+    }
+    .loading-spinner {
+      width: 36px; height: 36px;
+      border: 3px solid rgba(255,255,255,0.15);
+      border-top-color: rgba(255,255,255,0.7);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin-bottom: 16px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .loading-text {
+      color: rgba(255,255,255,0.65);
+      font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+      font-size: 15px;
+    }
+
   </style>
 </head>
 <body>
+  <div class="loading-overlay" id="loading">
+    <div class="loading-spinner"></div>
+    <div class="loading-text">加载中...</div>
+  </div>
   <canvas id="canvas"></canvas>
   <div class="status" id="status"></div>
 
@@ -275,6 +305,7 @@
       // Fade the avatar in once everything is ready.
       setTimeout(() => {
         canvas.classList.add('visible');
+        hideLoading();
         console.log('[INFO] 数字人淡入完成');
       }, 300);
     }
@@ -418,6 +449,12 @@
 
       console.log('Placeholder avatar created');
       updateStatus();
+
+      // Fade in the placeholder avatar and hide the loading overlay.
+      setTimeout(() => {
+        canvas.classList.add('visible');
+        hideLoading();
+      }, 300);
 
       // Auto-fit the GTK window to just the avatar's visible bounds.
       setTimeout(fitWindowToAvatar, 100);
@@ -1148,6 +1185,12 @@
     function fadeOutAvatar() {
       canvas.classList.add('fading');
       console.log('[INFO] 数字人淡出中...');
+    }
+
+    // Hide the "加载中..." overlay once the avatar is visible.
+    function hideLoading() {
+      const el = document.getElementById('loading');
+      if (el) el.classList.add('hidden');
     }
 
     // Pick and play a random animation from the idle pool.
