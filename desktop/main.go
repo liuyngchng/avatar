@@ -74,6 +74,15 @@ func main() {
 	}
 	defer ttsEngine.Close()
 
+	// Print TTS mode prominently.
+	log.Printf("══════════════════════════════════════")
+	if ttsMode == tts.ModeOnline {
+		log.Printf("  TTS 语音合成: 在线模式 (阿里云百炼 Qwen-TTS)")
+	} else {
+		log.Printf("  TTS 语音合成: 离线模式 (本地 Matcha-TTS)")
+	}
+	log.Printf("══════════════════════════════════════")
+
 	// ── Initialize audio player ──────────────────────────────
 	player, err := audio.NewPlayer(ttsEngine.SampleRate())
 	if err != nil {
@@ -96,6 +105,17 @@ func main() {
 	} else {
 		defer asrEngine.Close()
 	}
+
+	// Print ASR mode prominently.
+	log.Printf("══════════════════════════════════════")
+	if asrEngine == nil {
+		log.Printf("  ASR 语音识别: 未启用 (初始化失败)")
+	} else if asrMode == asr.ModeOnline {
+		log.Printf("  ASR 语音识别: 在线模式 (阿里云百炼 Qwen-ASR)")
+	} else {
+		log.Printf("  ASR 语音识别: 离线模式 (本地 SenseVoiceSmall)")
+	}
+	log.Printf("══════════════════════════════════════")
 
 	// ── Initialize KWS engine (Zipformer wake word) ──────────
 	kwsDir := kws.ModelsDir()
