@@ -3,10 +3,43 @@
 
 llm:
   base_url: "https://api.deepseek.com"
-  api_key: "sk-123456"
+  api_key: ""
   model: "deepseek-v4-flash"
   # 人偶的名字（会写入系统提示词，可自行修改）
   name: "小冉"
+
+# ASR 语音识别配置
+# mode: "offline" = 本地 sherpa-onnx SenseVoiceSmall 模型
+# mode: "online"  = 阿里云百炼 DashScope 实时 WebSocket API (Qwen-Audio-3.0-ASR-Flash-Streaming)
+asr:
+  mode: "offline"
+  # 在线模式配置（mode=online 时必填）
+  url: "wss://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/api-ws/v1/inference"
+  model: "qwen-audio-3.0-asr-flash-streaming"
+  format: "pcm"
+  sample_rate: 16000
+
+# TTS 语音合成配置
+# mode: "offline" = 本地 sherpa-onnx Matcha-TTS + vocos 模型
+# mode: "online"  = 阿里云百炼 DashScope Qwen-TTS Realtime WebSocket API
+tts:
+  mode: "offline"
+  # 在线模式配置（mode=online 时必填）
+  url: "wss://dashscope.aliyuncs.com/api-ws/v1/realtime"
+  model: "qwen3-tts-flash-realtime"
+  voice: "Cherry"
+  format: "pcm"
+  sample_rate: 24000
+
+# 百炼 API Key（mode=online 时必填，llm/aliyun 共用）
+api_key: ""
+
+# 代理设置（可选，优先级高于环境变量 HTTPS_PROXY/HTTP_PROXY）
+proxy: ""
+
+# 强制关闭代理（可选）。设为 true 时，无论 cfg.yml 的 proxy 字段还是
+# 环境变量代理，一律直连，不做任何代理。
+# proxy_disabled: true
 
 # 唤醒词（sherpa-onnx 关键词格式: "音素序列 @中文显示名"）
 # 留空则自动从 llm.name 生成（名称重复两遍，拼音自动拆分）

@@ -57,14 +57,18 @@ func main() {
 		cfg.LLM.Name = "小冉"
 	}
 
-	// ── Initialize TTS engine (Matcha-TTS + vocos) ──────────
+	// Print proxy state so the user knows at a glance.
+	log.Printf("main: %s", config.ProxyDesc(cfg.Proxy, cfg.ProxyDisabled))
+
+	// ── Initialize TTS engine (offline Matcha-TTS or online Qwen-TTS) ──
 	ttsDir := tts.ModelsDir()
-	ttsEngine, err := tts.New(tts.ModelPaths{
+	ttsMode := tts.Mode(cfg.TTS.Mode)
+	ttsEngine, err := tts.New(ttsMode, tts.ModelPaths{
 		AcousticModel: filepath.Join(ttsDir, "model.onnx"),
 		Vocoder:       filepath.Join(ttsDir, "vocos.onnx"),
 		Tokens:        filepath.Join(ttsDir, "tokens.txt"),
 		Lexicon:       filepath.Join(ttsDir, "lexicon.txt"),
-	})
+	}, cfg.TTS.URL, cfg.TTS.Model, cfg.TTS.Voice, cfg.APIKey, cfg.TTS.Format, cfg.TTS.SampleRate, config.ProxyFunc(cfg.Proxy, cfg.ProxyDisabled))
 	if err != nil {
 		log.Fatalf("Failed to create TTS engine: %v", err)
 	}
@@ -78,13 +82,14 @@ func main() {
 	player.WaitReady()
 	defer player.Close()
 
-	// ── Initialize ASR engine (SenseVoiceSmall) ──────────────
+	// ── Initialize ASR engine (offline SenseVoiceSmall or online Qwen-ASR) ──
 	asrDir := asr.ModelsDir()
+	asrMode := asr.Mode(cfg.ASR.Mode)
 	var asrEngine *asr.Engine
-	asrEngine, err = asr.New(asr.ModelPaths{
+	asrEngine, err = asr.New(asrMode, asr.ModelPaths{
 		Model:  filepath.Join(asrDir, "model.int8.onnx"),
 		Tokens: filepath.Join(asrDir, "tokens.txt"),
-	})
+	}, cfg.ASR.URL, cfg.ASR.Model, cfg.APIKey, cfg.ASR.Format, cfg.ASR.SampleRate, config.ProxyFunc(cfg.Proxy, cfg.ProxyDisabled))
 	if err != nil {
 		log.Printf("Warning: ASR engine init failed (continuing without ASR): %v", err)
 		asrEngine = nil
@@ -120,11 +125,17 @@ func main() {
 	}
 
 	// ── Initialize LLM client ────────────────────────────────
+	// LLM API key: use llm.api_key if set, otherwise fall back to top-level api_key.
+	llmAPIKey := cfg.LLM.APIKey
+	if llmAPIKey == "" {
+		llmAPIKey = cfg.APIKey
+	}
 	llmClient := llm.New(llm.Config{
-		BaseURL: cfg.LLM.BaseURL,
-		APIKey:  cfg.LLM.APIKey,
-		Model:   cfg.LLM.Model,
-		Name:    cfg.LLM.Name,
+		BaseURL:   cfg.LLM.BaseURL,
+		APIKey:    llmAPIKey,
+		Model:     cfg.LLM.Model,
+		Name:      cfg.LLM.Name,
+		ProxyFunc: config.ProxyFunc(cfg.Proxy, cfg.ProxyDisabled),
 	})
 	if llmClient.IsConfigured() {
 		log.Println("LLM client configured (streaming enabled)")

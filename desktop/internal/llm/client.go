@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -26,6 +27,9 @@ type Config struct {
 	SystemPrompt string
 	// Name is the character name used in the system prompt (default: "小冉").
 	Name string
+	// ProxyFunc is the http.Proxy function used for HTTP requests
+	// (e.g. config.ProxyFunc(cfg.Proxy)). Nil means no proxy.
+	ProxyFunc func(*http.Request) (*url.URL, error)
 }
 
 // Message is a single chat message.
@@ -73,9 +77,8 @@ func New(cfg Config) *Client {
 		config: cfg,
 		http: &http.Client{
 			Timeout: 120 * time.Second,
-			// No proxy (direct connection to the intranet LLM API).
 			Transport: &http.Transport{
-				Proxy: nil,
+				Proxy: cfg.ProxyFunc,
 				// The intranet API uses a self-signed TLS certificate;
 				// skip verification (same as `curl -k`).
 				TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
