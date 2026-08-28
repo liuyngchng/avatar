@@ -295,7 +295,6 @@ func (e *Engine) decodeOnline(samples []float32) (*Result, error) {
 				sentence, _ := output["sentence"].(map[string]interface{})
 				text, _ := sentence["text"].(string)
 				sentenceEnd, _ := sentence["sentence_end"].(bool)
-				log.Printf("asr: result-generated text=%q sentence_end=%v", text, sentenceEnd)
 				if sentenceEnd {
 					if finalText != "" {
 						finalText += " "
@@ -336,6 +335,13 @@ func (e *Engine) decodeOnline(samples []float32) (*Result, error) {
 
 	log.Printf("asr: online final text: %q", finalText)
 	log.Printf("[timing] ASR: total=%dms", time.Since(t0).Milliseconds())
+
+	// Close the connection after each request. DashScope's WebSocket ASR
+	// closes the socket server-side after task-finished, so reusing it for
+	// the next turn fails ("task never started"). Reconnect fresh each time.
+	e.mu.Lock()
+	e.closeLocked()
+	e.mu.Unlock()
 
 	return &Result{
 		Text:    finalText,

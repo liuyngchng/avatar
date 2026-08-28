@@ -247,6 +247,13 @@ func (e *Engine) synthesizeOnline(text string, speed float32) (*SynthesizeResult
 		len(allSamples), dur, len([]rune(text)))
 	log.Printf("[timing] TTS: total=%dms", time.Since(t0).Milliseconds())
 
+	// Close the connection after each synthesis. The DashScope TTS session
+	// is single-use (response.done closes the session). Reconnecting fresh
+	// each time avoids "session not found" errors on subsequent turns.
+	e.mu.Lock()
+	e.closeLocked()
+	e.mu.Unlock()
+
 	return &SynthesizeResult{
 		Samples:    allSamples,
 		SampleRate: e.sampleRate,

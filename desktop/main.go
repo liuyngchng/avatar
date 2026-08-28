@@ -140,9 +140,8 @@ func main() {
 	if err != nil {
 		log.Printf("Warning: microphone capture init failed (continuing without audio input): %v", err)
 		capture = nil
-	} else {
-		defer capture.Close()
 	}
+	// Capture is closed by sm.Stop() (it owns the capture lifecycle).
 
 	// ── Initialize LLM client ────────────────────────────────
 	// LLM API key: use llm.api_key if set, otherwise fall back to top-level api_key.
@@ -172,6 +171,7 @@ func main() {
 
 	// ── Create the brain (state machine) ─────────────────────
 	sm := brain.NewStateMachine(ttsEngine, player, asrEngine, kwsEngine, llmClient, capture)
+	defer sm.Stop() // must run before engine Close()s to avoid use-after-free crashes
 
 	// Start the FSM loop.
 	go sm.Run()

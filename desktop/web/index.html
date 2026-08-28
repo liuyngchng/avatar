@@ -21,6 +21,31 @@
     }
     .status.hidden { opacity: 0; }
 
+    /* Subtitle overlay — text with stroke/shadow so it stays readable
+       on any desktop background (window is transparent). */
+    .subtitle {
+      position: fixed; bottom: 96px; left: 0; right: 0;
+      text-align: center;
+      color: #ffffff;
+      font-family: 'PingFang SC', 'Microsoft YaHei', sans-serif;
+      font-size: 22px;
+      font-weight: 600;
+      line-height: 1.6;
+      pointer-events: none;
+      padding: 0 24px;
+      max-width: 100%;
+      /* Stroke + soft shadow for transparent-background readability. */
+      text-shadow:
+        -1px -1px 0 rgba(0,0,0,0.85),
+         1px -1px 0 rgba(0,0,0,0.85),
+        -1px  1px 0 rgba(0,0,0,0.85),
+         1px  1px 0 rgba(0,0,0,0.85),
+         0 2px 6px rgba(0,0,0,0.6);
+      transition: opacity 0.3s;
+      word-break: break-word;
+    }
+    .subtitle.hidden { opacity: 0; }
+
     /* Loading overlay */
     .loading-overlay {
       position: fixed; top: 0; left: 0; width: 100%; height: 100%;
@@ -56,6 +81,7 @@
   </div>
   <canvas id="canvas"></canvas>
   <div class="status" id="status"></div>
+  <div class="subtitle hidden" id="subtitle"></div>
 
   <!-- All JS loaded locally (no CDN, for air-gapped deployment) -->
   <script type="importmap">
@@ -712,6 +738,16 @@
       }
     }
 
+    function updateSubtitle(text) {
+      const el = document.getElementById('subtitle');
+      if (text && text.length > 0) {
+        el.textContent = text;
+        el.classList.remove('hidden');
+      } else {
+        el.classList.add('hidden');
+      }
+    }
+
     // ─── JS Bridge: Receive messages from Go ─────────────────
     // Called by Go via Eval: handleMessage(jsonString)
     //
@@ -747,6 +783,7 @@
           isSpeaking = msg.isSpeaking || false;
           if (msg.emotion) currentEmotion = msg.emotion;
           updateStatus();
+          updateSubtitle(msg.speakingText);
 
           // Stop idle FBX animations when entering conversation modes.
           if (currentMode !== 'idle') {

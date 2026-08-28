@@ -59,4 +59,5 @@ type State struct {
 	Emotion      Emotion `json:"emotion"`
 	IsSpeaking   bool    `json:"isSpeaking"`
 	LastUserText string  `json:"lastUserText,omitempty"`
+	SpeakingText string  `json:"speakingText,omitempty"` // subtitle text while speaking
 }

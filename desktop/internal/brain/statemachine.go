@@ -45,8 +45,11 @@ type StateMachine struct {
 	audioSink <-chan []float32
 	asrBuf    chan []float32 // set when pipeline() is listening, then drained
 
-	mu   sync.Mutex
-	busy bool
+	mu       sync.Mutex
+	busy     bool
+	done     chan struct{} // closed by Stop() to signal shutdown
+	stopOnce sync.Once     // ensures Stop() is idempotent
+	wg       sync.WaitGroup // tracks Run() and pipeline() goroutines
 }
 
 // NewStateMachine creates a state machine in ModeIdle.
@@ -73,6 +76,7 @@ func NewStateMachine(
 		llmClient:    llmClient,
 		capture:      capture,
 		conversation: make([]llm.Message, 0, 20),
+		done:         make(chan struct{}),
 	}
 
 	// Start audio capture once, shared by KWS and ASR.
@@ -92,14 +96,21 @@ func NewStateMachine(
 // capture device. When idle, audio is fed to KWS; when a conversation
 // turn is active, audio is forwarded to the pipeline goroutine via asrBuf.
 func (sm *StateMachine) Run() {
+	sm.wg.Add(1)
+	defer sm.wg.Done()
+
 	sm.emit()
 
 	if sm.audioSink == nil {
 		log.Println("state: no audio capture, event-only mode")
-		for ev := range sm.events {
-			sm.handleEvent(ev)
+		for {
+			select {
+			case ev := <-sm.events:
+				sm.handleEvent(ev)
+			case <-sm.done:
+				return
+			}
 		}
-		return
 	}
 
 	log.Println("state: FSM running, audio capture active")
@@ -137,8 +148,26 @@ func (sm *StateMachine) Run() {
 					}
 				}
 			}
+
+		case <-sm.done:
+			log.Println("state: FSM shutdown signal, exiting")
+			return
 		}
 	}
+}
+
+// Stop signals the state machine to stop and waits for all goroutines to exit.
+// Must be called before the engine closes (KWS/ASR/TTS) to avoid use-after-free
+// crashes on the CGo-backed engines.
+func (sm *StateMachine) Stop() {
+	sm.stopOnce.Do(func() {
+		close(sm.done)
+		// Close capture to unblock the audio loop.
+		if sm.capture != nil {
+			sm.capture.Close()
+		}
+	})
+	sm.wg.Wait()
 }
 
 // StateChanges returns the channel of state updates.
@@ -193,6 +222,9 @@ func (sm *StateMachine) handleEvent(ev Event) {
 // sayGreeting speaks a short acknowledgment when woken up.
 func (sm *StateMachine) sayGreeting() {
 	sm.setState(ModeSpeaking, EmotionHappy, "哎，我在呢")
+	sm.mu.Lock()
+	sm.state.SpeakingText = "哎，我在呢"
+	sm.mu.Unlock()
 	sm.emit()
 
 	result, err := sm.ttsEngine.Synthesize("哎，我在呢", 1.0)
@@ -213,125 +245,144 @@ func (sm *StateMachine) sayGreeting() {
 	if err := sm.audioPlayer.PlaySync(result.Samples); err != nil {
 		log.Printf("state: greeting playback error: %v", err)
 	}
+
+	sm.mu.Lock()
+	sm.state.SpeakingText = ""
+	sm.mu.Unlock()
 }
 
-// pipeline runs a full conversation turn:
+// pipeline runs a conversation loop: wake word triggers the first turn, then
+// each subsequent turn auto-starts until the user stops talking for a while.
 //
-//	LISTENING → (capture audio) → ASR → THINKING → LLM → TTS → SPEAKING → IDLE
+//	LISTENING → ASR → THINKING → LLM → TTS → SPEAKING → (loop) → IDLE
 func (sm *StateMachine) pipeline() {
+	sm.wg.Add(1)
+	defer sm.wg.Done()
+
 	defer func() {
 		sm.mu.Lock()
 		sm.busy = false
 		sm.mu.Unlock()
 	}()
 
-	// ── Phase 1: LISTENING — capture audio for ASR ──────────
-	log.Println("[ASR] 开始聆听...")
-	sm.setState(ModeListening, EmotionNeutral, "")
-	sm.mu.Lock()
-	sm.state.IsSpeaking = false
-	sm.mu.Unlock()
-	sm.emit()
-
-	// Create ASR buffer. Run() will forward audio here.
-	sm.mu.Lock()
-	sm.asrBuf = make(chan []float32, 64)
-	sm.mu.Unlock()
-
-	audioSamples := sm.collectSpeech()
-
-	// Close ASR buffer.
-	sm.mu.Lock()
-	close(sm.asrBuf)
-	sm.asrBuf = nil
-	sm.mu.Unlock()
-
-	if len(audioSamples) == 0 {
-		log.Println("state: no speech detected")
-		sm.setState(ModeIdle, EmotionNeutral, "")
+	// Multi-turn loop: keep listening after each turn until the user
+	// stays silent, then fall back to idle (wake-word required again).
+	for turn := 1; ; turn++ {
+		// ── Phase 1: LISTENING — capture audio for ASR ──────────
+		log.Printf("[ASR] 开始聆听... (第%d轮)", turn)
+		sm.setState(ModeListening, EmotionNeutral, "")
+		sm.mu.Lock()
+		sm.state.IsSpeaking = false
+		sm.mu.Unlock()
 		sm.emit()
-		return
-	}
 
-	// ── Phase 2: THINKING — ASR then LLM ─────────────────────
-	sm.setState(ModeThinking, EmotionNeutral, "")
-	sm.emit()
+		// Create ASR buffer. Run() will forward audio here.
+		sm.mu.Lock()
+		sm.asrBuf = make(chan []float32, 64)
+		sm.mu.Unlock()
 
-	userText := "你好"
-	if sm.asrEngine != nil {
-		result, err := sm.asrEngine.Decode(audioSamples)
-		if err != nil {
-			log.Printf("state: ASR error: %v", err)
+		audioSamples := sm.collectSpeech()
+
+		// Close ASR buffer.
+		sm.mu.Lock()
+		close(sm.asrBuf)
+		sm.asrBuf = nil
+		sm.mu.Unlock()
+
+		if len(audioSamples) == 0 {
+			log.Println("state: no speech detected, ending conversation")
 			sm.setState(ModeIdle, EmotionNeutral, "")
 			sm.emit()
 			return
 		}
-		userText = strings.TrimSpace(result.Text)
-		log.Printf("[ASR] 结束: result=%q, lang=%s, emotion=%s", userText, result.Lang, result.Emotion)
-	}
 
-	if userText == "" {
-		userText = "你好"
-	}
-
-	sm.mu.Lock()
-	sm.state.LastUserText = userText
-	sm.mu.Unlock()
-
-	// Call LLM.
-	log.Printf("[LLM] 请求开始: user=%q", userText)
-	llmStart := time.Now()
-	llmText := sm.callLLM(userText)
-	log.Printf("[LLM] 请求结束: 耗时=%v, chars=%d", time.Since(llmStart).Round(time.Millisecond), len(llmText))
-	if llmText == "" {
-		llmText = "你好，我是企业数字人，请问有什么可以帮你的？"
-	}
-
-	emotionStr, cleanText := llm.ParseEmotion(llmText)
-	emotion := EmotionFromString(emotionStr)
-
-	sm.setState(ModeThinking, emotion, cleanText)
-	sm.emit()
-
-	// ── Phase 3: SPEAKING — TTS synthesis + playback ─────────
-	log.Printf("[TTS] 合成开始: text=%q", cleanText)
-	ttsStart := time.Now()
-	result, err := sm.ttsEngine.Synthesize(cleanText, 1.0)
-	if err != nil {
-		log.Printf("[TTS] 合成失败: %v", err)
-		sm.setState(ModeIdle, EmotionNeutral, "")
+		// ── Phase 2: THINKING — ASR then LLM ─────────────────────
+		sm.setState(ModeThinking, EmotionNeutral, "")
 		sm.emit()
-		return
-	}
 
-	audioDurMs := int(float64(len(result.Samples)) / float64(result.SampleRate) * 1000)
-	log.Printf("[TTS] 合成结束: 耗时=%v, 音频=%dms, samples=%d",
-		time.Since(ttsStart).Round(time.Millisecond), audioDurMs, len(result.Samples))
-	timeline := GenerateVisemeTimeline(cleanText, audioDurMs)
-	if timeline != nil {
-		log.Printf("state: viseme timeline: %d entries, audio %dms", len(timeline.Timeline), audioDurMs)
-		select {
-		case sm.outbound <- timeline:
-		default:
+		userText := "你好"
+		if sm.asrEngine != nil {
+			result, err := sm.asrEngine.Decode(audioSamples)
+			if err != nil {
+				log.Printf("state: ASR error: %v", err)
+				sm.setState(ModeIdle, EmotionNeutral, "")
+				sm.emit()
+				return
+			}
+			userText = strings.TrimSpace(result.Text)
+			log.Printf("[ASR] 结束: result=%q, lang=%s, emotion=%s", userText, result.Lang, result.Emotion)
 		}
+
+		if userText == "" {
+			log.Println("state: ASR returned empty text, skipping turn")
+			sm.setState(ModeIdle, EmotionNeutral, "")
+			sm.emit()
+			return
+		}
+
+		sm.mu.Lock()
+		sm.state.LastUserText = userText
+		sm.mu.Unlock()
+
+		// Call LLM.
+		log.Printf("[LLM] 请求开始: user=%q", userText)
+		llmStart := time.Now()
+		llmText := sm.callLLM(userText)
+		log.Printf("[LLM] 请求结束: 耗时=%v, chars=%d", time.Since(llmStart).Round(time.Millisecond), len(llmText))
+		if llmText == "" {
+			llmText = "你好，我是企业数字人，请问有什么可以帮你的？"
+		}
+
+		emotionStr, cleanText := llm.ParseEmotion(llmText)
+		emotion := EmotionFromString(emotionStr)
+
+		sm.setState(ModeThinking, emotion, cleanText)
+		sm.emit()
+
+		// ── Phase 3: SPEAKING — TTS synthesis + playback ─────────
+		log.Printf("[TTS] 合成开始: text=%q", cleanText)
+		ttsStart := time.Now()
+		result, err := sm.ttsEngine.Synthesize(cleanText, 1.0)
+		if err != nil {
+			log.Printf("[TTS] 合成失败: %v", err)
+			sm.setState(ModeIdle, EmotionNeutral, "")
+			sm.emit()
+			return
+		}
+
+		audioDurMs := int(float64(len(result.Samples)) / float64(result.SampleRate) * 1000)
+		log.Printf("[TTS] 合成结束: 耗时=%v, 音频=%dms, samples=%d",
+			time.Since(ttsStart).Round(time.Millisecond), audioDurMs, len(result.Samples))
+		timeline := GenerateVisemeTimeline(cleanText, audioDurMs)
+		if timeline != nil {
+			log.Printf("state: viseme timeline: %d entries, audio %dms", len(timeline.Timeline), audioDurMs)
+			select {
+			case sm.outbound <- timeline:
+			default:
+			}
+		}
+
+		sm.mu.Lock()
+		sm.state.Mode = ModeSpeaking
+		sm.state.IsSpeaking = true
+		sm.state.SpeakingText = cleanText
+		sm.mu.Unlock()
+		sm.emit()
+
+		if err := sm.audioPlayer.PlaySync(result.Samples); err != nil {
+			log.Printf("[TTS] 播放错误: %v", err)
+		}
+		log.Printf("[TTS] 播放结束, 对话回合%d完成", turn)
+
+		sm.mu.Lock()
+		sm.state.IsSpeaking = false
+		sm.state.SpeakingText = ""
+		sm.mu.Unlock()
+
+		// Loop back to listening for the next turn.
+		// collectSpeech() will timeout (no speech) and exit the loop
+		// if the user stays silent.
 	}
-
-	sm.mu.Lock()
-	sm.state.Mode = ModeSpeaking
-	sm.state.IsSpeaking = true
-	sm.mu.Unlock()
-	sm.emit()
-
-	if err := sm.audioPlayer.PlaySync(result.Samples); err != nil {
-		log.Printf("[TTS] 播放错误: %v", err)
-	}
-	log.Printf("[TTS] 播放结束, 对话回合完成")
-
-	sm.mu.Lock()
-	sm.state.IsSpeaking = false
-	sm.mu.Unlock()
-	sm.setState(ModeIdle, EmotionNeutral, "")
-	sm.emit()
 }
 
 // collectSpeech reads from the ASR buffer until silence is detected.
@@ -345,22 +396,36 @@ func (sm *StateMachine) collectSpeech() []float32 {
 	}
 
 	const (
-		silenceThreshold = 0.01
-		silenceHangover  = 15
+		silenceThreshold = 0.02 // RMS below this is treated as silence; raise if ambient noise trips VAD
+		silenceHangover  = 15   // 15 × 100ms = 1.5s of trailing silence after speech
 		maxDuration      = 15 * time.Second
 		minSpeechBuffers = 5
+		noSpeechTimeout  = 3 * time.Second // exit if no speech within this long
 	)
 
 	var allSamples []float32
 	silentCount := 0
 	speechCount := 0
 	deadline := time.After(maxDuration)
+	noSpeech := time.NewTimer(noSpeechTimeout)
+	defer noSpeech.Stop()
+
+	// returns true if we collected enough real speech to be worth decoding.
+	finish := func(why string) []float32 {
+		log.Printf("state: %s — speech=%d buffers, silence=%d, total=%d samples",
+			why, speechCount, silentCount, len(allSamples))
+		if speechCount < minSpeechBuffers {
+			log.Printf("state: %s → too little speech, treating as silence", why)
+			return nil
+		}
+		return allSamples
+	}
 
 	for {
 		select {
 		case samples, ok := <-asrBuf:
 			if !ok {
-				return allSamples
+				return finish("buffer closed")
 			}
 
 			allSamples = append(allSamples, samples...)
@@ -369,19 +434,30 @@ func (sm *StateMachine) collectSpeech() []float32 {
 			if rms > silenceThreshold {
 				silentCount = 0
 				speechCount++
+				// Reset the no-speech timer: user is (possibly) speaking.
+				if !noSpeech.Stop() {
+					select {
+					case <-noSpeech.C:
+					default:
+					}
+				}
+				noSpeech.Reset(noSpeechTimeout)
 			} else {
 				silentCount++
 			}
 
 			if speechCount >= minSpeechBuffers && silentCount >= silenceHangover {
-				log.Printf("state: VAD stop — speech=%d buffers, silence=%d, total=%d samples",
-					speechCount, silentCount, len(allSamples))
-				return allSamples
+				return finish("VAD stop")
 			}
 
+		case <-noSpeech.C:
+			return finish("no speech within 3s")
+
 		case <-deadline:
-			log.Printf("state: VAD timeout — collected %d samples", len(allSamples))
-			return allSamples
+			return finish("VAD timeout")
+
+		case <-sm.done:
+			return finish("shutdown")
 		}
 	}
 }
@@ -423,6 +499,9 @@ func (sm *StateMachine) callLLM(userText string) string {
 				log.Printf("state: LLM error: %v", err)
 				return ""
 			}
+		case <-sm.done:
+			log.Println("state: LLM cancelled by shutdown")
+			return ""
 		}
 	}
 

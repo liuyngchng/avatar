@@ -76,7 +76,7 @@ func New(cfg Config) *Client {
 	return &Client{
 		config: cfg,
 		http: &http.Client{
-			Timeout: 120 * time.Second,
+			Timeout: 10 * time.Second,
 			Transport: &http.Transport{
 				Proxy: cfg.ProxyFunc,
 				// The intranet API uses a self-signed TLS certificate;
