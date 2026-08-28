@@ -209,13 +209,16 @@ func (sm *StateMachine) handleEvent(ev Event) {
 
 		log.Printf("state: event=%s → starting conversation turn", ev.Type)
 
-		// If wake word, say a greeting first.
-		if ev.Type == "wake_detected" {
-			sm.sayGreeting()
-		}
-
-		// Run the conversation turn.
-		go sm.pipeline()
+		// Kick off the conversation turn in a separate goroutine so that
+		// the FSM Run() loop is never blocked.  For wake-word triggers we
+		// say a greeting first, then start the pipeline; for tap we jump
+		// straight into listening.
+		go func() {
+			if ev.Type == "wake_detected" {
+				sm.sayGreeting()
+			}
+			sm.pipeline()
+		}()
 	}
 }
 
