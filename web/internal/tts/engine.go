@@ -161,6 +161,10 @@ func (e *Engine) synthesizeOffline(text string, speed float32) (*SynthesizeResul
 		speed = 1.0
 	}
 
+	// Matcha-TTS does not convert Arabic numerals to Chinese readings, so
+	// pre-normalize dates/times/numbers before synthesis (see normalize.go).
+	text = Normalize(text)
+
 	audio := e.tts.Generate(text, 0 /* sid */, speed)
 	if audio == nil {
 		return nil, fmt.Errorf("tts: synthesis produced no audio")
@@ -242,6 +246,13 @@ func (e *Engine) synthesizeOnline(text string, speed float32) (*SynthesizeResult
 	log.Printf("tts: online synthesized %d samples (%.1fs) for %d chars",
 		len(allSamples), dur, len([]rune(text)))
 	log.Printf("[timing] TTS: total=%dms", time.Since(t0).Milliseconds())
+
+	// Close the connection after each synthesis. The DashScope TTS session
+	// is single-use (response.done closes the session). Reconnecting fresh
+	// each time avoids "session not found" errors on subsequent turns.
+	e.mu.Lock()
+	e.closeLocked()
+	e.mu.Unlock()
 
 	return &SynthesizeResult{
 		Samples:    allSamples,

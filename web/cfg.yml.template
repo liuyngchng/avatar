@@ -1,29 +1,30 @@
 # Avatar Web 配置文件模板
 # 复制此文件为 cfg.yml 并填入实际值
 
-# LLM 对话
 llm:
   base_url: "https://api.deepseek.com"
   api_key: ""
   model: "deepseek-v4-flash"
+  # 人偶的名字（会写入系统提示词，可自行修改）
+  name: "小然"
 
-# 唤醒词（sherpa-onnx 关键词格式: "音素序列 @中文显示名"）
-# 默认: "x iǎo h uǒ x iǎo h uǒ @小火小火"
-wake_word: "x iǎo h uǒ x iǎo h uǒ @小火小火"
-
-# ASR 语音识别: "offline" 使用本地 sherpa-onnx, "online" 使用阿里云百炼 DashScope
+# ASR 语音识别配置
+# mode: "offline" = 本地 sherpa-onnx SenseVoiceSmall 模型
+# mode: "online"  = 阿里云百炼 DashScope 实时 WebSocket API (Qwen-Audio-3.0-ASR-Flash-Streaming)
 asr:
   mode: "offline"
-  # 在线 ASR 配置（仅 mode=online 时需要）
+  # 在线模式配置（mode=online 时必填）
   url: "wss://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/api-ws/v1/inference"
   model: "qwen-audio-3.0-asr-flash-streaming"
   format: "pcm"
   sample_rate: 16000
 
-# TTS 语音合成: "offline" 使用本地 Matcha-TTS, "online" 使用阿里云百炼 DashScope
+# TTS 语音合成配置
+# mode: "offline" = 本地 sherpa-onnx Matcha-TTS + vocos 模型
+# mode: "online"  = 阿里云百炼 DashScope Qwen-TTS Realtime WebSocket API
 tts:
   mode: "offline"
-  # 在线 TTS 配置（仅 mode=online 时需要）
+  # 在线模式配置（mode=online 时必填）
   url: "wss://dashscope.aliyuncs.com/api-ws/v1/realtime"
   model: "qwen3-tts-flash-realtime"
   voice: "Cherry"
@@ -40,7 +41,20 @@ proxy: ""
 # 环境变量代理，一律直连，不做任何代理。
 # proxy_disabled: true
 
-# HTTP 服务器
+# 唤醒词（sherpa-onnx 关键词格式: "音素序列 @中文显示名"）
+# 留空则自动从 llm.name 生成（名称重复两遍，拼音自动拆分）
+# 例如 name="小然" → "x iǎo r án x iǎo r án @小然小然"
+wake_word: ""
+
+# 是否在初始化后播放 FBX 动画（默认 true）
+enable_fbx: true
+
+# 多轮对话中，每轮结束后等待用户重新开口的最大时长（秒）。
+# 超过这个时长还没监测到语音输入，就自动结束当前对话，再次对话需要重新唤醒。
+# 默认 5 秒，留空或注释掉都按 5 秒处理。
+no_speech_timeout_sec: 5
+
+# HTTP 服务器（web 独有）
 server:
   port: 8080
   static_dir: "web"

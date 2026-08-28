@@ -21,6 +21,56 @@
     }
     .status.hidden { opacity: 0; }
 
+    /* Subtitle overlay — TTS spoken text. Stroked + shadowed so the
+       text remains readable on top of any background. */
+    .subtitle {
+      position: fixed; bottom: 96px; left: 0; right: 0;
+      text-align: center;
+      color: #ffffff;
+      font-family: 'PingFang SC', 'Microsoft YaHei', sans-serif;
+      font-size: 22px;
+      font-weight: 600;
+      line-height: 1.6;
+      pointer-events: none;
+      padding: 0 24px;
+      max-width: 100%;
+      text-shadow:
+        -1px -1px 0 rgba(0,0,0,0.85),
+         1px -1px 0 rgba(0,0,0,0.85),
+        -1px  1px 0 rgba(0,0,0,0.85),
+         1px  1px 0 rgba(0,0,0,0.85),
+         0 2px 6px rgba(0,0,0,0.6);
+      transition: opacity 0.3s;
+      word-break: break-word;
+    }
+    .subtitle.hidden { opacity: 0; }
+
+    /* Loading overlay — shows during VRM model load + first frame. */
+    .loading-overlay {
+      position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      background: transparent; z-index: 999;
+      transition: opacity 0.5s ease-out;
+      pointer-events: none;
+    }
+    .loading-overlay.hidden {
+      opacity: 0; pointer-events: none;
+    }
+    .loading-spinner {
+      width: 36px; height: 36px;
+      border: 3px solid rgba(255,255,255,0.15);
+      border-top-color: rgba(255,255,255,0.7);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin-bottom: 16px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .loading-text {
+      color: rgba(255,255,255,0.65);
+      font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+      font-size: 15px;
+    }
+
     /* Connection indicator */
     .connection {
       position: fixed; top: 12px; right: 16px;
@@ -62,10 +112,15 @@
   </style>
 </head>
 <body>
+  <div class="loading-overlay" id="loading">
+    <div class="loading-spinner"></div>
+    <div class="loading-text">加载中...</div>
+  </div>
   <canvas id="canvas"></canvas>
   <button class="fullscreen-btn" id="fullscreenBtn" title="全屏">⛶</button>
   <div class="connection" id="connection"><span class="dot"></span><span class="label">断开</span></div>
   <div class="status" id="status"></div>
+  <div class="subtitle hidden" id="subtitle"></div>
   <div class="mic-prompt hidden" id="micPrompt">
     <p>🎤 需要麦克风权限才能与数字人对话</p>
     <button id="micAllowBtn">允许麦克风</button>
@@ -229,19 +284,41 @@
     let currentEmotion = 'neutral';
     let isSpeaking = false;
 
+    // ─── Emotion → upper-face morph mapping ────────────────────
+    // We drive the per-part eyebrow (BRW) and eye (EYE) morphs directly
+    // instead of the VRM preset expressions, because the presets
+    // (e.g. "happy" = Fcl_ALL_Joy) also move the mouth and fight with
+    // viseme lip-sync. Mouth stays 100% viseme-controlled.
+    const emotionMorphNames = {
+      happy:     ['Face_Blendshape.Fcl_BRW_Joy',      'Face_Blendshape.Fcl_EYE_Joy'],
+      angry:     ['Face_Blendshape.Fcl_BRW_Angry',    'Face_Blendshape.Fcl_EYE_Angry'],
+      sad:       ['Face_Blendshape.Fcl_BRW_Sorrow',   'Face_Blendshape.Fcl_EYE_Sorrow'],
+      surprised: ['Face_Blendshape.Fcl_BRW_Surprised','Face_Blendshape.Fcl_EYE_Surprised'],
+      relaxed:   ['Face_Blendshape.Fcl_BRW_Fun',      'Face_Blendshape.Fcl_EYE_Fun'],
+    };
+    let faceMesh = null;                       // first Face mesh (for morphTargetDictionary lookup)
+    let faceMeshes = [];                       // all Face mesh primitives (need morphs on all)
+    let emotionMorphMap = {};                  // emotion -> [morphIndex, ...]
+    let managedEmotionIndices = [];            // every index we touch, for clearing
+
+    // FBX animation toggle — read from URL query parameter.
+    // Defaults to true (enabled). Set enable_fbx=0 to disable.
+    const enableFBX = !(new URLSearchParams(window.location.search).get('enable_fbx') === '0');
+
     // Viseme state (for smooth lerp)
+    // VRM1 uses: aa, ih, ou, ee, oh (not A/I/U/E/O)
     let visemeTargets = { aa: 0, ih: 0, ou: 0, ee: 0, oh: 0 };
     let visemeCurrent = { aa: 0, ih: 0, ou: 0, ee: 0, oh: 0 };
-    let visemeBlendSpeed = 8.0;
+    let visemeBlendSpeed = 8.0; // how fast visemes transition
 
     // Pending viseme timeline
     let pendingTimeline = null;
 
-    // Blink state
+    // Blink state (4-phase state machine: open → closing → closed → opening → open)
     let blinkTimer = 0;
-    let blinkInterval = 3.0;
+    let blinkInterval = 3.0;    // seconds between blinks
     let blinkValue = 0;
-    let blinkPhase = 'open';
+    let blinkPhase = 'open';    // 'open' | 'closing' | 'closed' | 'opening'
     let idleTime = 0;
 
     const AVATAR_Y = -0.95;
@@ -252,17 +329,20 @@
 
     // Orbit state
     let orbitActive = false;
-    let orbitTheta = 0;
-    let orbitPhi = 0;
-    let orbitDist = 3.5;
-    const orbitSpeed = 0.006;
+    let orbitTheta = 0;     // horizontal angle (radians), 0 = look from front
+    let orbitPhi = 0;       // vertical angle, positive = look from above
+    let orbitDist = 3.5;    // distance from camera to pivot
+    const orbitSpeed = 0.006; // radians per pixel of drag
 
     // ─── FBX Animation System ────────────────────────────────
-    let mixer = null;
-    let animationMap = new Map();
-    let currentAnimation = null;
-    const animCrossFadeDuration = 0.35;
+    let mixer = null;              // THREE.AnimationMixer
+    let animationMap = new Map();  // name → THREE.AnimationAction
+    let currentAnimation = null;   // currently playing action name
+    const animCrossFadeDuration = 0.35; // seconds for cross-fade
 
+    // Idle animation system: after IDLE_ANIM_DELAY seconds of idle, randomly
+    // play FBX animations. When user interacts, stop animations and restore
+    // the default standing pose.
     const IDLE_ANIM_DELAY = 10;
     let idleAnimTimer = 0;
     let idleAnimActive = false;
@@ -291,7 +371,7 @@
     const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.setSize(window.innerWidth, window.innerHeight);
-    renderer.setClearColor(0x000000, 0);
+    renderer.setClearColor(0x000000, 0); // fully transparent clear
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     renderer.toneMapping = THREE.NoToneMapping;
@@ -328,8 +408,9 @@
     rimLight.position.set(0.3, 1.5, -2.5);
     scene.add(rimLight);
 
-    // ─── Ground ─────────────────────────────────────────────
+    // ─── Ground: grid + shadow disc ─────────────────────────
     const groundY = AVATAR_Y;
+
     const shadowDisc = new THREE.Mesh(
       new THREE.CircleGeometry(8, 48),
       new THREE.ShadowMaterial({ opacity: 0.3 })
@@ -363,6 +444,7 @@
         if (obj.isMesh) { obj.castShadow = true; obj.receiveShadow = true; }
       });
 
+      // Fix arms and fingers to natural standing pose.
       restoreDefaultPose();
 
       if (vrm.expressionManager) {
@@ -372,9 +454,30 @@
       }
 
       console.log('VRM loaded:', vrm.meta?.metaVersion);
-      loadFBXAnimations().then(() => { initAnimationMixer(); });
+      console.log('Expressions:', Object.keys(vrm.expressionManager?.expressionMap || {}));
+
+      // Build the emotion → morphTargetInfluences map. We locate the Face
+      // mesh by name and resolve each morph name to its index so we can
+      // drive upper-face morphs directly (see emotionMorphNames above).
+      buildEmotionMorphMap();
+
+      // Load FBX animations and initialize the mixer (if enabled).
+      if (enableFBX) {
+        loadFBXAnimations().then(() => {
+          initAnimationMixer();
+        });
+      } else {
+        console.log('[FBX] FBX animation disabled by config (enable_fbx=0)');
+      }
+
       setTimeout(fitWindowToAvatar, 100);
-      setTimeout(() => { canvas.classList.add('visible'); }, 300);
+
+      // Fade the avatar in once everything is ready.
+      setTimeout(() => {
+        canvas.classList.add('visible');
+        hideLoading();
+        console.log('[INFO] 数字人淡入完成');
+      }, 300);
     }
 
     function restoreDefaultPose() {
@@ -405,7 +508,9 @@
         'rightLittleProximal','rightLittleIntermediate','rightLittleDistal',
       ];
       const identity = [0, 0, 0, 1];
-      for (const name of fingerBones) { pose[name] = { rotation: identity }; }
+      for (const name of fingerBones) {
+        pose[name] = { rotation: identity };
+      }
 
       const fingerCurl = {
         index:  { proximal: 0.15, intermediate: 0.25, distal: 0.15 },
@@ -438,26 +543,31 @@
       vrm.humanoid.setNormalizedPose(pose);
     }
 
-    // ─── Init avatar ────────────────────────────────────────
+    // ─── Try to load a local VRM model, fallback to a simple placeholder ──
     async function initAvatar() {
       try {
         await loadVRM('/models/avatar.vrm');
       } catch (err) {
-        console.error('VRM load failed:', err.message);
+        console.error('VRM load failed:', err.message, err.stack);
+        console.warn('Falling back to placeholder avatar...');
         createPlaceholderAvatar();
       }
     }
 
+    // ─── Placeholder avatar (simple geometric character) ────
     function createPlaceholderAvatar() {
       const group = new THREE.Group();
+
       const bodyGeo = new THREE.CapsuleGeometry(0.22, 0.5, 8, 16);
       const bodyMat = new THREE.MeshStandardMaterial({ color: '#4a6fa5', roughness: 0.3 });
       const body = new THREE.Mesh(bodyGeo, bodyMat);
-      body.position.y = 0.75; body.castShadow = true;
+      body.position.y = 0.75;
+      body.castShadow = true;
       group.add(body);
 
       const headGroup = new THREE.Group();
       headGroup.position.y = 1.25;
+
       const headGeo = new THREE.SphereGeometry(0.2, 32, 32);
       const headMat = new THREE.MeshStandardMaterial({ color: '#f5e6d3', roughness: 0.4 });
       const head = new THREE.Mesh(headGeo, headMat);
@@ -466,20 +576,34 @@
 
       const eyeGeo = new THREE.SphereGeometry(0.045, 16, 16);
       const eyeMat = new THREE.MeshStandardMaterial({ color: '#111111', roughness: 0.1 });
-      const leftEye = new THREE.Mesh(eyeGeo, eyeMat); leftEye.position.set(-0.07, 0.04, -0.17);
-      const rightEye = new THREE.Mesh(eyeGeo, eyeMat); rightEye.position.set(0.07, 0.04, -0.17);
-      headGroup.add(leftEye); headGroup.add(rightEye);
+      const leftEye = new THREE.Mesh(eyeGeo, eyeMat);
+      leftEye.position.set(-0.07, 0.04, -0.17);
+      headGroup.add(leftEye);
+      const rightEye = new THREE.Mesh(eyeGeo, eyeMat);
+      rightEye.position.set(0.07, 0.04, -0.17);
+      headGroup.add(rightEye);
 
       const mouthGeo = new THREE.BoxGeometry(0.1, 0.02, 0.01);
       const mouthMat = new THREE.MeshStandardMaterial({ color: '#cc4444', roughness: 0.3 });
       const mouth = new THREE.Mesh(mouthGeo, mouthMat);
-      mouth.position.set(0, -0.06, -0.18); mouth.name = 'mouth';
+      mouth.position.set(0, -0.06, -0.18);
+      mouth.name = 'mouth';
       headGroup.add(mouth);
-      group.add(headGroup);
 
+      group.add(headGroup);
       group.position.set(0, AVATAR_Y, 0);
       scene.add(group);
+
       window._placeholder = { group, headGroup, mouth, leftEye, rightEye };
+
+      console.log('Placeholder avatar created');
+
+      // Fade the placeholder avatar in and hide the loading overlay.
+      setTimeout(() => {
+        canvas.classList.add('visible');
+        hideLoading();
+      }, 300);
+
       setTimeout(fitWindowToAvatar, 100);
     }
 
@@ -491,7 +615,9 @@
 
       updateOrbitCamera();
 
-      if (mixer) { mixer.update(dt); }
+      if (mixer) {
+        mixer.update(dt);
+      }
 
       if (vrm) {
         updateVRMBlink(dt);
@@ -501,13 +627,20 @@
         if (currentMode === 'idle' && mixer && animationMap.size > 0) {
           if (!idleAnimActive && !isSpeaking) {
             idleAnimTimer += dt;
-            if (idleAnimTimer >= IDLE_ANIM_DELAY) { startIdleAnimations(); }
+            if (idleAnimTimer >= IDLE_ANIM_DELAY) {
+              startIdleAnimations();
+            }
           }
           if (idleAnimActive && idleAnimNextSwitch > 0 && idleTime >= idleAnimNextSwitch) {
             playRandomIdleAnim();
           }
         }
+
+        // VRM needs to be updated each frame for expressions to apply.
+        // updateEmotionMorphs runs AFTER vrm.update() so the upper-face
+        // morphs are reapplied over the per-frame expression reset.
         vrm.update(dt);
+        updateEmotionMorphs();
       } else if (window._placeholder) {
         updatePlaceholderBlink(dt);
         updatePlaceholderMouth(dt);
@@ -532,29 +665,44 @@
       camera.lookAt(center.x, center.y, center.z);
     }
 
-    // ─── VRM: Blink ──────────────────────────────────────────
+    // ─── VRM: Blink (4-phase state machine) ──────────────────
     function updateVRMBlink(dt) {
       if (vrm.expressionManager && blinkValue > 0.001) {
         vrm.expressionManager.setValue('blink', blinkValue);
       }
+
       if (blinkPhase === 'open') {
         blinkTimer += dt;
-        if (blinkTimer > blinkInterval) { blinkPhase = 'closing'; blinkTimer = 0; blinkInterval = 2.5 + Math.random() * 4.0; }
+        if (blinkTimer > blinkInterval) {
+          blinkPhase = 'closing';
+          blinkTimer = 0;
+          blinkInterval = 2.5 + Math.random() * 4.0;
+        }
         return;
       }
       if (blinkPhase === 'closing') {
         blinkValue += dt * 12;
-        if (blinkValue >= 1.0) { blinkValue = 1.0; blinkPhase = 'closed'; blinkTimer = 0; }
+        if (blinkValue >= 1.0) {
+          blinkValue = 1.0;
+          blinkPhase = 'closed';
+          blinkTimer = 0;
+        }
         return;
       }
       if (blinkPhase === 'closed') {
         blinkTimer += dt;
-        if (blinkTimer > 0.12) { blinkPhase = 'opening'; }
+        if (blinkTimer > 0.12) {
+          blinkPhase = 'opening';
+        }
         return;
       }
       if (blinkPhase === 'opening') {
         blinkValue -= dt * 12;
-        if (blinkValue <= 0) { blinkValue = 0; blinkPhase = 'open'; blinkTimer = 0; }
+        if (blinkValue <= 0) {
+          blinkValue = 0;
+          blinkPhase = 'open';
+          blinkTimer = 0;
+        }
       }
     }
 
@@ -575,38 +723,66 @@
       if (!vrm?.scene) return;
       if (idleAnimActive) return;
       const t = idleTime;
-      vrm.scene.position.y = AVATAR_Y + Math.sin(t * 1.4) * 0.008;
+      // Subtle breathing (layered on top of the fixed root height).
+      const breathe = Math.sin(t * 1.4) * 0.008;
+      vrm.scene.position.y = AVATAR_Y + breathe;
       vrm.scene.position.x = Math.sin(t * 0.7) * 0.015;
       vrm.scene.rotation.z = Math.sin(t * 0.7) * 0.015;
+      // Gentle body turn so the side profile is occasionally visible.
       vrm.scene.rotation.y = Math.sin(t * 0.4) * 0.18;
+
+      // Keep the mouth slightly parted in idle so it's always visible.
       visemeTargets['aa'] = 0.04 + Math.sin(t * 1.4) * 0.01;
     }
 
     // ─── Placeholder: Blink ─────────────────────────────────
-    let placeholderBlink = 0, placeholderBlinking = false, placeholderBlinkTimer = 0;
+    let placeholderBlink = 0;
+    let placeholderBlinking = false;
+    let placeholderBlinkTimer = 0;
+
     function updatePlaceholderBlink(dt) {
       const { leftEye, rightEye } = window._placeholder;
       placeholderBlinkTimer += dt;
-      if (!placeholderBlinking && placeholderBlinkTimer > 3.0) { placeholderBlinking = true; placeholderBlink = 0; }
+      const blinkInterval = 3.0;
+
+      if (!placeholderBlinking && placeholderBlinkTimer > blinkInterval) {
+        placeholderBlinking = true;
+        placeholderBlink = 0;
+      }
       if (placeholderBlinking) {
         placeholderBlink += dt * 10;
-        if (placeholderBlink >= 1.0) { placeholderBlinkTimer += dt; }
-        if (placeholderBlinkTimer > 0.15) { placeholderBlink -= dt * 10; if (placeholderBlink <= 0) { placeholderBlink = 0; placeholderBlinking = false; placeholderBlinkTimer = 0; } }
+        if (placeholderBlink >= 1.0) {
+          placeholderBlinkTimer += dt;
+          if (placeholderBlinkTimer > 0.15) {
+            placeholderBlink -= dt * 10;
+            if (placeholderBlink <= 0) {
+              placeholderBlink = 0;
+              placeholderBlinking = false;
+              placeholderBlinkTimer = 0;
+            }
+          }
+        }
       }
       const eyeScale = 1 - placeholderBlink * 0.9;
-      leftEye.scale.y = eyeScale; rightEye.scale.y = eyeScale;
+      leftEye.scale.y = eyeScale;
+      rightEye.scale.y = eyeScale;
     }
 
+    // ─── Placeholder: Mouth (speaking) ───────────────────────
     let placeholderMouthTime = 0;
     function updatePlaceholderMouth(dt) {
       const { mouth } = window._placeholder;
       if (!mouth) return;
+
       if (isSpeaking) {
         placeholderMouthTime += dt;
         const openness = 0.5 + 0.5 * Math.sin(placeholderMouthTime * 12);
         mouth.scale.y = 0.3 + openness * 8;
         mouth.position.y = -0.06 - openness * 0.04;
-      } else { mouth.scale.y = 0.3; mouth.position.y = -0.06; }
+      } else {
+        mouth.scale.y = 0.3;
+        mouth.position.y = -0.06;
+      }
     }
 
     function updatePlaceholderIdle(dt) {
@@ -622,22 +798,42 @@
     // ─── Status UI ──────────────────────────────────────────
     function updateStatus() {
       const el = document.getElementById('status');
+
       switch (currentMode) {
-        case 'idle':         el.textContent = ''; break;
-        case 'listening':    el.textContent = '聆听中...'; break;
-        case 'thinking':     el.textContent = '思考中...'; break;
-        case 'speaking':     el.textContent = ''; break;
+        case 'idle':
+          el.textContent = '';
+          break;
+        case 'listening':
+          el.textContent = '聆听中...';
+          break;
+        case 'thinking':
+          el.textContent = '思考中...';
+          break;
+        case 'speaking':
+          el.textContent = '';
+          break;
+      }
+    }
+
+    function updateSubtitle(text) {
+      const el = document.getElementById('subtitle');
+      if (text && text.length > 0) {
+        el.textContent = text;
+        el.classList.remove('hidden');
+      } else {
+        el.classList.add('hidden');
       }
     }
 
     // ─── Handle server messages (WebSocket) ─────────────────
     function handleServerMessage(msg) {
-      // State update: { mode, emotion, isSpeaking, ... }
+      // State update: { mode, emotion, isSpeaking, speakingText, ... }
       if (msg.mode) {
         currentMode = msg.mode;
         isSpeaking = msg.isSpeaking || false;
         if (msg.emotion) currentEmotion = msg.emotion;
         updateStatus();
+        updateSubtitle(msg.speakingText);
 
         if (currentMode !== 'idle') {
           stopIdleAnimations(); idleAnimTimer = 0;
@@ -681,42 +877,134 @@
     let visemeTimers = [];
     function playVisemeTimeline(timeline) {
       if (!timeline || !timeline.length) return;
-      for (const t of visemeTimers) clearTimeout(t);
-      visemeTimers = [];
+
+      // Clear any previous pending timers.
+      clearVisemeTimers();
+
       const start = performance.now();
       for (const entry of timeline) {
         const delay = Math.max(0, entry.startMs - (performance.now() - start));
         const timer = setTimeout(() => {
-          if (entry.viseme === 'rest' || !entry.viseme) { applyViseme('rest', 0); }
-          else { applyViseme(entry.viseme, 1.0); }
+          if (entry.viseme === 'rest' || !entry.viseme) {
+            applyViseme('rest', 0);
+          } else {
+            applyViseme(entry.viseme, 1.0);
+          }
         }, delay);
         visemeTimers.push(timer);
       }
+
+      // Reset mouth at the end of the timeline.
       const lastStart = timeline.length > 0 ? timeline[timeline.length - 1].startMs : 0;
-      const resetTimer = setTimeout(() => { applyViseme('rest', 0); }, lastStart + 200);
+      const resetTimer = setTimeout(() => {
+        applyViseme('rest', 0);
+      }, lastStart + 200);
       visemeTimers.push(resetTimer);
+    }
+
+    // Clear all pending viseme timers. Called when a new timeline starts
+    // or when the page is about to be unloaded.
+    function clearVisemeTimers() {
+      for (const t of visemeTimers) clearTimeout(t);
+      visemeTimers = [];
     }
 
     function applyViseme(viseme, weight) {
       if (!vrm?.expressionManager) return;
+      // VRM1 mouth visemes: aa, ih, ou, ee, oh
       const mouthVisemes = ['aa', 'ih', 'ou', 'ee', 'oh'];
+
       if (viseme === 'rest' || !viseme) {
-        for (const name of mouthVisemes) { visemeTargets[name] = 0; }
+        // Reset all visemes (closed mouth).
+        for (const name of mouthVisemes) {
+          visemeTargets[name] = 0;
+        }
         return;
       }
+
+      // Set the target viseme to the given weight, others to 0.
       for (const name of mouthVisemes) {
         visemeTargets[name] = (name === viseme) ? weight : 0;
       }
     }
 
+    // ─── Apply mode/emotion/speaking state to VRM ──────────────
+    // Emotion no longer uses vrm.expressionManager presets (those move
+    // the mouth and clash with visemes). Instead updateEmotionMorphs()
+    // drives eyebrow/eye morphs directly every frame. This function only
+    // handles the non-face parts: resetting the mouth when not speaking.
     function applyModeToVRM() {
       if (!vrm?.expressionManager) return;
-      const presets = ['happy', 'angry', 'sad', 'surprised', 'relaxed', 'neutral'];
-      for (const p of presets) { vrm.expressionManager.setValue(p, 0); }
-      if (currentEmotion !== 'neutral' && presets.includes(currentEmotion)) {
-        vrm.expressionManager.setValue(currentEmotion, 1.0);
+
+      // Visemes are driven by real-time viseme messages from Go,
+      // not by the mode/emotion state. When not speaking, reset
+      // the mouth to closed.
+      if (!isSpeaking) {
+        applyViseme('rest', 0);
       }
-      if (!isSpeaking) { applyViseme('rest', 0); }
+
+      // Note: FBX animations are now managed by the idle animation system
+      // (startIdleAnimations / stopIdleAnimations), not by mode/emotion here.
+    }
+
+    // ─── Resolve emotion morph names to face-mesh indices ─────
+    function buildEmotionMorphMap() {
+      faceMesh = null;
+      faceMeshes = [];
+      emotionMorphMap = {};
+      managedEmotionIndices = [];
+
+      if (!vrm?.scene) return;
+
+      vrm.scene.traverse((obj) => {
+        // The Face mesh is split into 7 primitives, named "Face", "Face_1",
+        // ... by GLTFLoader. We must drive morphs on all of them.
+        if (obj.isMesh && typeof obj.name === 'string' && obj.name.startsWith('Face')) {
+          if (!faceMesh && obj.morphTargetDictionary) faceMesh = obj;
+          faceMeshes.push(obj);
+        }
+      });
+
+      if (!faceMesh || !faceMesh.morphTargetDictionary) {
+        console.warn('[emotion] Face mesh or morphTargetDictionary not found; emotion disabled');
+        return;
+      }
+
+      for (const [emotion, names] of Object.entries(emotionMorphNames)) {
+        const binds = [];
+        for (const name of names) {
+          const idx = faceMesh.morphTargetDictionary[name];
+          if (idx === undefined) continue;
+          binds.push(idx);
+          managedEmotionIndices.push(idx);
+        }
+        if (binds.length) emotionMorphMap[emotion] = binds;
+      }
+    }
+
+    // ─── Drive upper-face (brow/eye) morphs for current emotion ─
+    // Runs after vrm.update() every frame. vrm.update() resets all
+    // expression-driven morph influences; we re-apply ours on top, so
+    // emotion weights never bleed into the mouth visemes.
+    function updateEmotionMorphs() {
+      if (!faceMeshes.length) return;
+
+      const binds = emotionMorphMap[currentEmotion];
+
+      for (const mesh of faceMeshes) {
+        if (!mesh.morphTargetInfluences) continue;
+
+        // Clear all indices we manage.
+        for (const idx of managedEmotionIndices) {
+          mesh.morphTargetInfluences[idx] = 0;
+        }
+
+        // Apply the current emotion's upper-face morphs at full weight.
+        if (!binds) continue;
+        for (const idx of binds) {
+          mesh.morphTargetInfluences[idx] = 1.0;
+        }
+      }
     }
 
     // ─── Send events to server ──────────────────────────────
@@ -729,6 +1017,7 @@
     function fitWindowToAvatar() {
       const box = new THREE.Box3();
       scene.traverse((obj) => {
+        // Skip the ground helpers — they're huge and would distort the bbox.
         if (!obj.isMesh || obj === shadowDisc || obj === gridHelper) return;
         box.expandByObject(obj);
       });
@@ -740,12 +1029,12 @@
       avatarBounds.worldW = size.x;
       avatarBounds.worldH = size.y;
       avatarBounds.worldCenter.copy(center);
-      setTimeout(fitCameraToWindow, 50);
+      fitCameraToWindow();
     }
 
     function fitCameraToWindow() {
       if (!avatarBounds.worldH) return;
-      const margin = 1.33;
+      const margin = 1.33; // 1/0.75, avatar occupies 75% of window height
       const fovRad = camera.fov * Math.PI / 180;
       const distH = (avatarBounds.worldW * margin) / (2 * Math.tan(fovRad / 2) * camera.aspect);
       const distV = (avatarBounds.worldH * margin) / (2 * Math.tan(fovRad / 2));
@@ -755,7 +1044,19 @@
       updateOrbitCamera();
     }
 
-    // ─── FBX Animation Loading ───────────────────────────────
+    // Hide the "加载中..." overlay once the avatar is visible.
+    function hideLoading() {
+      const el = document.getElementById('loading');
+      if (el) el.classList.add('hidden');
+    }
+
+    // Gracefully fade the avatar canvas out (called by `fade_out` cmd).
+    function fadeOutAvatar() {
+      canvas.classList.add('fading');
+      console.log('[INFO] 数字人淡出中...');
+    }
+
+    // ─── FBX Animation Loading & Retargeting ─────────────────
     let rawClipMap = new Map();
 
     async function loadFBXAnimations() {
@@ -766,16 +1067,27 @@
       ];
       const fbxLoader = new FBXLoader();
       const results = await Promise.allSettled(
-        animNames.map(name => fbxLoader.loadAsync(`/models/animations/${name}.fbx`).then(group => ({ name, group })))
+        animNames.map(name =>
+          fbxLoader.loadAsync(`/models/animations/${name}.fbx`)
+            .then(group => ({ name, group }))
+        )
       );
+
       for (const result of results) {
-        if (result.status !== 'fulfilled') { console.warn('FBX load failed:', result.reason?.message); continue; }
+        if (result.status !== 'fulfilled') {
+          console.warn('FBX load failed:', result.reason?.message);
+          continue;
+        }
         const { name, group } = result.value;
         const clips = group.animations;
-        if (!clips || clips.length === 0) { console.warn(`FBX ${name}: no clips`); continue; }
+        if (!clips || clips.length === 0) {
+          console.warn(`FBX ${name}: no animation clips found`);
+          continue;
+        }
         rawClipMap.set(name, { clip: clips[0], group });
         console.log(`FBX loaded: ${name} (${clips[0].duration.toFixed(1)}s)`);
       }
+      console.log(`FBX animations loaded: ${rawClipMap.size}/${animNames.length}`);
     }
 
     function retargetMixamoClip(rawClip, fbxGroup, vrm) {
@@ -805,12 +1117,23 @@
               _quatA.fromArray(flatQuaternion);
               _quatA.premultiply(parentRestWorldRotation).multiply(restRotationInverse);
               _quatA.toArray(flatQuaternion);
-              flatQuaternion.forEach((v, index) => { track.values[index + i] = v; });
+              flatQuaternion.forEach((v, index) => {
+                track.values[index + i] = v;
+              });
             }
-            tracks.push(new THREE.QuaternionKeyframeTrack(`${vrmNodeName}.${propertyName}`, track.times,
-              track.values.map((v, i) => (vrm.meta?.metaVersion === '0' && i % 2 === 0 ? -v : v))));
+            tracks.push(
+              new THREE.QuaternionKeyframeTrack(
+                `${vrmNodeName}.${propertyName}`,
+                track.times,
+                track.values.map((v, i) => (
+                  vrm.meta?.metaVersion === '0' && i % 2 === 0 ? -v : v
+                )),
+              ),
+            );
           } else if (track instanceof THREE.VectorKeyframeTrack) {
-            const value = track.values.map((v, i) => (vrm.meta?.metaVersion === '0' && i % 3 !== 1 ? -v : v) * hipsPositionScale);
+            const value = track.values.map(
+              (v, i) => (vrm.meta?.metaVersion === '0' && i % 3 !== 1 ? -v : v) * hipsPositionScale
+            );
             tracks.push(new THREE.VectorKeyframeTrack(`${vrmNodeName}.${propertyName}`, track.times, value));
           }
         }
@@ -831,6 +1154,7 @@
       }
       rawClipMap.clear();
       console.log(`[FBX] AnimationMixer initialized with ${animationMap.size} actions`);
+      console.log(`[FBX] 空闲动画将在 ${IDLE_ANIM_DELAY}s 后开始随机播放`);
     }
 
     function startIdleAnimations() {
@@ -846,16 +1170,24 @@
       idleAnimNextSwitch = 0;
       if (mixer && currentAnimation) {
         const action = animationMap.get(currentAnimation);
-        if (action && action.isRunning()) { action.fadeOut(animCrossFadeDuration); }
+        if (action && action.isRunning()) {
+          action.fadeOut(animCrossFadeDuration);
+        }
       }
       currentAnimation = null;
-      setTimeout(() => { if (!idleAnimActive) { restoreDefaultPose(); } }, animCrossFadeDuration * 1000 + 50);
+      setTimeout(() => {
+        if (!idleAnimActive) {
+          restoreDefaultPose();
+        }
+      }, animCrossFadeDuration * 1000 + 50);
     }
 
     function playRandomIdleAnim() {
       if (!mixer || !idleAnimActive) return;
       let pool = idleAnimPool;
-      if (currentAnimation && pool.length > 1) { pool = pool.filter(n => n !== currentAnimation); }
+      if (currentAnimation && pool.length > 1) {
+        pool = pool.filter(n => n !== currentAnimation);
+      }
       const animName = pool[Math.floor(Math.random() * pool.length)];
       const action = animationMap.get(animName);
       if (!action) return;
@@ -864,7 +1196,10 @@
       if (prevAction && prevAction.isRunning()) {
         action.reset().play();
         action.crossFadeFrom(prevAction, animCrossFadeDuration, true);
-      } else { action.reset().play(); action.setEffectiveWeight(1.0); }
+      } else {
+        action.reset().play();
+        action.setEffectiveWeight(1.0);
+      }
       const duration = 4 + Math.random() * 4;
       idleAnimNextSwitch = idleTime + duration;
     }
@@ -968,13 +1303,26 @@
       renderer.setSize(window.innerWidth, window.innerHeight);
       camera.aspect = window.innerWidth / window.innerHeight;
       fitCameraToWindow();
-      if (vrm) { vrm.scene.position.set(0, AVATAR_Y, 0); }
-      else if (window._placeholder) { window._placeholder.group.position.set(0, AVATAR_Y, 0); }
+      if (vrm) {
+        vrm.scene.position.set(0, AVATAR_Y, 0);
+      } else if (window._placeholder) {
+        window._placeholder.group.position.set(0, AVATAR_Y, 0);
+      }
     });
 
     // ─── Start ──────────────────────────────────────────────
     connectWS();
-    initAvatar().then(() => { animate(); });
+    initAvatar().then(() => {
+      animate();
+    });
+
+    // Clean up viseme timers when the page is unloaded or hidden.
+    window.addEventListener('beforeunload', () => {
+      clearVisemeTimers();
+    });
+    window.addEventListener('pagehide', () => {
+      clearVisemeTimers();
+    });
   </script>
 </body>
 </html>

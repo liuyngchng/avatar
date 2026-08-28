@@ -1,5 +1,5 @@
 // Package kws wraps the sherpa-onnx keyword spotting engine for
-// wake word detection ("小火小火").
+// wake word detection.
 package kws
 
 import (
@@ -8,14 +8,15 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode"
 
 	sherpa "github.com/k2-fsa/sherpa-onnx-go/sherpa_onnx"
+	"github.com/mozillazg/go-pinyin"
 )
 
-// DefaultWakeWord is the default Chinese wake word in sherpa keyword format.
-// "x iǎo h uǒ x iǎo h uǒ @小火小火" means the phoneme sequence
-// followed by the display name.
-const DefaultWakeWord = "x iǎo h uǒ x iǎo h uǒ @小火小火"
+// DefaultWakeWord is the fallback wake word when none is configured.
+// Uses the auto-generated format for the default name "小然".
+const DefaultWakeWord = "x iǎo r án x iǎo r án @小然小然"
 
 // Engine wraps the sherpa-onnx KeywordSpotter for wake word detection.
 type Engine struct {
@@ -25,7 +26,7 @@ type Engine struct {
 	stream   *sherpa.OnlineStream // internal stream for continuous detection
 }
 
-// New creates a new KWS engine with the given model directory and wake word.
+// New creates a KWS engine with the given model directory and wake word.
 // The wakeWord should be in sherpa keyword format: "phonemes @DisplayName"
 // If empty, DefaultWakeWord is used.
 func New(modelDir string, wakeWord string) (*Engine, error) {
@@ -163,4 +164,79 @@ func findFile(dir, keyword, suffix string) string {
 		}
 	}
 	return ""
+}
+
+// GenerateWakeWord generates a sherpa-onnx wake word string from a Chinese name.
+// The format is: "initial final initial final ... @name+name" (name repeated twice).
+// The initial and final are separated by spaces, with tone marks preserved on the
+// final (e.g. "x iǎo h uǒ @小火小火").
+//
+// If the name is empty, returns an empty string.
+// If the name contains non-Chinese characters, they are skipped.
+func GenerateWakeWord(name string) string {
+	if name == "" {
+		return ""
+	}
+
+	a := pinyin.NewArgs()
+	a.Style = pinyin.Tone
+
+	displayParts := make([]string, 0, len([]rune(name))*2)
+	phoneParts := make([]string, 0, len([]rune(name))*2)
+
+	for _, r := range name {
+		if !unicode.Is(unicode.Han, r) {
+			continue
+		}
+		displayParts = append(displayParts, string(r))
+
+		py := pinyin.SinglePinyin(r, a)
+		if len(py) == 0 {
+			continue
+		}
+
+		initial, final := splitPinyinTone(py[0])
+		if initial != "" {
+			phoneParts = append(phoneParts, initial)
+		}
+		if final != "" {
+			phoneParts = append(phoneParts, final)
+		}
+	}
+
+	if len(phoneParts) == 0 || len(displayParts) == 0 {
+		return ""
+	}
+
+	// Repeat the phone sequence twice (wake word = name repeated twice).
+	phoneSeq := strings.Join(
+		append(phoneParts, phoneParts...), " ")
+
+	// Display name = name repeated twice.
+	displayName := strings.Join(displayParts, "") + strings.Join(displayParts, "")
+
+	return phoneSeq + " @" + displayName
+}
+
+// splitPinyinTone splits a pinyin syllable with tone into initial (声母) and
+// final with tone (韵母+声调). e.g. "xiǎo" → ("x", "iǎo"), "huǒ" → ("h", "uǒ").
+// This preserves tone marks on the final, unlike the viseme splitter which
+// strips them.
+func splitPinyinTone(py string) (initial, final string) {
+	// Multi-char initials: zh, ch, sh.
+	if len(py) >= 2 && (py[:2] == "zh" || py[:2] == "ch" || py[:2] == "sh") {
+		return py[:2], py[2:]
+	}
+
+	// Single-char initials.
+	singleInitials := []string{"b", "p", "m", "f", "d", "t", "n", "l",
+		"g", "k", "h", "j", "q", "x", "r", "z", "c", "s", "y", "w"}
+	for _, ini := range singleInitials {
+		if strings.HasPrefix(py, ini) {
+			return ini, py[len(ini):]
+		}
+	}
+
+	// No initial (e.g. "ài", "ǎo", "ǒu").
+	return "", py
 }

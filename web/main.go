@@ -73,6 +73,7 @@ func main() {
 				BaseURL: os.Getenv("AVATAR_LLM_BASE_URL"),
 				APIKey:  os.Getenv("AVATAR_LLM_API_KEY"),
 				Model:   os.Getenv("AVATAR_LLM_MODEL"),
+				Name:    "小然",
 			},
 			ASR: config.ASRConfig{Mode: "offline"},
 			TTS: config.TTSConfig{Mode: "offline"},
@@ -97,6 +98,10 @@ func main() {
 			cfg.Server.Port = p
 		}
 	}
+	// Default character name (used in system prompt and wake word).
+	if cfg.LLM.Name == "" {
+		cfg.LLM.Name = "小然"
+	}
 
 	// Print proxy state so the user knows at a glance.
 	log.Printf("main: %s", config.ProxyDesc(cfg.Proxy, cfg.ProxyDisabled))
@@ -117,6 +122,15 @@ func main() {
 	}
 	defer ttsEngine.Close()
 
+	// Print TTS mode prominently.
+	log.Printf("══════════════════════════════════════")
+	if ttsMode == tts.ModeOnline {
+		log.Printf("  TTS 语音合成: 在线模式 (阿里云百炼 Qwen-TTS)")
+	} else {
+		log.Printf("  TTS 语音合成: 离线模式 (本地 Matcha-TTS)")
+	}
+	log.Printf("══════════════════════════════════════")
+
 	// ── Initialize ASR engine ────────────────────────────────
 	asrDir := asr.ModelsDir()
 	asrMode := asr.Mode(cfg.ASR.Mode)
@@ -134,10 +148,28 @@ func main() {
 		defer asrEngine.Close()
 	}
 
+	// Print ASR mode prominently.
+	log.Printf("══════════════════════════════════════")
+	if asrEngine == nil {
+		log.Printf("  ASR 语音识别: 未启用 (初始化失败)")
+	} else if asrMode == asr.ModeOnline {
+		log.Printf("  ASR 语音识别: 在线模式 (阿里云百炼 Qwen-ASR)")
+	} else {
+		log.Printf("  ASR 语音识别: 离线模式 (本地 SenseVoiceSmall)")
+	}
+	log.Printf("══════════════════════════════════════")
+
 	// ── Initialize KWS engine ────────────────────────────────
 	kwsDir := kws.ModelsDir()
 	var kwsEngine *kws.Engine
-	kwsEngine, err = kws.New(kwsDir, cfg.WakeWord)
+
+	// Wake word: use the configured value, otherwise auto-generate from the
+	// character name (name repeated twice, e.g. "小然" → "小然小然").
+	wakeWord := cfg.WakeWord
+	if wakeWord == "" {
+		wakeWord = kws.GenerateWakeWord(cfg.LLM.Name)
+	}
+	kwsEngine, err = kws.New(kwsDir, wakeWord)
 	if err != nil {
 		log.Printf("Warning: KWS engine init failed (continuing without wake word): %v", err)
 		kwsEngine = nil
@@ -155,6 +187,7 @@ func main() {
 		BaseURL:   cfg.LLM.BaseURL,
 		APIKey:    llmAPIKey,
 		Model:     cfg.LLM.Model,
+		Name:      cfg.LLM.Name,
 		ProxyFunc: config.ProxyFunc(cfg.Proxy, cfg.ProxyDisabled),
 	})
 	if llmClient.IsConfigured() {
@@ -164,7 +197,13 @@ func main() {
 	}
 
 	// ── Create the brain (state machine) ─────────────────────
-	sm := brain.NewStateMachine(ttsEngine, asrEngine, kwsEngine, llmClient)
+	sm := brain.NewStateMachine(ttsEngine, asrEngine, kwsEngine, llmClient, brain.Config{
+		NoSpeechTimeout: cfg.NoSpeechTimeout(),
+	})
+	log.Printf("main: 多轮对话无语音超时 = %s (修改请改 cfg.yml 的 no_speech_timeout_sec)", cfg.NoSpeechTimeout())
+	defer sm.Stop() // must run before engine Close()s to avoid use-after-free crashes
+
+	// Start the FSM loop.
 	go sm.Run()
 
 	// ── HTTP routes ────────────────────────────────────────

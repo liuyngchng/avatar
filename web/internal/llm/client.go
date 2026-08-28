@@ -25,6 +25,8 @@ type Config struct {
 	Model string
 	// SystemPrompt overrides the default system prompt.
 	SystemPrompt string
+	// Name is the character name used in the system prompt (default: "小然").
+	Name string
 	// ProxyFunc is the http.Proxy function used for HTTP requests
 	// (e.g. config.ProxyFunc(cfg.Proxy)). Nil means no proxy.
 	ProxyFunc func(*http.Request) (*url.URL, error)
@@ -67,11 +69,14 @@ func New(cfg Config) *Client {
 	if cfg.Model == "" {
 		cfg.Model = "gpt-4o-mini"
 	}
+	if cfg.Name == "" {
+		cfg.Name = "小然"
+	}
 
 	return &Client{
 		config: cfg,
 		http: &http.Client{
-			Timeout: 120 * time.Second,
+			Timeout: 10 * time.Second,
 			Transport: &http.Transport{
 				Proxy: cfg.ProxyFunc,
 				// The intranet API uses a self-signed TLS certificate;
@@ -79,7 +84,7 @@ func New(cfg Config) *Client {
 				TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 			},
 		},
-		system: defaultSystemPrompt(),
+		system: defaultSystemPrompt(cfg.Name),
 	}
 }
 
@@ -240,16 +245,17 @@ func (c *Client) buildBody(messages []Message, params ChatParams, stream bool) [
 
 // defaultSystemPrompt returns the system prompt used by the digital human.
 // Matches the iOS/Android prompt.
-func defaultSystemPrompt() string {
-	now := time.Now().Format("2006年1月2日 Monday")
-	return "你是一个语音助手，名字叫「小火」。用口语化的中文回复，自然友好、直接明了。" +
+func defaultSystemPrompt(name string) string {
+	now := time.Now().Format("2006年1月2日 Monday 15:04")
+	return "你是一个语音助手，名字叫「" + name + "」。用口语化的中文回复，自然友好、直接明了。" +
 		"闲聊或简单问题控制在1-3句话（80字以内）；" +
 		"知识类问题可以适当展开解释，但保持简洁，不超过150字。" +
 		"围绕用户的问题回答，不要偏离话题。" +
 		"当前日期是" + now + "（仅当需要判断时间时参考，不要主动报日期）。" +
 		"这是一个多轮对话，记住之前聊过的话题，保持一致的语气。" +
 		"训练数据中有的知识可以直接回答；确实不知道的事情，诚实说明即可。" +
-		"回复时可以在开头用[emotion:表情]标签标注情绪，可选表情：neutral/happy/curious/surprised/shy/sleepy/sad。" +
+		"回复时尽量用中文表达，数字、英文和专有名词要转成中文习惯说法（比如「苹果手机」而不是 iPhone），避免出现英文字母。" +
+		"回复时可以在开头用[emotion:表情]标签标注情绪，可选表情：neutral/happy/angry/sad/surprised/relaxed。" +
 		"例如：[emotion:happy]你好呀！今天天气真不错！"
 }
 
@@ -265,7 +271,7 @@ func ParseEmotion(text string) (emotion string, cleanText string) {
 			raw := text[len(prefix):end]
 			cleanText = strings.TrimSpace(text[end+1:])
 			switch raw {
-			case "neutral", "happy", "curious", "surprised", "shy", "sleepy", "sad":
+			case "neutral", "happy", "angry", "sad", "surprised", "relaxed":
 				return raw, cleanText
 			default:
 				// Unknown tag: still strip it, keep emotion neutral.
