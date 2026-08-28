@@ -1,6 +1,7 @@
 package brain
 
 import (
+	"fmt"
 	"log"
 	"math"
 	"strings"
@@ -36,6 +37,11 @@ type StateMachine struct {
 	llmClient   *llm.Client
 	capture     *audio.Capture
 
+	// noSpeechTimeout ends the multi-turn conversation if the user produces
+	// no speech within this duration. Sourced from Config.NoSpeechTimeout
+	// (default: DefaultNoSpeechTimeout = 5s).
+	noSpeechTimeout time.Duration
+
 	// Conversation history for multi-turn dialogue.
 	conversation []llm.Message
 
@@ -52,6 +58,21 @@ type StateMachine struct {
 	wg       sync.WaitGroup // tracks Run() and pipeline() goroutines
 }
 
+// DefaultNoSpeechTimeout is used when Config.NoSpeechTimeout is zero or
+// not provided. After this much silence (no RMS above silenceThreshold),
+// the multi-turn conversation is closed and the user must wake the avatar
+// again to talk.
+const DefaultNoSpeechTimeout = 5 * time.Second
+
+// Config tunes conversation-level timing on the state machine. Zero or
+// negative values fall back to the package-level defaults.
+type Config struct {
+	// NoSpeechTimeout ends a multi-turn conversation if the user produces
+	// no speech within this duration after wake-up or after the previous
+	// turn ends. Zero or negative falls back to DefaultNoSpeechTimeout (5s).
+	NoSpeechTimeout time.Duration
+}
+
 // NewStateMachine creates a state machine in ModeIdle.
 func NewStateMachine(
 	ttsEngine *tts.Engine,
@@ -60,23 +81,28 @@ func NewStateMachine(
 	kwsEngine *kws.Engine,
 	llmClient *llm.Client,
 	capture *audio.Capture,
+	cfg Config,
 ) *StateMachine {
+	if cfg.NoSpeechTimeout <= 0 {
+		cfg.NoSpeechTimeout = DefaultNoSpeechTimeout
+	}
 	sm := &StateMachine{
 		state: State{
 			Mode:    ModeIdle,
 			Emotion: EmotionNeutral,
 		},
-		stateChanges: make(chan State, 16),
-		outbound:     make(chan any, 64),
-		events:       make(chan Event, 16),
-		ttsEngine:    ttsEngine,
-		audioPlayer:  audioPlayer,
-		asrEngine:    asrEngine,
-		kwsEngine:    kwsEngine,
-		llmClient:    llmClient,
-		capture:      capture,
-		conversation: make([]llm.Message, 0, 20),
-		done:         make(chan struct{}),
+		stateChanges:    make(chan State, 16),
+		outbound:        make(chan any, 64),
+		events:          make(chan Event, 16),
+		ttsEngine:       ttsEngine,
+		audioPlayer:     audioPlayer,
+		asrEngine:       asrEngine,
+		kwsEngine:       kwsEngine,
+		llmClient:       llmClient,
+		capture:         capture,
+		noSpeechTimeout: cfg.NoSpeechTimeout,
+		conversation:    make([]llm.Message, 0, 20),
+		done:            make(chan struct{}),
 	}
 
 	// Start audio capture once, shared by KWS and ASR.
@@ -403,14 +429,13 @@ func (sm *StateMachine) collectSpeech() []float32 {
 		silenceHangover  = 15   // 15 × 100ms = 1.5s of trailing silence after speech
 		maxDuration      = 15 * time.Second
 		minSpeechBuffers = 5
-		noSpeechTimeout  = 3 * time.Second // exit if no speech within this long
 	)
 
 	var allSamples []float32
 	silentCount := 0
 	speechCount := 0
 	deadline := time.After(maxDuration)
-	noSpeech := time.NewTimer(noSpeechTimeout)
+	noSpeech := time.NewTimer(sm.noSpeechTimeout)
 	defer noSpeech.Stop()
 
 	// returns true if we collected enough real speech to be worth decoding.
@@ -444,7 +469,7 @@ func (sm *StateMachine) collectSpeech() []float32 {
 					default:
 					}
 				}
-				noSpeech.Reset(noSpeechTimeout)
+				noSpeech.Reset(sm.noSpeechTimeout)
 			} else {
 				silentCount++
 			}
@@ -454,7 +479,7 @@ func (sm *StateMachine) collectSpeech() []float32 {
 			}
 
 		case <-noSpeech.C:
-			return finish("no speech within 3s")
+			return finish(fmt.Sprintf("no speech within %s", sm.noSpeechTimeout))
 
 		case <-deadline:
 			return finish("VAD timeout")

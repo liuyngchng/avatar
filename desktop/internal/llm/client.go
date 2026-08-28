@@ -25,7 +25,7 @@ type Config struct {
 	Model string
 	// SystemPrompt overrides the default system prompt.
 	SystemPrompt string
-	// Name is the character name used in the system prompt (default: "小冉").
+	// Name is the character name used in the system prompt (default: "小然").
 	Name string
 	// ProxyFunc is the http.Proxy function used for HTTP requests
 	// (e.g. config.ProxyFunc(cfg.Proxy)). Nil means no proxy.
@@ -70,7 +70,7 @@ func New(cfg Config) *Client {
 		cfg.Model = "gpt-4o-mini"
 	}
 	if cfg.Name == "" {
-		cfg.Name = "小冉"
+		cfg.Name = "小然"
 	}
 
 	return &Client{

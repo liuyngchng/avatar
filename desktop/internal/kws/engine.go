@@ -15,8 +15,8 @@ import (
 )
 
 // DefaultWakeWord is the fallback wake word when none is configured.
-// Uses the auto-generated format for the default name "小冉".
-const DefaultWakeWord = "x iǎo r ǎn x iǎo r ǎn @小冉小冉"
+// Uses the auto-generated format for the default name "小然".
+const DefaultWakeWord = "x iǎo r án x iǎo r án @小然小然"
 
 // Engine wraps the sherpa-onnx KeywordSpotter for wake word detection.
 type Engine struct {

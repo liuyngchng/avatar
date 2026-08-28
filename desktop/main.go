@@ -38,7 +38,7 @@ func main() {
 				BaseURL: os.Getenv("AVATAR_LLM_BASE_URL"),
 				APIKey:  os.Getenv("AVATAR_LLM_API_KEY"),
 				Model:   os.Getenv("AVATAR_LLM_MODEL"),
-				Name:    "小冉",
+				Name:    "小然",
 			},
 		}
 	}
@@ -54,7 +54,7 @@ func main() {
 	}
 	// Default character name (used in system prompt and wake word).
 	if cfg.LLM.Name == "" {
-		cfg.LLM.Name = "小冉"
+		cfg.LLM.Name = "小然"
 	}
 
 	// Print proxy state so the user knows at a glance.
@@ -122,7 +122,7 @@ func main() {
 	var kwsEngine *kws.Engine
 
 	// Wake word: use the configured value, otherwise auto-generate from the
-	// character name (name repeated twice, e.g. "小冉" → "小冉小冉").
+	// character name (name repeated twice, e.g. "小然" → "小然小然").
 	wakeWord := cfg.WakeWord
 	if wakeWord == "" {
 		wakeWord = kws.GenerateWakeWord(cfg.LLM.Name)
@@ -170,7 +170,10 @@ func main() {
 	defer r.Close()
 
 	// ── Create the brain (state machine) ─────────────────────
-	sm := brain.NewStateMachine(ttsEngine, player, asrEngine, kwsEngine, llmClient, capture)
+	sm := brain.NewStateMachine(ttsEngine, player, asrEngine, kwsEngine, llmClient, capture, brain.Config{
+		NoSpeechTimeout: cfg.NoSpeechTimeout(),
+	})
+	log.Printf("main: 多轮对话无语音超时 = %s（修改请改 cfg.yml 的 no_speech_timeout_sec）", cfg.NoSpeechTimeout())
 	defer sm.Stop() // must run before engine Close()s to avoid use-after-free crashes
 
 	// Start the FSM loop.

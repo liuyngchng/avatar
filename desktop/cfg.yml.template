@@ -6,7 +6,7 @@ llm:
   api_key: ""
   model: "deepseek-v4-flash"
   # 人偶的名字（会写入系统提示词，可自行修改）
-  name: "小冉"
+  name: "小然"
 
 # ASR 语音识别配置
 # mode: "offline" = 本地 sherpa-onnx SenseVoiceSmall 模型
@@ -43,8 +43,13 @@ proxy: ""
 
 # 唤醒词（sherpa-onnx 关键词格式: "音素序列 @中文显示名"）
 # 留空则自动从 llm.name 生成（名称重复两遍，拼音自动拆分）
-# 例如 name="小冉" → "x iǎo r ǎn x iǎo r ǎn @小冉小冉"
+# 例如 name="小然" → "x iǎo r án x iǎo r án @小然小然"
 wake_word: ""
 
 # 是否在初始化后播放 FBX 动画（默认 true）
 enable_fbx: true
+
+# 多轮对话中，每轮结束后等待用户重新开口的最大时长（秒）。
+# 超过这个时长还没监测到语音输入，就自动结束当前对话，再次对话需要重新唤醒。
+# 默认 5 秒，留空或注释掉都按 5 秒处理。
+no_speech_timeout_sec: 5
