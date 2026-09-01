@@ -29,9 +29,10 @@ echo "🔨 Building avatar-ui (in Docker)..."
 docker run --rm -v "$(pwd)":/workspace -w /workspace "$IMAGE" make avatar-ui
 echo "✔ OK: avatar-ui built"
 
-# ─── 5. Build avatar-desktop (Go) ─────────────────────────────────────
-echo "🔨 Building avatar-desktop..."
-go build -o avatar-desktop .
+# ─── 5. Build avatar-desktop (Go, garble 混淆) ─────────────────────
+echo "🔨 Building avatar-desktop (garble obfuscated)..."
+GOTOOLCHAIN=local GOGARBLE=github.com/liuyngchng/avatar-desktop \
+  go run mvdan.cc/garble@v0.14.2 -literals build -o avatar-desktop .
 echo "✔ OK: avatar-desktop built"
 
 echo ""

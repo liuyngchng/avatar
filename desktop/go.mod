@@ -8,6 +8,7 @@ require (
 	github.com/k2-fsa/sherpa-onnx-go v1.13.6
 	github.com/mozillazg/go-pinyin v0.21.0
 	gopkg.in/yaml.v3 v3.0.1
+	mvdan.cc/garble v0.14.2
 )
 
 require (
