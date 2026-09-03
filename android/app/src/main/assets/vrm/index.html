@@ -93,6 +93,7 @@
   <script type="module">
     import * as THREE from 'three';
     import { GLTFLoader } from './js/addons/loaders/GLTFLoader.js';
+    import { OrbitControls } from './js/addons/controls/OrbitControls.js';
     import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm';
 
     // ─── Globals ────────────────────────────────────────────
@@ -146,6 +147,19 @@
     const camera = new THREE.PerspectiveCamera(30, window.innerWidth / window.innerHeight, 0.1, 50);
     camera.position.set(0, 0.9, 3.5);
     camera.lookAt(0, 0.7, 0);
+
+    // ─── Orbit camera (touch: 1-finger rotate, 2-finger pinch zoom) ──────
+    const controls = new OrbitControls(camera, canvas);
+    controls.target.set(0, 0.5, 0); // refined by fitCameraToWindow()
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.08;
+    controls.enablePan = false; // keep the avatar centered
+    controls.rotateSpeed = 0.7;
+    controls.zoomSpeed = 0.6;
+    controls.minPolarAngle = 0.05;   // don't go under the floor
+    controls.maxPolarAngle = Math.PI * 0.6; // don't go top-down
+    controls.minDistance = 2.0;
+    controls.maxDistance = 14.0;
 
     // ─── Lighting ───────────────────────────────────────────
     scene.add(new THREE.AmbientLight('#ffffff', 0.8));
@@ -364,6 +378,7 @@
           updatePlaceholderIdle(dt);
         }
 
+        controls.update(); // applies orbit damping
         renderer.render(scene, camera);
         frameCount++;
       } catch (e) {
@@ -680,6 +695,12 @@
       camera.near = Math.max(0.01, dist * 0.1);
       camera.updateProjectionMatrix();
 
+      // Sync the orbit controls to the fitted view.
+      controls.target.copy(center);
+      controls.minDistance = Math.max(1.5, dist * 0.35);
+      controls.maxDistance = dist * 2.4;
+      controls.update();
+
       console.log('[INFO] Camera: dist=' + dist.toFixed(1) + ' pos=(' +
                   camera.position.x.toFixed(1) + ',' + camera.position.y.toFixed(1) + ',' +
                   camera.position.z.toFixed(1) + ') aspect=' + aspect.toFixed(2));
@@ -761,7 +782,10 @@
     });
 
     document.addEventListener('touchmove', (e) => {
-      if (!dragState || e.touches.length !== 1) return;
+      // Pinch or lifted finger: cancel tap detection (OrbitControls handles
+      // the gesture from here).
+      if (e.touches.length !== 1) { dragState = null; return; }
+      if (!dragState) return;
       if (!dragState.moved &&
           (Math.abs(e.touches[0].screenX - dragState.startX) > 4 ||
            Math.abs(e.touches[0].screenY - dragState.startY) > 4)) {
