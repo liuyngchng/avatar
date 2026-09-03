@@ -553,6 +553,8 @@ final class StickFigureDrawer {
             case .shy:       return 0.6
             case .curious:   return 0.4
             case .goofy:     return 0.9
+            case .angry:     return 0.8
+            case .relaxed:   return 0.5
             }
         }()
 
@@ -1290,6 +1292,9 @@ final class StickFigureDrawer {
             p.move(to: CGPoint(x: x0, y: browY - arch * 0.2))
             p.addQuadCurve(to: CGPoint(x: x1, y: browY - arch * 0.2),
                           controlPoint: CGPoint(x: eyeCx, y: browY - arch * 0.8))
+        case .angry, .relaxed:
+            // Use neutral-style brows for desktop-compatible emotions
+            break
         }
 
         if !p.isEmpty {

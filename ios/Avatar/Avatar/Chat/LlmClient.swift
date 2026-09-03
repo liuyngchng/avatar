@@ -46,16 +46,43 @@ class LlmClient {
             "知识类问题可以适当展开解释，但保持简洁，不超过150字。" +
             "围绕用户的问题回答，不要偏离话题。" +
             "当前日期是\(now)（仅当需要判断时间时参考，不要主动报日期）。" +
-            "这是一个多轮对话，记住之前聊过的话题，保持一致的语气。"
+            "这是一个多轮对话，记住之前聊过的话题，保持一致的语气。" +
+            "训练数据中有的知识可以直接回答；确实不知道的事情，诚实说明即可。" +
+            "回复时尽量用中文表达，数字、英文和专有名词要转成中文习惯说法（比如「苹果手机」而不是 iPhone），避免出现英文字母。" +
+            "回复时可以在开头用[emotion:表情]标签标注情绪，可选表情：neutral/happy/angry/sad/surprised/relaxed。" +
+            "例如：[emotion:happy]你好呀！今天天气真不错！"
         if enableSearch {
             return base +
                 "你已启用联网搜索，获取到的实时信息会直接提供给你。" +
                 "对于需要最新数据的问题，务必基于搜索结果回答。" +
                 "严禁说你无法搜索或不支持联网——搜索是系统自动完成的。"
         } else {
-            return base +
-                "训练数据中有的知识可以直接回答；确实不知道的事情，诚实说明即可。"
+            return base
         }
+    }
+
+    /// Parse the [emotion:xxx] tag from the beginning of the LLM response.
+    /// Returns the emotion string and the cleaned text. If no tag is found,
+    /// returns "neutral" and the original text.
+    /// Ported from desktop/internal/llm/client.go ParseEmotion().
+    static func parseEmotion(_ text: String) -> (emotion: String, cleanText: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let prefix = "[emotion:"
+        guard trimmed.hasPrefix(prefix) else {
+            return ("neutral", text)
+        }
+        guard let endBracket = trimmed.firstIndex(of: "]") else {
+            return ("neutral", text)
+        }
+        let raw = String(trimmed[prefix.endIndex..<endBracket])
+        let clean = String(trimmed[trimmed.index(after: endBracket)...])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let validEmotions = ["neutral", "happy", "angry", "sad", "surprised", "relaxed"]
+        if validEmotions.contains(raw) {
+            return (raw, clean)
+        }
+        return ("neutral", clean)
     }
 
     struct LlmParams {

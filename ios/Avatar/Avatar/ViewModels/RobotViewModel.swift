@@ -59,6 +59,7 @@ class RobotViewModel: ObservableObject {
     private var recordingCancellable: AnyCancellable?
     private var faceCancellable: AnyCancellable?
     private var streamingCancellable: AnyCancellable?
+    private var statePushCancellable: AnyCancellable?
     private var speakingTask: Task<Void, Never>?
     private var recognitionTask: Task<Void, Never>?
     private var blinkTask: Task<Void, Never>?
@@ -87,6 +88,13 @@ class RobotViewModel: ObservableObject {
         documentsDir = FileManager.default.urls(
             for: .documentDirectory, in: .userDomainMask
         )[0]
+
+        // Push robot state changes to the VRM WebView (mode/emotion/subtitle).
+        statePushCancellable = $robotState
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] state in
+                self?.pushStateToWebView(state)
+            }
 
         // Observe wake word state
         wakeRunningCancellable = wakeWordManager.$isRunning
@@ -572,10 +580,13 @@ class RobotViewModel: ObservableObject {
                     }
                 }
                 await MainActor.run {
-                    self.robotState.responseText = reply
-                    self.robotState.emotion = .happy
-                    self.chatSession.appendAssistantReply(reply)
-                    self.speakText(reply)
+                    // Parse emotion from LLM response (matches desktop behavior).
+                    let (emotionStr, cleanReply) = LlmClient.parseEmotion(reply)
+                    let emotion = Self.emotionFromString(emotionStr)
+                    self.robotState.responseText = cleanReply
+                    self.robotState.emotion = emotion
+                    self.chatSession.appendAssistantReply(cleanReply)
+                    self.speakText(cleanReply)
                 }
             } else {
                 let (response, emotion) = await MainActor.run { self.behaviorEngine.respond(text) }
@@ -618,14 +629,13 @@ class RobotViewModel: ObservableObject {
 
     func speakText(_ text: String) {
         // Stop any in-progress speech to prevent overlapping TTS.
-        // This ensures behavior-engine greetings don't interrupt LLM
-        // responses, and newer user actions always take priority.
         speakingTask?.cancel()
         audioPlayer.stop()
 
         let prevMode = robotState.mode
         robotState.mode = .speaking
         robotState.isSpeaking = true
+        robotState.speakingText = text
 
         speakingTask = Task { @MainActor [weak self] in
             await self?.speakAndFinish(text, prevMode: prevMode)
@@ -642,8 +652,6 @@ class RobotViewModel: ObservableObject {
         let sr = ttsEngine.sampleRate
 
         // Synthesize each sentence into a separate chunk.
-        // Each chunk is played independently; the playerNode is stopped
-        // between chunks to flush residual audio — no bleed.
         let chunks: [[Float]] = await Task.detached(priority: .userInitiated) {
             var results: [[Float]] = []
             for sentence in sentences {
@@ -660,6 +668,13 @@ class RobotViewModel: ObservableObject {
         guard !chunks.isEmpty else {
             finishSpeaking(prevMode: prevMode)
             return
+        }
+
+        // Calculate total audio duration and generate viseme timeline.
+        let totalSamples = chunks.reduce(0) { $0 + $1.count }
+        let audioDurationMs = Int(Double(totalSamples) / Double(sr) * 1000)
+        if let timeline = VisemeGenerator.generateTimeline(text: text, audioDurationMs: audioDurationMs) {
+            pushVisemeTimeline(timeline)
         }
 
         // playSequence: each chunk scheduled → played → node stopped (flush) → next chunk
@@ -680,6 +695,7 @@ class RobotViewModel: ObservableObject {
 
     private func finishSpeaking(prevMode: RobotMode) {
         robotState.isSpeaking = false
+        robotState.speakingText = nil
 
         if isMultiTurn {
             // Continue multi-turn: wait for room acoustics to settle
@@ -830,11 +846,19 @@ class RobotViewModel: ObservableObject {
         Task { @MainActor [weak self] in
             guard let self = self else { return }
             self.robotState.mode = .speaking
+            self.robotState.isSpeaking = true
+            self.robotState.speakingText = "哎，我在呢"
             AudioSessionManager.configure()
 
             if let pcm = await Task.detached(priority: .userInitiated, operation: {
                 await self.ttsEngine.synthesize(text: "哎，我在呢", speed: 1.0, sid: self.selectedSid)
             }).value {
+                // Generate viseme timeline for the greeting.
+                let audioDurationMs = Int(Double(pcm.count) / Double(self.ttsEngine.sampleRate) * 1000)
+                if let timeline = VisemeGenerator.generateTimeline(text: "哎，我在呢", audioDurationMs: audioDurationMs) {
+                    self.pushVisemeTimeline(timeline)
+                }
+
                 await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
                     self.audioPlayer.play(pcmFloats: pcm, sampleRate: Double(self.ttsEngine.sampleRate)) {
                         cont.resume()
@@ -848,6 +872,8 @@ class RobotViewModel: ObservableObject {
                 os_log(.error, "RobotVM: wake-word greeting TTS synthesis failed — skipping voice prompt")
             }
 
+            self.robotState.isSpeaking = false
+            self.robotState.speakingText = nil
             self.startListening()
         }
     }
@@ -928,6 +954,30 @@ class RobotViewModel: ObservableObject {
         }
     }
 
+    // MARK: - WebView Bridge
+
+    /// Push the current robot state to the VRM WebView for rendering.
+    private func pushStateToWebView(_ state: RobotState) {
+        var dict: [String: Any] = [
+            "mode": state.mode.webMode,
+            "emotion": state.emotion.webEmotion,
+            "isSpeaking": state.isSpeaking,
+        ]
+        if let speakingText = state.speakingText, !speakingText.isEmpty {
+            dict["speakingText"] = speakingText
+        }
+        if let data = try? JSONSerialization.data(withJSONObject: dict),
+           let json = String(data: data, encoding: .utf8) {
+            VRMBridge.shared.send(json)
+        }
+    }
+
+    /// Send a viseme timeline to the VRM WebView for lip-sync.
+    private func pushVisemeTimeline(_ timeline: VisemeTimeline) {
+        guard let json = timeline.jsonString else { return }
+        VRMBridge.shared.send(json)
+    }
+
     // MARK: - Helpers
 
     func checkConfig() -> Bool {
@@ -959,6 +1009,19 @@ class RobotViewModel: ObservableObject {
         return sqrt(sum / Float(samples.count))
     }
 
+    /// Convert an emotion string from the LLM to the Emotion enum.
+    /// Ported from desktop/internal/brain/statemachine.go EmotionFromString().
+    private static func emotionFromString(_ s: String) -> Emotion {
+        switch s.lowercased() {
+        case "happy":     return .happy
+        case "angry":     return .angry
+        case "surprised": return .surprised
+        case "relaxed":   return .relaxed
+        case "sad":       return .sad
+        default:          return .neutral
+        }
+    }
+
     deinit {
         faceDetector.stop()
         audioRecorder.stop()
@@ -967,6 +1030,7 @@ class RobotViewModel: ObservableObject {
         recordingCancellable?.cancel()
         faceCancellable?.cancel()
         streamingCancellable?.cancel()
+        statePushCancellable?.cancel()
         speakingTask?.cancel()
         recognitionTask?.cancel()
         blinkTask?.cancel()

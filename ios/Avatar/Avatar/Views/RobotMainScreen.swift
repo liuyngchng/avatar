@@ -24,25 +24,17 @@ struct RobotMainScreen: View {
                 let textMaxHeight = max(0, geo.size.height - figureBottom - bottomPadding - faceMargin)
 
                 ZStack {
-                    // Stick figure view fills the screen
-                    RobotFaceView(
-                        robotState: $viewModel.robotState,
-                        blinkTrigger: $viewModel.robotState.blinkTrigger,
-                        isPaused: showSettings
+                    // VRM 3D avatar — replaces the stick figure
+                    VRMWebView(
+                        onTap: {
+                            viewModel.onTap()
+                        },
+                        onLongPress: {
+                            showSettings = true
+                        }
                     )
                     .edgesIgnoringSafeArea(.all)
-                    .simultaneousGesture(
-                        TapGesture()
-                            .onEnded {
-                                viewModel.onTap()
-                            }
-                    )
-                    .simultaneousGesture(
-                        LongPressGesture(minimumDuration: 0.5)
-                            .onEnded { _ in
-                                showSettings = true
-                            }
-                    )
+                    // No simultaneous gestures needed — WKWebView handles touch internally
 
                     // Status overlay
                     VStack {
@@ -87,7 +79,7 @@ struct RobotMainScreen: View {
 
                         Spacer()
 
-                        // Bottom: status text (matches Android RobotFaceScreen)
+                        // Bottom: status text
                         let statusText: String = {
                             if !viewModel.enginesReady {
                                 return "小火正在醒来..."
@@ -98,7 +90,7 @@ struct RobotMainScreen: View {
                             case .thinking:
                                 return "思考中..."
                             case .speaking:
-                                return viewModel.robotState.responseText ?? ""
+                                return ""  // Subtitle is shown by the WebView
                             default:
                                 return ""
                             }

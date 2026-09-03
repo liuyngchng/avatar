@@ -23,6 +23,9 @@
 		73E2902863974E2196BADC81 /* Preview Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = F0C26431A7CB4C25858A8F6B /* Preview Assets.xcassets */; };
 		796EC9D13000F8CA00A26778 /* Launch Screen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 796EC9D03000F8CA00A26778 /* Launch Screen.storyboard */; };
 		796EC9D33000FAA100A26778 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 796EC9D23000FAA100A26778 /* Assets.xcassets */; };
+		797E147C30495EB600F6E1E6 /* VisemeGenerator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 797E147B30495EB600F6E1E6 /* VisemeGenerator.swift */; };
+		797E147E30495F6000F6E1E6 /* Resources in Resources */ = {isa = PBXBuildFile; fileRef = 797E147D30495F6000F6E1E6 /* Resources */; };
+		797E14803049601D00F6E1E6 /* VRMWebView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 797E147F3049601D00F6E1E6 /* VRMWebView.swift */; };
 		79B90B06EB504098BE67F7DA /* FaceParts.swift in Sources */ = {isa = PBXBuildFile; fileRef = EB3BD1694A594C23AC1A9C36 /* FaceParts.swift */; };
 		79E62BA92FFD390600CDB096 /* TextReaderView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 79E62BA82FFD390600CDB096 /* TextReaderView.swift */; };
 		875D25526ECD465E977D5B3D /* ChatSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDF988054AE944C8B87DC271 /* ChatSession.swift */; };
@@ -75,6 +78,9 @@
 		796EC9D03000F8CA00A26778 /* Launch Screen.storyboard */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; path = "Launch Screen.storyboard"; sourceTree = "<group>"; };
 		796EC9D23000FAA100A26778 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		796EC9D43000FEF300A26778 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		797E147B30495EB600F6E1E6 /* VisemeGenerator.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = VisemeGenerator.swift; sourceTree = "<group>"; };
+		797E147D30495F6000F6E1E6 /* Resources */ = {isa = PBXFileReference; lastKnownFileType = folder; path = Resources; sourceTree = "<group>"; };
+		797E147F3049601D00F6E1E6 /* VRMWebView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = VRMWebView.swift; sourceTree = "<group>"; };
 		79D564C2A0094B549419F765 /* Avatar.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Avatar.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		79E62BA82FFD390600CDB096 /* TextReaderView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = TextReaderView.swift; sourceTree = "<group>"; };
 		7FC7C908614C4E969ED783D1 /* Bzip2Helper.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = Bzip2Helper.h; sourceTree = "<group>"; };
@@ -116,6 +122,7 @@
 		0112D458FCD04093BEB1E3FC /* Views */ = {
 			isa = PBXGroup;
 			children = (
+				797E147F3049601D00F6E1E6 /* VRMWebView.swift */,
 				79E62BA82FFD390600CDB096 /* TextReaderView.swift */,
 				EB3BD1694A594C23AC1A9C36 /* FaceParts.swift */,
 				EA6469FDF28748CAAC42FDDB /* RobotFaceView.swift */,
@@ -131,6 +138,7 @@
 		07D7F02C44AC45F68FAB44DD /* Helpers */ = {
 			isa = PBXGroup;
 			children = (
+				797E147B30495EB600F6E1E6 /* VisemeGenerator.swift */,
 				F6D88578934A4826A18C6E1A /* KeychainHelper.swift */,
 				1580876A790141DCA4336ACE /* Extensions.swift */,
 				0B5A5A32638C4F39A2F5E0A9 /* DesignTokens.swift */,
@@ -144,6 +152,7 @@
 		08748E08A7D24E67B61059FD /* Avatar */ = {
 			isa = PBXGroup;
 			children = (
+				797E147D30495F6000F6E1E6 /* Resources */,
 				796EC9D43000FEF300A26778 /* Info.plist */,
 				796EC9D23000FAA100A26778 /* Assets.xcassets */,
 				40E98E11791C47EDA8B4676E /* AvatarApp.swift */,
@@ -219,6 +228,7 @@
 				CF057D69A1D54036B202BE2E /* Products */,
 			);
 			sourceTree = "<group>";
+			usesTabs = 0;
 		};
 		9C8AB631EF234FA2966D2D10 /* ASR */ = {
 			isa = PBXGroup;
@@ -335,6 +345,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				797E147E30495F6000F6E1E6 /* Resources in Resources */,
 				796EC9D13000F8CA00A26778 /* Launch Screen.storyboard in Resources */,
 				796EC9D33000FAA100A26778 /* Assets.xcassets in Resources */,
 				73E2902863974E2196BADC81 /* Preview Assets.xcassets in Resources */,
@@ -348,6 +359,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				797E14803049601D00F6E1E6 /* VRMWebView.swift in Sources */,
 				902E043BFE5F4872BE695D96 /* AvatarApp.swift in Sources */,
 				BEE79ACBDCA24ED5821D81AC /* ContentView.swift in Sources */,
 				DD32158AD18C4C2898B7211E /* AppDelegate.swift in Sources */,
@@ -360,6 +372,7 @@
 				36650F6D12634F85AF13DAD5 /* Extensions.swift in Sources */,
 				2EA1308074A84E57ADE91641 /* DesignTokens.swift in Sources */,
 				6AD824679C8642F9A4ABC127 /* ModelManager.swift in Sources */,
+				797E147C30495EB600F6E1E6 /* VisemeGenerator.swift in Sources */,
 				B57BB741E5F14CB2A979154D /* TarBz2Extractor.swift in Sources */,
 				94BCEC4C3E9649FCB255B881 /* AudioSessionManager.swift in Sources */,
 				F2A0BF5975BE43C0AED2A557 /* AudioRecorder.swift in Sources */,
@@ -396,7 +409,9 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
+				COMPRESS_PNG_FILES = NO;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_ASSET_PATHS = "\"Avatar/Preview Content\"";
 				DEVELOPMENT_TEAM = 2XX528DY7X;
@@ -413,12 +428,12 @@
 					"$(PROJECT_DIR)/Frameworks/onnxruntime.xcframework/ios-arm64/onnxruntime.framework/Headers",
 				);
 				INFOPLIST_FILE = Avatar/Info.plist;
+				INFOPLIST_KEY_NSAppTransportSecurity_NSAllowsLocalNetworking = YES;
 				INFOPLIST_KEY_NSCameraUsageDescription = "需要使用摄像头进行人脸检测";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "需要使用麦克风进行语音识别";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchStoryboardName = "Launch Screen";
-				INFOPLIST_KEY_NSAppTransportSecurity_NSAllowsLocalNetworking = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				IPHONEOS_DEPLOYMENT_TARGET = 14.0;
@@ -446,6 +461,7 @@
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = dev.Avatar;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
 				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
@@ -571,7 +587,9 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
+				COMPRESS_PNG_FILES = NO;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_ASSET_PATHS = "\"Avatar/Preview Content\"";
 				DEVELOPMENT_TEAM = 2XX528DY7X;
@@ -588,12 +606,12 @@
 					"$(PROJECT_DIR)/Frameworks/onnxruntime.xcframework/ios-arm64/onnxruntime.framework/Headers",
 				);
 				INFOPLIST_FILE = Avatar/Info.plist;
+				INFOPLIST_KEY_NSAppTransportSecurity_NSAllowsLocalNetworking = YES;
 				INFOPLIST_KEY_NSCameraUsageDescription = "需要使用摄像头进行人脸检测";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "需要使用麦克风进行语音识别";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchStoryboardName = "Launch Screen";
-				INFOPLIST_KEY_NSAppTransportSecurity_NSAllowsLocalNetworking = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				IPHONEOS_DEPLOYMENT_TARGET = 14.0;
@@ -621,6 +639,7 @@
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = dev.Avatar;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
 				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
