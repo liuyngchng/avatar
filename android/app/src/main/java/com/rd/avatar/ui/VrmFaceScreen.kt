@@ -79,6 +79,10 @@ fun VrmFaceScreen(
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
+        // Holds the server created by the factory so onRelease stops exactly
+        // this AndroidView instance's server (avoids stopping a newer one).
+        val serverHolder = remember { arrayOfNulls<VrmAssetServer>(1) }
+
         AndroidView(
             modifier = Modifier.fillMaxSize(),
             factory = { context ->
@@ -86,6 +90,7 @@ fun VrmFaceScreen(
                 // file:///android_asset/ breaks ES module scripts in WebView.
                 val assetServer = VrmAssetServer(context)
                 assetServer.start()
+                serverHolder[0] = assetServer
                 controller.assetServer = assetServer
 
                 WebView(context).apply {
@@ -100,6 +105,15 @@ fun VrmFaceScreen(
                     controller.attachWebView(this)
                     loadUrl("http://127.0.0.1:${assetServer.port}/index.html")
                 }
+            },
+            onRelease = { view ->
+                // Stop the local asset server and detach the WebView so
+                // navigating away and back doesn't leak servers/sockets.
+                controller.detachWebView(view)
+                val server = serverHolder[0]
+                serverHolder[0] = null
+                server?.stop()
+                if (controller.assetServer === server) controller.assetServer = null
             },
         )
 
@@ -216,6 +230,13 @@ class VrmController(
         while (true) {
             val js = pending.poll() ?: break
             view.evaluateJavascript(js, null)
+        }
+    }
+
+    /** Detach the given WebView if it is the currently attached one. */
+    fun detachWebView(view: WebView) {
+        if (webView === view) {
+            webView = null
         }
     }
 

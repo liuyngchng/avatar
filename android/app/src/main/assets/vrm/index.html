@@ -7,12 +7,16 @@
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     html, body { width: 100%; height: 100%; overflow: hidden; background: #1A1A2E; }
-    #canvas { display: block; opacity: 0; transition: opacity 1s ease-out; }
+    /* The canvas MUST be position:fixed: on some Android WebView builds (e.g. Mali/MediaTek
+       devices), an in-flow WebGL canvas never gets presented to the screen, while a
+       fixed-positioned canvas (own composited layer) renders correctly. */
+    #canvas { display: block; position: fixed; left: 0; top: 0; z-index: 1; opacity: 0; transition: opacity 1s ease-out; }
     #canvas.visible { opacity: 1; }
     #canvas.fading { opacity: 0; }
 
     .status {
       position: fixed; bottom: 40px; left: 0; right: 0;
+      z-index: 2;
       text-align: center; color: rgba(255,255,255,0.7);
       font-family: 'PingFang SC', 'Microsoft YaHei', sans-serif;
       font-size: 16px; pointer-events: none;
@@ -22,6 +26,7 @@
 
     .subtitle {
       position: fixed; bottom: 96px; left: 0; right: 0;
+      z-index: 2;
       text-align: center;
       color: #ffffff;
       font-family: 'PingFang SC', 'Microsoft YaHei', sans-serif;
