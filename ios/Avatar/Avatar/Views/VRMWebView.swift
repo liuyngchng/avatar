@@ -103,7 +103,7 @@ struct VRMWebView: UIViewRepresentable {
         VRMBridge.shared.register(webView)
 
         if let htmlURL = Bundle.main.url(
-            forResource: "index", withExtension: "html", subdirectory: "Resources/web"
+            forResource: "index", withExtension: "html", subdirectory: "web"
         ) {
             webView.loadFileURL(htmlURL, allowingReadAccessTo: htmlURL.deletingLastPathComponent())
             os_log(.info, "VRMWebView: loading %{public}@", htmlURL.path)

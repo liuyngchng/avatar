@@ -24,7 +24,7 @@
 		796EC9D13000F8CA00A26778 /* Launch Screen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 796EC9D03000F8CA00A26778 /* Launch Screen.storyboard */; };
 		796EC9D33000FAA100A26778 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 796EC9D23000FAA100A26778 /* Assets.xcassets */; };
 		797E147C30495EB600F6E1E6 /* VisemeGenerator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 797E147B30495EB600F6E1E6 /* VisemeGenerator.swift */; };
-		797E147E30495F6000F6E1E6 /* Resources in Resources */ = {isa = PBXBuildFile; fileRef = 797E147D30495F6000F6E1E6 /* Resources */; };
+		797E147E30495F6000F6E1E6 /* web in Resources */ = {isa = PBXBuildFile; fileRef = 797E147D30495F6000F6E1E6 /* web */; };
 		797E14803049601D00F6E1E6 /* VRMWebView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 797E147F3049601D00F6E1E6 /* VRMWebView.swift */; };
 		79B90B06EB504098BE67F7DA /* FaceParts.swift in Sources */ = {isa = PBXBuildFile; fileRef = EB3BD1694A594C23AC1A9C36 /* FaceParts.swift */; };
 		79E62BA92FFD390600CDB096 /* TextReaderView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 79E62BA82FFD390600CDB096 /* TextReaderView.swift */; };
@@ -79,7 +79,7 @@
 		796EC9D23000FAA100A26778 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		796EC9D43000FEF300A26778 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		797E147B30495EB600F6E1E6 /* VisemeGenerator.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = VisemeGenerator.swift; sourceTree = "<group>"; };
-		797E147D30495F6000F6E1E6 /* Resources */ = {isa = PBXFileReference; lastKnownFileType = folder; path = Resources; sourceTree = "<group>"; };
+		797E147D30495F6000F6E1E6 /* web */ = {isa = PBXFileReference; lastKnownFileType = folder; path = web; sourceTree = "<group>"; };
 		797E147F3049601D00F6E1E6 /* VRMWebView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = VRMWebView.swift; sourceTree = "<group>"; };
 		79D564C2A0094B549419F765 /* Avatar.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Avatar.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		79E62BA82FFD390600CDB096 /* TextReaderView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = TextReaderView.swift; sourceTree = "<group>"; };
@@ -152,7 +152,7 @@
 		08748E08A7D24E67B61059FD /* Avatar */ = {
 			isa = PBXGroup;
 			children = (
-				797E147D30495F6000F6E1E6 /* Resources */,
+				797E147D30495F6000F6E1E6 /* web */,
 				796EC9D43000FEF300A26778 /* Info.plist */,
 				796EC9D23000FAA100A26778 /* Assets.xcassets */,
 				40E98E11791C47EDA8B4676E /* AvatarApp.swift */,
@@ -345,7 +345,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				797E147E30495F6000F6E1E6 /* Resources in Resources */,
+				797E147E30495F6000F6E1E6 /* web in Resources */,
 				796EC9D13000F8CA00A26778 /* Launch Screen.storyboard in Resources */,
 				796EC9D33000FAA100A26778 /* Assets.xcassets in Resources */,
 				73E2902863974E2196BADC81 /* Preview Assets.xcassets in Resources */,
