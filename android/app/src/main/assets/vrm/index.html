@@ -1,0 +1,812 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Avatar</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: #1A1A2E; }
+    #canvas { display: block; opacity: 0; transition: opacity 1s ease-out; }
+    #canvas.visible { opacity: 1; }
+    #canvas.fading { opacity: 0; }
+
+    .status {
+      position: fixed; bottom: 40px; left: 0; right: 0;
+      text-align: center; color: rgba(255,255,255,0.7);
+      font-family: 'PingFang SC', 'Microsoft YaHei', sans-serif;
+      font-size: 16px; pointer-events: none;
+      transition: opacity 0.3s;
+    }
+    .status.hidden { opacity: 0; }
+
+    .subtitle {
+      position: fixed; bottom: 96px; left: 0; right: 0;
+      text-align: center;
+      color: #ffffff;
+      font-family: 'PingFang SC', 'Microsoft YaHei', sans-serif;
+      font-size: 22px;
+      font-weight: 600;
+      line-height: 1.6;
+      pointer-events: none;
+      padding: 0 24px;
+      text-shadow:
+        -1px -1px 0 rgba(0,0,0,0.85),
+         1px -1px 0 rgba(0,0,0,0.85),
+        -1px  1px 0 rgba(0,0,0,0.85),
+         1px  1px 0 rgba(0,0,0,0.85),
+         0 2px 6px rgba(0,0,0,0.6);
+      transition: opacity 0.3s;
+      word-break: break-word;
+    }
+    .subtitle.hidden { opacity: 0; }
+
+    .loading-overlay {
+      position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      background: transparent; z-index: 999;
+      transition: opacity 0.5s ease-out;
+      pointer-events: none;
+    }
+    .loading-overlay.hidden {
+      opacity: 0; pointer-events: none;
+    }
+    .loading-spinner {
+      width: 36px; height: 36px;
+      border: 3px solid rgba(255,255,255,0.15);
+      border-top-color: rgba(255,255,255,0.7);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin-bottom: 16px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .loading-text {
+      color: rgba(255,255,255,0.65);
+      font-family: 'PingFang SC', 'Microsoft YaHei', sans-serif;
+      font-size: 15px;
+    }
+  </style>
+</head>
+<body>
+  <div class="loading-overlay" id="loading">
+    <div class="loading-spinner"></div>
+    <div class="loading-text">加载中...</div>
+  </div>
+  <canvas id="canvas"></canvas>
+  <div class="status" id="status"></div>
+  <div class="subtitle hidden" id="subtitle"></div>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "./js/three.module.js",
+      "@pixiv/three-vrm": "./js/three-vrm.module.js"
+    }
+  }
+  </script>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { GLTFLoader } from './js/addons/loaders/GLTFLoader.js';
+    import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm';
+
+    // ─── Globals ────────────────────────────────────────────
+    let vrm = null;
+    let clock = new THREE.Clock();
+    let currentMode = 'idle';
+    let currentEmotion = 'neutral';
+    let isSpeaking = false;
+
+    const emotionMorphNames = {
+      happy:     ['Face_Blendshape.Fcl_BRW_Joy',      'Face_Blendshape.Fcl_EYE_Joy'],
+      angry:     ['Face_Blendshape.Fcl_BRW_Angry',    'Face_Blendshape.Fcl_EYE_Angry'],
+      sad:       ['Face_Blendshape.Fcl_BRW_Sorrow',   'Face_Blendshape.Fcl_EYE_Sorrow'],
+      surprised: ['Face_Blendshape.Fcl_BRW_Surprised','Face_Blendshape.Fcl_EYE_Surprised'],
+      relaxed:   ['Face_Blendshape.Fcl_BRW_Fun',      'Face_Blendshape.Fcl_EYE_Fun'],
+    };
+    let faceMesh = null;
+    let faceMeshes = [];
+    let emotionMorphMap = {};
+    let managedEmotionIndices = [];
+
+    let visemeTargets = { aa: 0, ih: 0, ou: 0, ee: 0, oh: 0 };
+    let visemeCurrent = { aa: 0, ih: 0, ou: 0, ee: 0, oh: 0 };
+    let visemeBlendSpeed = 8.0;
+
+    let pendingTimeline = null;
+
+    let blinkTimer = 0;
+    let blinkInterval = 3.0;
+    let blinkValue = 0;
+    let blinkPhase = 'open';
+    let idleTime = 0;
+
+    const AVATAR_Y = -0.95;
+
+    const avatarBounds = { worldW: 1.1, worldH: 1.7, worldCenter: new THREE.Vector3(0, 0.85, 0) };
+
+    // ─── Three.js Setup ─────────────────────────────────────
+    const canvas = document.getElementById('canvas');
+    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setClearColor(0x1A1A2E, 1.0);
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.toneMapping = THREE.NoToneMapping;
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+
+    const scene = new THREE.Scene();
+
+    const camera = new THREE.PerspectiveCamera(30, window.innerWidth / window.innerHeight, 0.1, 50);
+    camera.position.set(0, 0.9, 3.5);
+    camera.lookAt(0, 0.7, 0);
+
+    // ─── Lighting ───────────────────────────────────────────
+    scene.add(new THREE.AmbientLight('#ffffff', 0.8));
+
+    const keyLight = new THREE.DirectionalLight('#ffffff', 0.8);
+    keyLight.position.set(1.5, 2.5, 2);
+    keyLight.target.position.set(0, -0.5, 0);
+    keyLight.castShadow = true;
+    keyLight.shadow.mapSize.set(1024, 1024);
+    keyLight.shadow.camera.near = 0.1;
+    keyLight.shadow.camera.far = 20;
+    keyLight.shadow.camera.left = -3;
+    keyLight.shadow.camera.right = 3;
+    keyLight.shadow.camera.top = 3;
+    keyLight.shadow.camera.bottom = -3;
+    keyLight.shadow.bias = -0.0005;
+    scene.add(keyLight);
+    scene.add(keyLight.target);
+
+    const fillLight = new THREE.DirectionalLight('#d0e8ff', 0.4);
+    fillLight.position.set(-1, 0.3, -0.5);
+    scene.add(fillLight);
+
+    const rimLight = new THREE.DirectionalLight('#ffffff', 0.3);
+    rimLight.position.set(0.3, 1.5, -2.5);
+    scene.add(rimLight);
+
+    // ─── Ground shadow disc ─────────────────────────────────
+    const groundY = AVATAR_Y;
+    const shadowDisc = new THREE.Mesh(
+      new THREE.CircleGeometry(8, 48),
+      new THREE.ShadowMaterial({ opacity: 0.3 })
+    );
+    shadowDisc.rotation.x = -Math.PI / 2;
+    shadowDisc.position.y = groundY;
+    shadowDisc.receiveShadow = true;
+    scene.add(shadowDisc);
+
+    const gridHelper = new THREE.GridHelper(20, 40, 0x888888, 0xcccccc);
+    gridHelper.position.y = groundY;
+    gridHelper.material.opacity = 0.18;
+    gridHelper.material.transparent = true;
+    scene.add(gridHelper);
+
+    // ─── Load VRM ───────────────────────────────────────────
+    async function loadVRM(url) {
+      const loader = new GLTFLoader();
+      loader.register((parser) => new VRMLoaderPlugin(parser));
+
+      const gltf = await loader.loadAsync(url);
+      vrm = gltf.userData.vrm;
+      VRMUtils.removeUnnecessaryVertices(gltf.scene);
+      VRMUtils.removeUnnecessaryJoints(gltf.scene);
+      VRMUtils.rotateVRM0(vrm);
+
+      scene.add(vrm.scene);
+      vrm.scene.position.set(0, AVATAR_Y, 0);
+
+      vrm.scene.traverse((obj) => {
+        if (obj.isMesh) { obj.castShadow = true; obj.receiveShadow = true; }
+      });
+
+      if (vrm.expressionManager) {
+        vrm.expressionManager.setValue('blink', 0);
+        vrm.expressionManager.setValue('blinkLeft', 0);
+        vrm.expressionManager.setValue('blinkRight', 0);
+      }
+
+      console.log('VRM loaded:', vrm.meta?.metaVersion);
+      console.log('Expressions:', Object.keys(vrm.expressionManager?.expressionMap || {}));
+      console.log('Window size:', window.innerWidth, 'x', window.innerHeight);
+
+      buildEmotionMorphMap();
+      updateStatus();
+
+      // Fit camera to the VRM model on mobile.
+      setTimeout(() => {
+        fitCameraToWindow();
+        console.log('[INFO] Camera fitted: dist=', camera.position.z.toFixed(1), 'fov=', camera.fov);
+      }, 100);
+
+      setTimeout(() => {
+        canvas.classList.add('visible');
+        hideLoading();
+        console.log('[INFO] VRM model ready');
+      }, 300);
+    }
+
+    function buildEmotionMorphMap() {
+      faceMesh = null;
+      faceMeshes = [];
+      emotionMorphMap = {};
+      managedEmotionIndices = [];
+
+      if (!vrm?.scene) return;
+
+      vrm.scene.traverse((obj) => {
+        if (obj.isMesh && typeof obj.name === 'string' && obj.name.startsWith('Face')) {
+          if (!faceMesh && obj.morphTargetDictionary) faceMesh = obj;
+          faceMeshes.push(obj);
+        }
+      });
+
+      if (!faceMesh || !faceMesh.morphTargetDictionary) {
+        console.warn('[emotion] Face mesh or morphTargetDictionary not found');
+        return;
+      }
+
+      for (const [emotion, names] of Object.entries(emotionMorphNames)) {
+        const binds = [];
+        for (const name of names) {
+          const idx = faceMesh.morphTargetDictionary[name];
+          if (idx === undefined) continue;
+          binds.push(idx);
+          managedEmotionIndices.push(idx);
+        }
+        if (binds.length) emotionMorphMap[emotion] = binds;
+      }
+    }
+
+    function updateEmotionMorphs() {
+      if (!faceMeshes.length) return;
+      const binds = emotionMorphMap[currentEmotion];
+
+      for (const mesh of faceMeshes) {
+        if (!mesh.morphTargetInfluences) continue;
+        for (const idx of managedEmotionIndices) {
+          mesh.morphTargetInfluences[idx] = 0;
+        }
+        if (!binds) continue;
+        for (const idx of binds) {
+          mesh.morphTargetInfluences[idx] = 1.0;
+        }
+      }
+    }
+
+    // ─── Placeholder avatar (fallback) ──────────────────────
+    function createPlaceholderAvatar() {
+      const group = new THREE.Group();
+      const bodyGeo = new THREE.CapsuleGeometry(0.22, 0.5, 8, 16);
+      const bodyMat = new THREE.MeshStandardMaterial({ color: '#4a6fa5', roughness: 0.3 });
+      const body = new THREE.Mesh(bodyGeo, bodyMat);
+      body.position.y = 0.75;
+      body.castShadow = true;
+      group.add(body);
+
+      const headGroup = new THREE.Group();
+      headGroup.position.y = 1.25;
+      const headGeo = new THREE.SphereGeometry(0.2, 32, 32);
+      const headMat = new THREE.MeshStandardMaterial({ color: '#f5e6d3', roughness: 0.4 });
+      const head = new THREE.Mesh(headGeo, headMat);
+      head.castShadow = true;
+      headGroup.add(head);
+
+      const eyeGeo = new THREE.SphereGeometry(0.045, 16, 16);
+      const eyeMat = new THREE.MeshStandardMaterial({ color: '#111111', roughness: 0.1 });
+      const leftEye = new THREE.Mesh(eyeGeo, eyeMat);
+      leftEye.position.set(-0.07, 0.04, -0.17);
+      headGroup.add(leftEye);
+      const rightEye = new THREE.Mesh(eyeGeo, eyeMat);
+      rightEye.position.set(0.07, 0.04, -0.17);
+      headGroup.add(rightEye);
+
+      const mouthGeo = new THREE.BoxGeometry(0.1, 0.02, 0.01);
+      const mouthMat = new THREE.MeshStandardMaterial({ color: '#cc4444', roughness: 0.3 });
+      const mouth = new THREE.Mesh(mouthGeo, mouthMat);
+      mouth.position.set(0, -0.06, -0.18);
+      mouth.name = 'mouth';
+      headGroup.add(mouth);
+
+      group.add(headGroup);
+      group.position.set(0, AVATAR_Y, 0);
+      scene.add(group);
+
+      window._placeholder = { group, headGroup, mouth, leftEye, rightEye };
+      console.log('Placeholder avatar created');
+      updateStatus();
+
+      setTimeout(() => {
+        canvas.classList.add('visible');
+        hideLoading();
+      }, 300);
+    }
+
+    async function initAvatar() {
+      try {
+        await loadVRM('./models/avatar.vrm');
+        // Notify Kotlin that the VRM model is ready.
+        sendEvent('vrm_ready', {});
+      } catch (err) {
+        console.error('VRM load failed:', err.message);
+        console.warn('Falling back to placeholder avatar...');
+        createPlaceholderAvatar();
+        // Still signal ready — the placeholder is visible.
+        sendEvent('vrm_ready', {});
+      }
+    }
+
+    // ─── Animation Loop ─────────────────────────────────────
+    function animate() {
+      requestAnimationFrame(animate);
+
+      try {
+        const dt = Math.min(clock.getDelta(), 0.1);
+        idleTime += dt;
+
+        if (vrm) {
+          updateVRMBlink(dt);
+          updateVRMVisemes(dt);
+          updateVRMIdleMicro(dt);
+          vrm.update(dt);
+          updateEmotionMorphs();
+        } else if (window._placeholder) {
+          updatePlaceholderBlink(dt);
+          updatePlaceholderMouth(dt);
+          updatePlaceholderIdle(dt);
+        }
+
+        renderer.render(scene, camera);
+        frameCount++;
+      } catch (e) {
+        console.error('[ERROR] animate crashed:', e.message, e.stack);
+        frameCount = -1;
+      }
+    }
+
+    let frameCount = 0;
+    // Log first frame confirmation.
+    setTimeout(function() {
+      console.log('[INFO] Rendered frames: ' + frameCount +
+                  ', vrm=' + !!vrm +
+                  ', placeholder=' + !!window._placeholder +
+                  ', canvasOpacity=' + canvas.style.opacity +
+                  ', canvasVisible=' + canvas.classList.contains('visible'));
+    }, 1200);
+
+    // Global error handlers.
+    window.addEventListener('error', function(e) {
+      console.error('[JS GLOBAL ERROR]', e.message, e.filename, e.lineno);
+    });
+    window.addEventListener('unhandledrejection', function(e) {
+      console.error('[JS UNHANDLED REJECTION]', e.reason);
+    });
+
+    // ─── VRM Blink ─────────────────────────────────────────
+    function updateVRMBlink(dt) {
+      if (vrm.expressionManager && blinkValue > 0.001) {
+        vrm.expressionManager.setValue('blink', blinkValue);
+      }
+
+      if (blinkPhase === 'open') {
+        blinkTimer += dt;
+        if (blinkTimer > blinkInterval) {
+          blinkPhase = 'closing';
+          blinkTimer = 0;
+          blinkInterval = 2.5 + Math.random() * 4.0;
+        }
+        return;
+      }
+
+      if (blinkPhase === 'closing') {
+        blinkValue += dt * 12;
+        if (blinkValue >= 1.0) {
+          blinkValue = 1.0;
+          blinkPhase = 'closed';
+          blinkTimer = 0;
+        }
+        return;
+      }
+
+      if (blinkPhase === 'closed') {
+        blinkTimer += dt;
+        if (blinkTimer > 0.12) {
+          blinkPhase = 'opening';
+        }
+        return;
+      }
+
+      if (blinkPhase === 'opening') {
+        blinkValue -= dt * 12;
+        if (blinkValue <= 0) {
+          blinkValue = 0;
+          blinkPhase = 'open';
+          blinkTimer = 0;
+        }
+        return;
+      }
+    }
+
+    // ─── VRM Visemes (lip-sync) ─────────────────────────────
+    function updateVRMVisemes(dt) {
+      if (!vrm?.expressionManager) return;
+
+      const visemeNames = ['aa', 'ih', 'ou', 'ee', 'oh'];
+      const lerp = Math.min(visemeBlendSpeed * dt, 1.0);
+
+      for (const name of visemeNames) {
+        visemeCurrent[name] += (visemeTargets[name] - visemeCurrent[name]) * lerp;
+        vrm.expressionManager.setValue(name, visemeCurrent[name]);
+      }
+    }
+
+    // ─── VRM Idle micro-movement ────────────────────────────
+    function updateVRMIdleMicro(dt) {
+      if (currentMode !== 'idle') return;
+      if (!vrm?.scene) return;
+
+      const t = idleTime;
+      const breathe = Math.sin(t * 1.4) * 0.008;
+      vrm.scene.position.y = AVATAR_Y + breathe;
+      vrm.scene.position.x = Math.sin(t * 0.7) * 0.015;
+      vrm.scene.rotation.z = Math.sin(t * 0.7) * 0.015;
+      vrm.scene.rotation.y = Math.sin(t * 0.4) * 0.18;
+
+      visemeTargets['aa'] = 0.04 + Math.sin(t * 1.4) * 0.01;
+    }
+
+    // ─── Placeholder animations ─────────────────────────────
+    let placeholderBlink = 0;
+    let placeholderBlinking = false;
+    let placeholderBlinkTimer = 0;
+
+    function updatePlaceholderBlink(dt) {
+      const { leftEye, rightEye } = window._placeholder;
+      placeholderBlinkTimer += dt;
+      const blinkInterval = 3.0;
+
+      if (!placeholderBlinking && placeholderBlinkTimer > blinkInterval) {
+        placeholderBlinking = true;
+        placeholderBlink = 0;
+      }
+
+      if (placeholderBlinking) {
+        placeholderBlink += dt * 10;
+        if (placeholderBlink >= 1.0) {
+          placeholderBlinkTimer += dt;
+          if (placeholderBlinkTimer > 0.15) {
+            placeholderBlink -= dt * 10;
+            if (placeholderBlink <= 0) {
+              placeholderBlink = 0;
+              placeholderBlinking = false;
+              placeholderBlinkTimer = 0;
+            }
+          }
+        }
+      }
+
+      const eyeScale = 1 - placeholderBlink * 0.9;
+      leftEye.scale.y = eyeScale;
+      rightEye.scale.y = eyeScale;
+    }
+
+    let placeholderMouthTime = 0;
+    function updatePlaceholderMouth(dt) {
+      const { mouth } = window._placeholder;
+      if (!mouth) return;
+
+      if (isSpeaking) {
+        placeholderMouthTime += dt;
+        const openness = 0.5 + 0.5 * Math.sin(placeholderMouthTime * 12);
+        mouth.scale.y = 0.3 + openness * 8;
+        mouth.position.y = -0.06 - openness * 0.04;
+      } else {
+        mouth.scale.y = 0.3;
+        mouth.position.y = -0.06;
+      }
+    }
+
+    function updatePlaceholderIdle(dt) {
+      if (currentMode !== 'idle') return;
+      const { group } = window._placeholder;
+      if (!group) return;
+      const t = idleTime;
+      group.position.y = AVATAR_Y + Math.sin(t * 1.4) * 0.005;
+      group.position.x = Math.sin(t * 0.7) * 0.01;
+      group.rotation.z = Math.sin(t * 0.7) * 0.01;
+    }
+
+    // ─── Status UI ──────────────────────────────────────────
+    function updateStatus() {
+      const el = document.getElementById('status');
+      switch (currentMode) {
+        case 'idle':      el.textContent = ''; break;
+        case 'listening': el.textContent = '聆听中...'; break;
+        case 'thinking':  el.textContent = '思考中...'; break;
+        case 'speaking':  el.textContent = ''; break;
+      }
+    }
+
+    function updateSubtitle(text) {
+      const el = document.getElementById('subtitle');
+      if (text && text.length > 0) {
+        el.textContent = text;
+        el.classList.remove('hidden');
+      } else {
+        el.classList.add('hidden');
+      }
+    }
+
+    // ─── JS Bridge: Receive messages from Kotlin ─────────────
+    window.handleMessage = function(jsonStr) {
+      try {
+        const msg = JSON.parse(jsonStr);
+        if (msg.cmd === 'fade_out') {
+          fadeOutAvatar();
+          return;
+        }
+        if (msg.type === 'viseme_timeline') {
+          if (currentMode === 'speaking') {
+            playVisemeTimeline(msg.timeline);
+          } else {
+            pendingTimeline = msg.timeline;
+          }
+          return;
+        }
+        if (msg.type === 'viseme') {
+          applyViseme(msg.viseme, msg.weight);
+          return;
+        }
+        if (msg.mode) {
+          currentMode = msg.mode;
+          isSpeaking = msg.isSpeaking || false;
+          if (msg.emotion) currentEmotion = msg.emotion;
+          updateStatus();
+          updateSubtitle(msg.speakingText);
+
+          if (currentMode === 'speaking' && pendingTimeline) {
+            playVisemeTimeline(pendingTimeline);
+            pendingTimeline = null;
+          } else if (currentMode !== 'speaking') {
+            pendingTimeline = null;
+          }
+          applyModeToVRM();
+        }
+      } catch (e) {
+        console.error('handleMessage error:', e);
+      }
+    };
+
+    // ─── Play viseme timeline ────────────────────────────────
+    let visemeTimers = [];
+    function playVisemeTimeline(timeline) {
+      if (!timeline || !timeline.length) return;
+      clearVisemeTimers();
+
+      const start = performance.now();
+
+      for (const entry of timeline) {
+        const delay = Math.max(0, entry.startMs - (performance.now() - start));
+        const timer = setTimeout(() => {
+          if (entry.viseme === 'rest' || !entry.viseme) {
+            applyViseme('rest', 0);
+          } else {
+            applyViseme(entry.viseme, 1.0);
+          }
+        }, delay);
+        visemeTimers.push(timer);
+      }
+
+      const lastStart = timeline.length > 0 ? timeline[timeline.length - 1].startMs : 0;
+      const resetTimer = setTimeout(() => {
+        applyViseme('rest', 0);
+      }, lastStart + 200);
+      visemeTimers.push(resetTimer);
+    }
+
+    function applyViseme(viseme, weight) {
+      if (!vrm?.expressionManager) return;
+      const mouthVisemes = ['aa', 'ih', 'ou', 'ee', 'oh'];
+
+      if (viseme === 'rest' || !viseme) {
+        for (const name of mouthVisemes) {
+          visemeTargets[name] = 0;
+        }
+        return;
+      }
+
+      for (const name of mouthVisemes) {
+        visemeTargets[name] = (name === viseme) ? weight : 0;
+      }
+    }
+
+    function clearVisemeTimers() {
+      for (const t of visemeTimers) clearTimeout(t);
+      visemeTimers = [];
+    }
+
+    function applyModeToVRM() {
+      if (!vrm?.expressionManager) return;
+      if (!isSpeaking) {
+        applyViseme('rest', 0);
+      }
+    }
+
+    // ─── Fit camera to model bounding box ─────────────────────
+    function fitCameraToWindow() {
+      const box = new THREE.Box3();
+      scene.traverse(function(obj) {
+        if (!obj.isMesh || obj === shadowDisc || obj === gridHelper) return;
+        box.expandByObject(obj);
+      });
+      if (box.isEmpty()) {
+        console.log('[INFO] Camera: box is empty, using default');
+        return;
+      }
+
+      const size = new THREE.Vector3();
+      box.getSize(size);
+      const center = new THREE.Vector3();
+      box.getCenter(center);
+
+      avatarBounds.worldW = size.x;
+      avatarBounds.worldH = size.y;
+      avatarBounds.worldCenter.copy(center);
+
+      console.log('[INFO] Model bounds: w=' + size.x.toFixed(2) + ' h=' + size.y.toFixed(2) +
+                  ' center=(' + center.x.toFixed(2) + ',' + center.y.toFixed(2) + ',' + center.z.toFixed(2) + ')');
+
+      // Fit so model fills ~75% of window height.
+      const margin = 1.33;
+      const fovRad = camera.fov * Math.PI / 180;
+      const winH = window.innerHeight;
+      const winW = window.innerWidth;
+      const aspect = winW / Math.max(winH, 1);
+
+      const distH = (avatarBounds.worldW * margin) / (2 * Math.tan(fovRad / 2) * aspect);
+      const distV = (avatarBounds.worldH * margin) / (2 * Math.tan(fovRad / 2));
+      const dist = Math.max(distH, distV);
+
+      camera.position.set(center.x, center.y, center.z + dist);
+      camera.lookAt(center.x, center.y, center.z);
+      camera.near = Math.max(0.01, dist * 0.1);
+      camera.updateProjectionMatrix();
+
+      console.log('[INFO] Camera: dist=' + dist.toFixed(1) + ' pos=(' +
+                  camera.position.x.toFixed(1) + ',' + camera.position.y.toFixed(1) + ',' +
+                  camera.position.z.toFixed(1) + ') aspect=' + aspect.toFixed(2));
+    }
+
+    // ─── JS Bridge: Send events to Kotlin ────────────────────
+    function sendEvent(type, data) {
+      const msg = JSON.stringify({ type, data });
+      if (window.VrmBridge && window.VrmBridge.handleMessage) {
+        window.VrmBridge.handleMessage(msg);
+      }
+      console.log('sendEvent:', type, data);
+    }
+
+    function fadeOutAvatar() {
+      canvas.classList.add('fading');
+    }
+
+    function hideLoading() {
+      const el = document.getElementById('loading');
+      if (el) el.classList.add('hidden');
+    }
+
+    // ─── Input: tap → send to Kotlin ─────────────────────────
+    const raycaster = new THREE.Raycaster();
+    const _ndc = new THREE.Vector2();
+
+    function eventNDC(e) {
+      _ndc.x = (e.clientX / window.innerWidth) * 2 - 1;
+      _ndc.y = -(e.clientY / window.innerHeight) * 2 + 1;
+      return _ndc;
+    }
+
+    function hitAvatar(e) {
+      const avatarObj = vrm ? vrm.scene : (window._placeholder ? window._placeholder.group : null);
+      if (!avatarObj) return false;
+      raycaster.setFromCamera(eventNDC(e), camera);
+      const hits = raycaster.intersectObject(avatarObj, true);
+      return hits.length > 0;
+    }
+
+    let dragState = null;
+
+    document.addEventListener('mousedown', (e) => {
+      if (e.button !== 0) return;
+      dragState = {
+        startX: e.screenX,
+        startY: e.screenY,
+        moved: false,
+      };
+    });
+
+    document.addEventListener('mousemove', (e) => {
+      if (!dragState) return;
+      if (!dragState.moved &&
+          (Math.abs(e.screenX - dragState.startX) > 4 ||
+           Math.abs(e.screenY - dragState.startY) > 4)) {
+        dragState.moved = true;
+      }
+    });
+
+    document.addEventListener('mouseup', (e) => {
+      if (!dragState) return;
+      const wasDrag = dragState.moved;
+      dragState = null;
+      if (!wasDrag) {
+        console.log('[INPUT] tap');
+        sendEvent('tap', {});
+      }
+    });
+
+    document.addEventListener('touchstart', (e) => {
+      if (e.touches.length !== 1) return;
+      dragState = {
+        startX: e.touches[0].screenX,
+        startY: e.touches[0].screenY,
+        moved: false,
+      };
+    });
+
+    document.addEventListener('touchmove', (e) => {
+      if (!dragState || e.touches.length !== 1) return;
+      if (!dragState.moved &&
+          (Math.abs(e.touches[0].screenX - dragState.startX) > 4 ||
+           Math.abs(e.touches[0].screenY - dragState.startY) > 4)) {
+        dragState.moved = true;
+      }
+    });
+
+    document.addEventListener('touchend', (e) => {
+      if (!dragState) return;
+      const wasDrag = dragState.moved;
+      dragState = null;
+      if (!wasDrag) {
+        console.log('[INPUT] tap (touch)');
+        sendEvent('tap', {});
+      }
+    });
+
+    // ─── Resize Handler ─────────────────────────────────────
+    window.addEventListener('resize', () => {
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      fitCameraToWindow();
+      if (vrm) {
+        vrm.scene.position.set(0, AVATAR_Y, 0);
+      } else if (window._placeholder) {
+        window._placeholder.group.position.set(0, AVATAR_Y, 0);
+      }
+    });
+
+    // ─── Start ──────────────────────────────────────────────
+    initAvatar().then(() => {
+      animate();
+    });
+
+    // Fallback: force-start the render loop even if initAvatar never resolves.
+    setTimeout(() => {
+      if (frameCount === 0 && !vrm && !window._placeholder) {
+        console.error('[FALLBACK] initAvatar never completed, forcing placeholder');
+        createPlaceholderAvatar();
+        animate();
+      }
+    }, 8000);
+
+    window.addEventListener('beforeunload', () => {
+      clearVisemeTimers();
+    });
+    window.addEventListener('pagehide', () => {
+      clearVisemeTimers();
+    });
+  </script>
+</body>
+</html>

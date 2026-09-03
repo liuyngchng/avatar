@@ -16,6 +16,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
+import com.rd.avatar.config.ConfigRepository
 import com.rd.avatar.config.ConfigViewModel
 import com.rd.avatar.config.ConnectionTestResult
 
@@ -28,7 +29,7 @@ data class LlmPreset(
 
 val LLM_PRESETS = listOf(
     LlmPreset("阿里百炼", "https://dashscope.aliyuncs.com/compatible-mode/v1", "qwen-plus", "enable_search"),
-    LlmPreset("DeepSeek", "https://api.deepseek.com/v1", "deepseek-v4-flash", ""),
+    LlmPreset("DeepSeek", "https://api.deepseek.com/v1", "deepseek-v4-pro", ""),
     LlmPreset("硅基流动", "https://api.siliconflow.cn/v1", "deepseek-ai/DeepSeek-V3", ""),
 )
 
@@ -41,18 +42,27 @@ fun SettingsScreen(
     val config by viewModel.config.collectAsState()
     val testResult by viewModel.testResult.collectAsState()
 
-    var apiUrl by remember { mutableStateOf(config?.apiUrl ?: "") }
-    var model by remember { mutableStateOf(config?.model ?: "") }
+    var apiUrl by remember { mutableStateOf(config?.apiUrl ?: ConfigRepository.DEFAULT_API_URL) }
+    var model by remember { mutableStateOf(config?.model ?: ConfigRepository.DEFAULT_MODEL) }
     var apiKey by remember { mutableStateOf(config?.apiKey ?: "") }
     var searchParamName by remember { mutableStateOf(config?.searchParamName ?: "enable_search") }
     var showKey by remember { mutableStateOf(false) }
     // Load saved config on first composition
+    var wasLoaded by remember { mutableStateOf(false) }
     LaunchedEffect(config) {
         config?.let {
             apiUrl = it.apiUrl
             model = it.model
             apiKey = it.apiKey
             searchParamName = it.searchParamName
+            wasLoaded = true
+        } ?: run {
+            if (wasLoaded) {
+                // Config was explicitly cleared — reset to empty.
+                apiUrl = ""
+                model = ""
+                apiKey = ""
+            }
         }
     }
 
@@ -92,8 +102,8 @@ fun SettingsScreen(
                 value = model,
                 onValueChange = { model = it; viewModel.resetTestResult() },
                 label = { Text("模型名称") },
-                placeholder = { Text("deepseek-v4-flash") },
-                supportingText = { Text("如 deepseek-v4-flash, gpt-4o-mini, qwen-plus 等") },
+                placeholder = { Text("deepseek-v4-pro") },
+                supportingText = { Text("如 deepseek-v4-pro, gpt-4o-mini, qwen-plus 等") },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true
             )

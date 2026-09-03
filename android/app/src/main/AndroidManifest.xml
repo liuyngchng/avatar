@@ -28,7 +28,8 @@
         android:label="@string/app_name"
         android:supportsRtl="true"
         android:theme="@style/Theme.RobotCompanion"
-        android:name="com.rd.avatar.RobotApplication">
+        android:name="com.rd.avatar.RobotApplication"
+        android:usesCleartextTraffic="true">
 
         <activity
             android:name="com.rd.avatar.MainActivity"

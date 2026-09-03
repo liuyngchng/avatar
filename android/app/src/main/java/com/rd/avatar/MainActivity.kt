@@ -15,7 +15,9 @@ import com.rd.avatar.robot.BehaviorEngine
 import com.rd.avatar.robot.Emotion
 import com.rd.avatar.robot.RobotMode
 import com.rd.avatar.robot.RobotState
-import com.rd.avatar.ui.RobotFaceScreen
+import com.rd.avatar.robot.VisemeGenerator
+import com.rd.avatar.ui.VrmController
+import com.rd.avatar.ui.VrmFaceScreen
 import android.util.Log
 import com.rd.avatar.asr.SherpaAsrEngine
 import com.rd.avatar.audio.AudioPlayer
@@ -24,6 +26,7 @@ import com.rd.avatar.audio.VoiceService
 import com.rd.avatar.audio.WakeWordManager
 import com.rd.avatar.chat.ChatSession
 import com.rd.avatar.chat.LlmClient
+import com.rd.avatar.config.ConfigHttpServer
 import com.rd.avatar.config.ConfigRepository
 import com.rd.avatar.config.ConfigViewModel
 import com.rd.avatar.model.ModelManager
@@ -49,6 +52,9 @@ class MainActivity : ComponentActivity() {
 
     private val behaviorEngine = BehaviorEngine()
 
+    // VRM controller — bridges Kotlin ↔ the VRM WebView.
+    private val vrmController by lazy { VrmController(onTap = {}) }
+
     // Sherpa-onnx engines (offline)
     private val asrEngine by lazy { SherpaAsrEngine(this) }
     private val ttsEngine by lazy { SherpaTtsEngine(this) }
@@ -60,31 +66,27 @@ class MainActivity : ComponentActivity() {
     @Volatile private var isRecording = false
     @Volatile private var recordingJob: Job? = null
     @Volatile private var onSpeechEnd: ((String?) -> Unit)? = null
-    @Volatile private var lastSpeechChunkCount = 0  // non-silent buffer count for min-speech gate
-    @Volatile private var recordingGeneration = 0   // incremented on each start/stop to stale-guard finally blocks
+    @Volatile private var lastSpeechChunkCount = 0
+    @Volatile private var recordingGeneration = 0
 
-    // Lifecycle-aware scope — cancelled in onDestroy to prevent leaks
+    // Lifecycle-aware scope
     private val activityScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
-    // VAD (Voice Activity Detection) constants
+    // VAD constants
     companion object {
-        // Base silence threshold (RMS). Actual threshold = max(this, noiseFloor * 1.8)
         private const val VAD_SILENCE_THRESHOLD = 0.022f
-        // Consecutive silent chunks to auto-stop (~80ms/chunk)
         private const val VAD_MAX_SILENT_CHUNKS = 20
-        // Chunks used to calibrate ambient noise floor (~1.6s)
         private const val NOISE_CALIBRATION_CHUNKS = 20
-        // Max recording duration before force-stop
         private const val MAX_RECORD_SECONDS = 10f
-        // Consecutive blank/silent turns before ending multi-turn conversation
-        private const val MAX_MULTI_TURN_BLANKS = 3  // ~6s (3 × ~2s VAD silence per utterance)
+        // Multi-turn conversation: if no one speaks within this time, go to sleep.
+        private const val CONVERSATION_TIMEOUT_MS = 30_000L
     }
 
-    // Calibrated once at startup, used for all subsequent VAD
     private var calibratedNoiseThreshold: Float = VAD_SILENCE_THRESHOLD
 
-    // LLM integration
+    // LLM
     private val configRepository by lazy { ConfigRepository(this) }
+    private val configHttpServer by lazy { ConfigHttpServer(configRepository) }
     private val llmClient by lazy { LlmClient(configRepository) }
     private val chatSession by lazy { ChatSession(llmClient) }
     private var llmConfigured = false
@@ -92,9 +94,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Clear chat history and LLM context on app (re)start
         chatSession.clear()
-
         llmConfigured = configRepository.hasConfig
         Log.i("MainActivity", "LLM configured: $llmConfigured")
 
@@ -103,64 +103,63 @@ class MainActivity : ComponentActivity() {
             var hasAudioPermission by remember { mutableStateOf(checkAudioPermission()) }
             var enginesReady by remember { mutableStateOf(false) }
 
-            // Settings navigation
             val modelsReady = ModelManager.checkAsrReady(this) &&
                 ModelManager.checkTtsReady(this)
             var currentScreen by remember {
                 mutableStateOf<Screen>(if (modelsReady) Screen.RobotFace else Screen.ModelSetup)
             }
 
-            // Coroutine scope for LLM calls
             val scope = rememberCoroutineScope()
-
-            // Wake word toggle state
             val wakeWordEnabled by WakeWordManager.isRunning.collectAsState()
 
-            // Wake-word-triggered session tracking
-            var wakeWordTriggered by remember { mutableStateOf(false) }
-            var isMultiTurn by remember { mutableStateOf(false) }
-            var multiTurnBlankCount by remember { mutableIntStateOf(0) }
+            // ─── Conversation state ────────────────────────────────────
+            // True when the user is in an active conversation (tap or wake word).
+            var conversationActive by remember { mutableStateOf(false) }
+            // Timeout job: fires after CONVERSATION_TIMEOUT_MS of silence,
+            // ending the conversation and returning to idle.
+            var conversationTimeoutJob by remember { mutableStateOf<Job?>(null) }
 
-            // Shared speech-result handler for both tap-to-talk and wake-word flows.
-            // Defined here so both the onTap lambda and the wakeEvents collector can access it.
-            // Must be a var (not val) because the lambda self-references inside speak() callbacks.
+            /** Reset the 30s no-speech timeout. */
+            fun resetConversationTimeout() {
+                conversationTimeoutJob?.cancel()
+                conversationTimeoutJob = scope.launch {
+                    delay(CONVERSATION_TIMEOUT_MS)
+                    Log.i("MainActivity", "Conversation timeout (${CONVERSATION_TIMEOUT_MS}ms) — going to sleep")
+                    conversationActive = false
+                    stopRecording { } // stop any in-progress recording
+                    WakeWordManager.notifyVoiceFlowDone()
+                    audioPlayer.stop()
+                    robotState = robotState.copy(mode = RobotMode.IDLE, isSpeaking = false)
+                }
+            }
+
+            /** End the conversation and return to idle. */
+            fun endConversation() {
+                conversationActive = false
+                conversationTimeoutJob?.cancel()
+                conversationTimeoutJob = null
+                WakeWordManager.notifyVoiceFlowDone()
+                robotState = robotState.copy(mode = RobotMode.IDLE, isSpeaking = false)
+            }
+
+            // ─── Speech result handler ─────────────────────────────────
             var onSpeechResult: ((String?) -> Unit)? = null
             onSpeechResult = onResult@ { text ->
-                // Minimum-speech gate: if the utterance is too short
-                // (< ~500ms of actual speech energy), treat it as
-                // echo/reverb rather than real user input.  This stops
-                // the robot from responding to its own TTS tail in
-                // multi-turn mode.
+                // Minimum-speech gate: filter out echo/reverb.
                 val minSpeechChunks = 6  // ~500ms at ~80ms/buffer
-                if (isMultiTurn && lastSpeechChunkCount < minSpeechChunks) {
+                if (lastSpeechChunkCount < minSpeechChunks) {
                     Log.i("MainActivity",
                         "Utterance too short (${lastSpeechChunkCount} chunks < $minSpeechChunks), treating as echo")
-                    multiTurnBlankCount++
-                    if (multiTurnBlankCount >= MAX_MULTI_TURN_BLANKS) {
-                        isMultiTurn = false
-                        multiTurnBlankCount = 0
-                        wakeWordTriggered = false
-                        WakeWordManager.notifyVoiceFlowDone()
-                        robotState = robotState.copy(mode = RobotMode.IDLE)
-                    } else {
-                        speak("嗯？还在吗？") {
-                            scope.launch {
-                                delay(800)  // post-speech cooldown
-                                robotState = robotState.copy(
-                                    mode = RobotMode.LISTENING, isSpeaking = false)
-                                startRecording(onSpeechResult!!)
-                            }
-                        }
+                    if (conversationActive) {
+                        // Still in conversation — go back to listening.
+                        robotState = robotState.copy(mode = RobotMode.LISTENING, isSpeaking = false)
+                        startRecording(onSpeechResult!!)
                     }
                     return@onResult
                 }
 
                 if (text != null && text.isNotBlank()) {
-                    // Productive wake: reset debounce
-                    if (wakeWordTriggered) {
-                        WakeWordManager.notifyProductiveWake()
-                    }
-                    multiTurnBlankCount = 0
+                    resetConversationTimeout()
                     robotState = robotState.copy(
                         mode = RobotMode.THINKING,
                         lastUserText = text,
@@ -168,19 +167,6 @@ class MainActivity : ComponentActivity() {
                         isSpeaking = false
                     )
                     scope.launch {
-                        // Check if user is asking to look at something
-                        val wantsCamera = text.contains("看") &&
-                            (text.contains("外面") || text.contains("什么") ||
-                             text.contains("哪里") || text.contains("前面"))
-
-                        if (wantsCamera) {
-                            robotState = robotState.copy(
-                                mode = RobotMode.LOOKING,
-                                emotion = Emotion.CURIOUS
-                            )
-                            delay(1500)
-                        }
-
                         val (response, emotion) = if (configRepository.hasConfig) {
                             chatSession.send(text).fold(
                                 onSuccess = { it to Emotion.HAPPY },
@@ -199,110 +185,80 @@ class MainActivity : ComponentActivity() {
                             isSpeaking = true
                         )
                         speak(response) {
-                            if (isMultiTurn) {
-                                // Post-speech cooldown: wait for room acoustics
-                                // to settle before opening the mic, so we don't
-                                // capture our own TTS tail as the next utterance.
+                            if (conversationActive) {
+                                // Post-speech cooldown, then auto-listen.
                                 scope.launch {
-                                    delay(800)  // 800ms post-speech cooldown
-                                    robotState = robotState.copy(
-                                        mode = RobotMode.LISTENING,
-                                        isSpeaking = false
-                                    )
+                                    delay(800)
+                                    robotState = robotState.copy(mode = RobotMode.LISTENING, isSpeaking = false)
                                     startRecording(onSpeechResult!!)
                                 }
                             } else {
-                                robotState = robotState.copy(
-                                    mode = RobotMode.IDLE,
-                                    isSpeaking = false
-                                )
-                            }
-                            // Only signal voice-flow-done when multi-turn actually ends,
-                            // NOT after each individual exchange. Otherwise KWS resumes
-                            // and competes with the next ASR recording for the mic.
-                            if (wakeWordTriggered && !isMultiTurn) {
-                                wakeWordTriggered = false
-                                WakeWordManager.notifyVoiceFlowDone()
+                                robotState = robotState.copy(mode = RobotMode.IDLE, isSpeaking = false)
                             }
                         }
                     }
                 } else {
                     // Blank / empty speech
-                    if (isMultiTurn) {
-                        multiTurnBlankCount++
-                        if (multiTurnBlankCount >= MAX_MULTI_TURN_BLANKS) {
-                            // End multi-turn after consecutive blanks
-                            isMultiTurn = false
-                            multiTurnBlankCount = 0
-                            wakeWordTriggered = false
-                            WakeWordManager.notifyVoiceFlowDone()
-                            robotState = robotState.copy(mode = RobotMode.IDLE)
-                        } else {
-                            // Prompt user to continue
-                            speak("嗯？还在吗？") {
-                                scope.launch {
-                                    delay(800)  // post-speech cooldown
-                                    robotState = robotState.copy(
-                                        mode = RobotMode.LISTENING,
-                                        isSpeaking = false
-                                    )
-                                    startRecording(onSpeechResult!!)
-                                }
-                            }
-                        }
+                    if (conversationActive) {
+                        // Go back to listening — timeout will fire if user stays silent.
+                        robotState = robotState.copy(mode = RobotMode.LISTENING, isSpeaking = false)
+                        startRecording(onSpeechResult!!)
                     } else {
                         robotState = robotState.copy(mode = RobotMode.IDLE)
-                        if (wakeWordTriggered) {
-                            WakeWordManager.notifyFalseTrigger()
-                            wakeWordTriggered = false
-                            WakeWordManager.notifyVoiceFlowDone()
-                        }
-                        speak("没听清，请再说一遍")
                     }
                 }
             }
 
-            // Initialize ASR/TTS when models become ready
+            // ─── Initialize ASR/TTS ────────────────────────────────────
+            // Track detailed loading status for the user.
+            var loadingStatus by remember { mutableStateOf("") }
+            var vrmReady by remember { mutableStateOf(false) }
+
             LaunchedEffect(modelsReady) {
                 if (modelsReady && !asrReady) {
-                    // Show waking-up state during engine loading
-                    robotState = robotState.copy(
-                        mode = RobotMode.THINKING,
-                        emotion = Emotion.SLEEPY
-                    )
+                    robotState = robotState.copy(mode = RobotMode.THINKING, emotion = Emotion.SLEEPY)
+                    loadingStatus = "正在加载 ASR 语音识别模型..."
                     withContext(Dispatchers.IO) {
                         asrReady = asrEngine.initialize()
-                        ttsReady = ttsEngine.initialize()
                     }
-                    enginesReady = true
-                    robotState = robotState.copy(
-                        mode = RobotMode.IDLE,
-                        emotion = Emotion.NEUTRAL
-                    )
-                    // One-time ambient noise calibration for VAD
+                    if (asrReady) {
+                        loadingStatus = "正在加载 TTS 语音合成模型..."
+                        withContext(Dispatchers.IO) {
+                            ttsReady = ttsEngine.initialize()
+                        }
+                    }
+                    // Noise calibration runs in background.
                     calibrateNoiseOnce()
+                    // ASR + TTS are ready. VRM loads in the WebView.
+                    enginesReady = true
+                    loadingStatus = "正在加载 VRM 数字人模型..."
+                    robotState = robotState.copy(mode = RobotMode.IDLE, emotion = Emotion.NEUTRAL)
                 } else if (asrReady && ttsReady) {
-                    // Already initialized (fast phone, or modelsReady was cached)
                     enginesReady = true
                 }
             }
 
-            // Audio permission launcher
+            // Clear loading overlay when ASR + TTS + VRM are all ready.
+            LaunchedEffect(enginesReady, vrmReady) {
+                if (enginesReady && vrmReady) {
+                    loadingStatus = ""
+                }
+            }
+
+            // Audio permission
             val audioPermissionLauncher = rememberLauncherForActivityResult(
                 ActivityResultContracts.RequestPermission()
             ) { granted -> hasAudioPermission = granted }
 
-            // ── Blink timer ──
+            // ─── Blink timer ───
             LaunchedEffect(Unit) {
                 while (isActive) {
                     delay(Random.nextLong(2000, 5000))
-                    robotState = robotState.copy(
-                        blinkTrigger = robotState.blinkTrigger + 1
-                    )
+                    robotState = robotState.copy(blinkTrigger = robotState.blinkTrigger + 1)
                 }
             }
 
-            // ── Random antic timer (goofy idle animations) ──
+            // ─── Random antic timer (idle expressions) ───
             LaunchedEffect(Unit) {
                 while (isActive) {
                     delay(Random.nextLong(6000, 15000))
@@ -311,35 +267,26 @@ class MainActivity : ComponentActivity() {
                             anticTrigger = robotState.anticTrigger + 1,
                             emotion = Emotion.GOOFY
                         )
-                        // Revert emotion after a moment
                         delay(3000)
-                        if (robotState.mode == RobotMode.IDLE &&
-                            robotState.emotion == Emotion.GOOFY) {
+                        if (robotState.mode == RobotMode.IDLE && robotState.emotion == Emotion.GOOFY) {
                             robotState = robotState.copy(emotion = Emotion.NEUTRAL)
                         }
                     }
                 }
             }
 
-            // ── Random goofy remarks during idle ──
+            // ─── Random goofy remarks during idle ───
             LaunchedEffect(robotState.mode) {
                 if (robotState.mode == RobotMode.IDLE) {
                     delay(Random.nextLong(15000, 30000))
-                    if (robotState.mode == RobotMode.IDLE &&
-                        robotState.anticTrigger > 0 &&
-                        robotState.anticTrigger % 3 == 0L) {
+                    if (robotState.mode == RobotMode.IDLE && robotState.anticTrigger > 0 && robotState.anticTrigger % 3 == 0L) {
                         val remark = behaviorEngine.randomAntic()
                         if (remark != null) {
                             robotState = robotState.copy(
-                                mode = RobotMode.SPEAKING,
-                                responseText = remark,
-                                isSpeaking = true
+                                mode = RobotMode.SPEAKING, responseText = remark, isSpeaking = true
                             )
                             speak(remark) {
-                                robotState = robotState.copy(
-                                    mode = RobotMode.IDLE,
-                                    isSpeaking = false
-                                )
+                                robotState = robotState.copy(mode = RobotMode.IDLE, isSpeaking = false)
                             }
                         }
                     }
@@ -353,82 +300,94 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
-            // ── Wake word event → start voice flow (the missing link) ──
+            // ─── Wake word event → start conversation ────────────────
             LaunchedEffect(Unit) {
                 WakeWordManager.wakeEvents.collect {
                     if (!enginesReady) return@collect
-                    if (robotState.mode != RobotMode.IDLE && robotState.mode != RobotMode.LOOKING) {
-                        Log.i("MainActivity", "Ignoring wake word — not idle/looking")
+                    if (conversationActive) {
+                        Log.i("MainActivity", "Ignoring wake word — already in conversation")
                         return@collect
                     }
-                    Log.i("MainActivity", "Wake word triggered — starting voice flow")
-                    wakeWordTriggered = true
-                    isMultiTurn = true
-                    multiTurnBlankCount = 0
+                    if (robotState.mode != RobotMode.IDLE) {
+                        Log.i("MainActivity", "Ignoring wake word — not idle")
+                        return@collect
+                    }
+                    Log.i("MainActivity", "Wake word triggered — starting conversation")
 
-                    // Play greeting TTS, then auto-listen
+                    conversationActive = true
+                    resetConversationTimeout()
+                    stopWakeWordService()
+
+                    // Greeting TTS
                     val greetingPcm = withContext(Dispatchers.IO) {
                         ttsEngine.synthesize("哎，我在呢")
                     }
                     if (greetingPcm != null) {
                         robotState = robotState.copy(mode = RobotMode.SPEAKING, isSpeaking = true)
+                        val sr = ttsEngine.getSampleRate()
+                        val greetingDurMs = (greetingPcm.size.toLong() * 1000 / sr).toInt()
+                        val timeline = VisemeGenerator.generateVisemeTimeline("哎，我在呢", greetingDurMs)
+                        if (timeline != null) {
+                            vrmController.sendVisemeTimeline(timeline)
+                        }
                         withContext(Dispatchers.IO) {
-                            audioPlayer.play(greetingPcm, ttsEngine.getSampleRate())
+                            audioPlayer.play(greetingPcm, sr)
                         }
                     }
-                    // Post-speech cooldown: let room acoustics settle
-                    // before opening the mic for the user's first utterance.
-                    // Keep mode as SPEAKING during the cooldown — startRecording()
-                    // will switch to LISTENING when the mic actually opens.
-                    delay(800)  // 800ms cooldown
+                    delay(800)  // post-speech cooldown
                     robotState = robotState.copy(mode = RobotMode.LISTENING, isSpeaking = false)
                     startRecording(onSpeechResult)
                 }
             }
 
-            // ── Screen routing ──
+            // ─── Screen routing ────────────────────────────────────────
             when (currentScreen) {
                 is Screen.RobotFace -> {
-                    RobotFaceScreen(
+                    VrmFaceScreen(
                         state = robotState,
-                        enginesReady = enginesReady,
+                        controller = vrmController,
+                        loadingStatus = loadingStatus,
+                        vrmReady = vrmReady,
+                        onVrmReady = { vrmReady = true },
                         onTap = {
                             if (!hasAudioPermission) {
                                 audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-                                return@RobotFaceScreen
+                                return@VrmFaceScreen
                             }
                             if (!enginesReady) {
-                                return@RobotFaceScreen
-                            }
-                            if (wakeWordEnabled) {
-                                stopWakeWordService()
-                            }
-
-                            // If multi-turn is active, tapping ends the conversation
-                            // gracefully (same as long-press / manual stop).
-                            if (isMultiTurn) {
-                                isMultiTurn = false
-                                multiTurnBlankCount = 0
-                                wakeWordTriggered = false
-                                WakeWordManager.notifyVoiceFlowDone()
+                                return@VrmFaceScreen
                             }
 
                             when (robotState.mode) {
                                 RobotMode.LISTENING -> {
-                                    // Stop the current recording and process whatever was captured
+                                    // Stop recording, process captured speech.
                                     stopRecording { onSpeechResult(it) }
                                 }
                                 RobotMode.SPEAKING -> {
-                                    // Stop TTS playback
+                                    // Stop TTS.
                                     audioPlayer.stop()
-                                    robotState = robotState.copy(
-                                        mode = RobotMode.IDLE,
-                                        isSpeaking = false
-                                    )
+                                    if (conversationActive) {
+                                        // Still in conversation — go to listening.
+                                        scope.launch {
+                                            delay(300)
+                                            robotState = robotState.copy(mode = RobotMode.LISTENING, isSpeaking = false)
+                                            startRecording(onSpeechResult)
+                                        }
+                                        robotState = robotState.copy(isSpeaking = false)
+                                    } else {
+                                        endConversation()
+                                    }
+                                }
+                                RobotMode.THINKING -> {
+                                    // Tapping during thinking does nothing.
                                 }
                                 else -> {
-                                    // Idle or looking — start tap-to-talk
-                                    wakeWordTriggered = false
+                                    // Idle — start conversation.
+                                    if (wakeWordEnabled) {
+                                        stopWakeWordService()
+                                    }
+                                    conversationActive = true
+                                    resetConversationTimeout()
                                     startRecording { onSpeechResult(it) }
                                     robotState = robotState.copy(mode = RobotMode.LISTENING)
                                 }
@@ -444,7 +403,8 @@ class MainActivity : ComponentActivity() {
                             } else {
                                 startWakeWordService()
                             }
-                        }
+                        },
+                        enginesReady = enginesReady,
                     )
                 }
 
@@ -456,12 +416,9 @@ class MainActivity : ComponentActivity() {
                         onDismiss = { currentScreen = Screen.RobotFace },
                         wakeWordEnabled = wakeWordEnabled,
                         onToggleWakeWord = { enabled ->
-                            if (enabled) {
-                                startWakeWordService()
-                            } else {
-                                stopWakeWordService()
-                            }
-                        }
+                            if (enabled) startWakeWordService() else stopWakeWordService()
+                        },
+                        httpServer = configHttpServer,
                     )
                 }
 
@@ -475,9 +432,7 @@ class MainActivity : ComponentActivity() {
 
                 is Screen.ModelSetup -> {
                     ModelSetupScreen(
-                        onBack = {
-                            currentScreen = Screen.SettingsHub
-                        }
+                        onBack = { currentScreen = Screen.SettingsHub }
                     )
                 }
 
@@ -486,15 +441,10 @@ class MainActivity : ComponentActivity() {
                         onBack = { currentScreen = Screen.SettingsHub },
                         onRead = { text ->
                             robotState = robotState.copy(
-                                mode = RobotMode.SPEAKING,
-                                responseText = text,
-                                isSpeaking = true
+                                mode = RobotMode.SPEAKING, responseText = text, isSpeaking = true
                             )
                             speak(text) {
-                                robotState = robotState.copy(
-                                    mode = RobotMode.IDLE,
-                                    isSpeaking = false
-                                )
+                                robotState = robotState.copy(mode = RobotMode.IDLE, isSpeaking = false)
                             }
                         }
                     )
@@ -527,7 +477,6 @@ class MainActivity : ComponentActivity() {
 
     // ── ASR recording ─────────────────────────────────────────────────
 
-    /** Calibrate noise threshold once at startup. */
     private fun calibrateNoiseOnce() {
         Log.i("MainActivity", "Starting one-time noise calibration")
         activityScope.launch(Dispatchers.IO) {
@@ -551,7 +500,6 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                 }
-                // Safety timeout: stop calibration after 3s
                 delay(3000)
                 job.cancel()
             } catch (_: Exception) {
@@ -563,24 +511,17 @@ class MainActivity : ComponentActivity() {
     private fun startRecording(onResult: (String?) -> Unit) {
         if (!asrReady) return
 
-        // Bump generation so any in-flight finally block from a previous
-        // recording job knows its results are stale and won't overwrite
-        // the new recording's state (isRecording / onSpeechEnd).
         val myGeneration = ++recordingGeneration
         isRecording = true
         onSpeechEnd = onResult
         var silentChunks = 0
-        var warmupBuffers = 5  // skip first ~5 buffers (~400ms) to avoid TTS tail/echo
-        var speechChunkCount = 0  // non-silent buffers for minimum-speech gate
+        var warmupBuffers = 5
+        var speechChunkCount = 0
         val effectiveThreshold = calibratedNoiseThreshold
 
-        // Cancel any stale job before starting a new one
         recordingJob?.cancel()
         recordingJob = activityScope.launch(Dispatchers.IO) {
             try {
-                // Defensive ASR reset: flush any stale audio left over from a
-                // previous mid-utterance cancel (stopRecording skips inputFinished
-                // via the generation guard, leaving the decoder in a dirty state).
                 if (asrReady) {
                     try { asrEngine.inputFinished() } catch (_: Exception) {}
                 }
@@ -593,8 +534,6 @@ class MainActivity : ComponentActivity() {
                 }
 
                 audioRecorder.startRecording().collect { samples ->
-                    // Warm-up: drop the first few buffers so residual TTS echo
-                    // doesn't trigger a false VAD start.
                     if (warmupBuffers > 0) {
                         warmupBuffers--
                         return@collect
@@ -620,10 +559,6 @@ class MainActivity : ComponentActivity() {
                 }
                 timeoutJob.cancel()
             } finally {
-                // Only deliver the result if this recording is still the
-                // active one.  Stale finally blocks (from cancelled jobs)
-                // must not overwrite state that a newer startRecording()
-                // already set up.
                 if (isRecording && recordingGeneration == myGeneration) {
                     isRecording = false
                     lastSpeechChunkCount = speechChunkCount
@@ -637,16 +572,12 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun stopRecording(onResult: (String?) -> Unit) {
-        // Bump generation first so any in-flight finally block from the
-        // current recording job sees a stale generation and skips delivery.
         recordingGeneration++
         isRecording = false
         onSpeechEnd = onResult
         recordingJob?.cancel()
         recordingJob = null
         audioRecorder.stopRecording()
-        // Invoke callback directly — the recording coroutine's finally block
-        // won't deliver because the generation is now stale.
         onSpeechEnd = null
         onResult(null)
     }
@@ -663,6 +594,11 @@ class MainActivity : ComponentActivity() {
                 if (normalized.isBlank()) continue
                 val audio = ttsEngine.synthesize(normalized)
                 if (audio != null) {
+                    val audioDurationMs = (audio.size.toLong() * 1000 / sr).toInt()
+                    val timeline = VisemeGenerator.generateVisemeTimeline(normalized, audioDurationMs)
+                    if (timeline != null) {
+                        vrmController.sendVisemeTimeline(timeline)
+                    }
                     audioPlayer.play(audio, sr)
                 }
             }

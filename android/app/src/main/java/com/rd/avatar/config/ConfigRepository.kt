@@ -15,6 +15,10 @@ class ConfigRepository(context: Context) {
         private const val KEY_API_KEY = "api_key"
         private const val KEY_ENABLE_SEARCH = "enable_search"
         private const val KEY_SEARCH_PARAM_NAME = "search_param_name"
+
+        // Defaults shown in the settings UI and used as fallbacks.
+        const val DEFAULT_API_URL = "https://api.deepseek.com/v1"
+        const val DEFAULT_MODEL = "deepseek-v4-pro"
     }
 
     private val prefs = run {
@@ -32,8 +36,8 @@ class ConfigRepository(context: Context) {
     }
 
     fun getConfig(): LlmConfig? {
-        val url = prefs.getString(KEY_API_URL, null) ?: return null
-        val model = prefs.getString(KEY_MODEL, null) ?: return null
+        val url = prefs.getString(KEY_API_URL, DEFAULT_API_URL) ?: DEFAULT_API_URL
+        val model = prefs.getString(KEY_MODEL, DEFAULT_MODEL) ?: DEFAULT_MODEL
         val key = prefs.getString(KEY_API_KEY, null) ?: return null
         val enableSearch = prefs.getBoolean(KEY_ENABLE_SEARCH, true)
         val searchParamName = prefs.getString(KEY_SEARCH_PARAM_NAME, "enable_search") ?: "enable_search"

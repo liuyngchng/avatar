@@ -4,6 +4,7 @@ import android.content.Intent
 import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
+import android.widget.Toast
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -11,6 +12,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.BatteryAlert
 import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.Create
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Settings
@@ -32,6 +34,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import com.rd.avatar.config.ConfigHttpServer
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -44,7 +47,8 @@ fun SettingsHubScreen(
     onNavigateToTextReader: () -> Unit = {},
     onDismiss: () -> Unit,
     wakeWordEnabled: Boolean = false,
-    onToggleWakeWord: (Boolean) -> Unit = {}
+    onToggleWakeWord: (Boolean) -> Unit = {},
+    httpServer: ConfigHttpServer? = null,
 ) {
     val context = LocalContext.current
     val powerManager = remember { context.getSystemService(android.content.Context.POWER_SERVICE) as PowerManager }
@@ -106,6 +110,66 @@ fun SettingsHubScreen(
                     onClick = onNavigateToLlmConfig
                 )
             }
+            if (httpServer != null) {
+                item(key = "http_config") {
+                    val serverRunning = remember { mutableStateOf(httpServer.isRunning) }
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            Icons.Filled.Cloud,
+                            contentDescription = null,
+                            tint = if (serverRunning.value) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(24.dp)
+                        )
+                        Spacer(modifier = Modifier.width(16.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                "局域网配置",
+                                style = MaterialTheme.typography.bodyLarge
+                            )
+                            Text(
+                                if (serverRunning.value) {
+                                    val addrs = httpServer.lanAddresses()
+                                    if (addrs.isNotEmpty()) addrs.joinToString("  ")
+                                    else "服务已启动"
+                                } else {
+                                    "在电脑浏览器里配置 API 设置"
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = serverRunning.value,
+                            onCheckedChange = { enable ->
+                                if (enable) {
+                                    if (httpServer.start()) {
+                                        serverRunning.value = true
+                                        val addrs = httpServer.lanAddresses()
+                                        if (addrs.isNotEmpty()) {
+                                            Toast.makeText(
+                                                context,
+                                                "配置页面: ${addrs.joinToString(" ")}",
+                                                Toast.LENGTH_LONG
+                                            ).show()
+                                        }
+                                    } else {
+                                        Toast.makeText(context, "启动失败", Toast.LENGTH_SHORT).show()
+                                    }
+                                } else {
+                                    httpServer.stop()
+                                    serverRunning.value = false
+                                }
+                            }
+                        )
+                    }
+                }
+            }
 
             // Section: 模型
             item(key = "header_models") {
@@ -146,7 +210,7 @@ fun SettingsHubScreen(
                             style = MaterialTheme.typography.bodyLarge
                         )
                         Text(
-                            "说\"小火小火\"即可唤醒",
+                            "说\"小然小然\"即可唤醒",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )

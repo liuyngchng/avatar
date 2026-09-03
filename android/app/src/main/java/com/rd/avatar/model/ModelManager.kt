@@ -22,6 +22,7 @@ object ModelManager {
     const val ASR_MODEL_DIR = "asr"
     const val TTS_MODEL_DIR = "tts"
     const val KWS_MODEL_DIR = "kws"
+    const val VRM_ASSET_SUBDIR = "vrm"
 
     private val ASR_REQUIRED = listOf("model.int8.onnx", "tokens.txt")
     private val TTS_REQUIRED = listOf("model.onnx", "vocos.onnx", "tokens.txt", "lexicon.txt")
