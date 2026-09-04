@@ -798,82 +798,15 @@
     }
 
     // ─── Input: tap → send to Kotlin ─────────────────────────
-    const raycaster = new THREE.Raycaster();
-    const _ndc = new THREE.Vector2();
-
-    function eventNDC(e) {
-      _ndc.x = (e.clientX / window.innerWidth) * 2 - 1;
-      _ndc.y = -(e.clientY / window.innerHeight) * 2 + 1;
-      return _ndc;
-    }
-
-    function hitAvatar(e) {
-      const avatarObj = vrm ? vrm.scene : (window._placeholder ? window._placeholder.group : null);
-      if (!avatarObj) return false;
-      raycaster.setFromCamera(eventNDC(e), camera);
-      const hits = raycaster.intersectObject(avatarObj, true);
-      return hits.length > 0;
-    }
-
-    let dragState = null;
-
-    document.addEventListener('mousedown', (e) => {
-      if (e.button !== 0) return;
-      dragState = {
-        startX: e.screenX,
-        startY: e.screenY,
-        moved: false,
-      };
-    });
-
-    document.addEventListener('mousemove', (e) => {
-      if (!dragState) return;
-      if (!dragState.moved &&
-          (Math.abs(e.screenX - dragState.startX) > 4 ||
-           Math.abs(e.screenY - dragState.startY) > 4)) {
-        dragState.moved = true;
-      }
-    });
-
-    document.addEventListener('mouseup', (e) => {
-      if (!dragState) return;
-      const wasDrag = dragState.moved;
-      dragState = null;
-      if (!wasDrag) {
-        console.log('[INPUT] tap');
-        sendEvent('tap', {});
-      }
-    });
-
-    document.addEventListener('touchstart', (e) => {
-      if (e.touches.length !== 1) return;
-      dragState = {
-        startX: e.touches[0].screenX,
-        startY: e.touches[0].screenY,
-        moved: false,
-      };
-    });
-
-    document.addEventListener('touchmove', (e) => {
-      // Pinch or lifted finger: cancel tap detection (OrbitControls handles
-      // the gesture from here).
-      if (e.touches.length !== 1) { dragState = null; return; }
-      if (!dragState) return;
-      if (!dragState.moved &&
-          (Math.abs(e.touches[0].screenX - dragState.startX) > 4 ||
-           Math.abs(e.touches[0].screenY - dragState.startY) > 4)) {
-        dragState.moved = true;
-      }
-    });
-
-    document.addEventListener('touchend', (e) => {
-      if (!dragState) return;
-      const wasDrag = dragState.moved;
-      dragState = null;
-      if (!wasDrag) {
-        console.log('[INPUT] tap (touch)');
-        sendEvent('tap', {});
-      }
+    // Use 'click' instead of manual mousedown/up + touchstart/end.
+    // OrbitControls calls setPointerCapture which can steal touchend
+    // on Android WebView; 'click' is synthesized by the browser and
+    // fires reliably regardless of pointer capture. The browser also
+    // automatically distinguishes clicks from drags, so no manual
+    // drag-distance tracking is needed.
+    document.addEventListener('click', (e) => {
+      console.log('[INPUT] tap');
+      sendEvent('tap', {});
     });
 
     // ─── Resize Handler ─────────────────────────────────────

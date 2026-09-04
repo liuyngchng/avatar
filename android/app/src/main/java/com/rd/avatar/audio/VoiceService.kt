@@ -60,6 +60,16 @@ class VoiceService : Service() {
             }
         }
 
+        // Observe pause signal: when a conversation starts, pause KWS so ASR
+        // can use the microphone. The service stays alive and will resume KWS
+        // when the conversation ends (resumeSignal above).
+        serviceScope.launch {
+            WakeWordManager.pauseSignal.collect {
+                Log.i(TAG, "VoiceService: pause signal received — stopping KWS engine")
+                stopEngine()
+            }
+        }
+
         Log.i(TAG, "VoiceService: created")
     }
 

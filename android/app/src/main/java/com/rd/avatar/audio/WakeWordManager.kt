@@ -10,12 +10,16 @@ import kotlinx.coroutines.flow.asStateFlow
 /**
  * Singleton coordinating wake word detection state between [VoiceService] and the UI layer.
  *
+ * VoiceService runs continuously while the user has the wake word toggle enabled.
+ * Conversations only pause/resume KWS — they never kill the service.
+ *
  * Lifecycle of a wake-word-triggered voice session:
- *   1. VoiceService detects wake word → stops KWS → notifyWakeWord()
- *   2. MainViewModel receives event → starts ASR recording (mic now free)
- *   3. ASR → LLM → TTS → voice flow completes
- *   4. MainViewModel calls notifyVoiceFlowDone()
- *   5. VoiceService receives signal → resumes KWS detection
+ *   1. VoiceService detects wake word → stops KWS engine → notifyWakeWord()
+ *   2. MainActivity receives event → notifyPause() (redundant safety, KWS already stopped)
+ *   3. MainActivity starts ASR recording (mic now free, KWS paused)
+ *   4. ASR → LLM → TTS → voice flow completes
+ *   5. MainActivity calls notifyVoiceFlowDone()
+ *   6. VoiceService receives resumeSignal → resumes KWS engine
  */
 object WakeWordManager {
 
@@ -28,6 +32,12 @@ object WakeWordManager {
     /** Signal emitted when the voice flow completes and KWS should resume. */
     private val _resumeSignal = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
     val resumeSignal: SharedFlow<Unit> = _resumeSignal.asSharedFlow()
+
+    /** Signal emitted when KWS should pause (e.g. a conversation is starting and
+     *  needs the microphone for ASR). Unlike stopping the service, pausing only
+     *  releases the mic and leaves the service alive so it can resume later. */
+    private val _pauseSignal = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    val pauseSignal: SharedFlow<Unit> = _pauseSignal.asSharedFlow()
 
     // ── Adaptive debounce state ────────────────────────────────────────────
 
@@ -73,6 +83,11 @@ object WakeWordManager {
     /** Called by MainViewModel when the voice flow (ASR→LLM→TTS) has completed. */
     fun notifyVoiceFlowDone() {
         _resumeSignal.tryEmit(Unit)
+    }
+
+    /** Called by MainViewModel to pause KWS (e.g. conversation starting, mic needed for ASR). */
+    fun notifyPause() {
+        _pauseSignal.tryEmit(Unit)
     }
 
     /** Called by VoiceService to update the running state. */

@@ -15,6 +15,7 @@ class ConfigRepository(context: Context) {
         private const val KEY_API_KEY = "api_key"
         private const val KEY_ENABLE_SEARCH = "enable_search"
         private const val KEY_SEARCH_PARAM_NAME = "search_param_name"
+        private const val KEY_WAKE_WORD_ENABLED = "wake_word_enabled"
 
         // Defaults shown in the settings UI and used as fallbacks.
         const val DEFAULT_API_URL = "https://api.deepseek.com/v1"
@@ -61,4 +62,8 @@ class ConfigRepository(context: Context) {
 
     val hasConfig: Boolean
         get() = getConfig() != null
+
+    var wakeWordEnabled: Boolean
+        get() = prefs.getBoolean(KEY_WAKE_WORD_ENABLED, false)
+        set(value) { prefs.edit().putBoolean(KEY_WAKE_WORD_ENABLED, value).apply() }
 }

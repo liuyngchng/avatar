@@ -139,15 +139,14 @@ fun VrmFaceScreen(
         }
 
         // Status text below the figure. Only show when fully loaded.
+        // WebView handles LISTENING/THINKING/SPEAKING status display,
+        // so we only show the "waking up" message here.
         val statusText = if (loadingStatus.isNotEmpty()) {
             ""
         } else if (!enginesReady) {
             "小然正在醒来..."
-        } else when (state.mode) {
-            RobotMode.LISTENING -> "聆听中..."
-            RobotMode.THINKING  -> "思考中..."
-            RobotMode.SPEAKING  -> state.responseText ?: ""
-            else -> ""
+        } else {
+            ""
         }
         if (statusText.isNotEmpty()) {
             Text(

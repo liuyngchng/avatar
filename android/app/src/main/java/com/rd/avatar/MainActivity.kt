@@ -110,7 +110,11 @@ class MainActivity : ComponentActivity() {
             }
 
             val scope = rememberCoroutineScope()
-            val wakeWordEnabled by WakeWordManager.isRunning.collectAsState()
+            // Wake word is a persisted system config, independent of conversation state.
+            // The service runs continuously when enabled; conversations only pause/resume KWS.
+            var wakeWordEnabled by remember {
+                mutableStateOf(configRepository.wakeWordEnabled)
+            }
 
             // ─── Conversation state ────────────────────────────────────
             // True when the user is in an active conversation (tap or wake word).
@@ -300,6 +304,13 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
+            // Auto-start wake word service if the user had it enabled previously.
+            LaunchedEffect(Unit) {
+                if (wakeWordEnabled) {
+                    startWakeWordService()
+                }
+            }
+
             // ─── Wake word event → start conversation ────────────────
             LaunchedEffect(Unit) {
                 WakeWordManager.wakeEvents.collect {
@@ -316,7 +327,9 @@ class MainActivity : ComponentActivity() {
 
                     conversationActive = true
                     resetConversationTimeout()
-                    stopWakeWordService()
+                    // Pause KWS so ASR can use the mic. VoiceService stays alive
+                    // and will resume KWS when the conversation ends.
+                    WakeWordManager.notifyPause()
 
                     // Greeting TTS
                     val greetingPcm = withContext(Dispatchers.IO) {
@@ -384,7 +397,8 @@ class MainActivity : ComponentActivity() {
                                 else -> {
                                     // Idle — start conversation.
                                     if (wakeWordEnabled) {
-                                        stopWakeWordService()
+                                        // Pause KWS (not kill service) so ASR can use the mic.
+                                        WakeWordManager.notifyPause()
                                     }
                                     conversationActive = true
                                     resetConversationTimeout()
@@ -398,10 +412,13 @@ class MainActivity : ComponentActivity() {
                         },
                         wakeWordEnabled = wakeWordEnabled,
                         onToggleWakeWord = {
-                            if (wakeWordEnabled) {
-                                stopWakeWordService()
-                            } else {
+                            val newState = !wakeWordEnabled
+                            configRepository.wakeWordEnabled = newState
+                            wakeWordEnabled = newState
+                            if (newState) {
                                 startWakeWordService()
+                            } else {
+                                stopWakeWordService()
                             }
                         },
                         enginesReady = enginesReady,
@@ -416,6 +433,8 @@ class MainActivity : ComponentActivity() {
                         onDismiss = { currentScreen = Screen.RobotFace },
                         wakeWordEnabled = wakeWordEnabled,
                         onToggleWakeWord = { enabled ->
+                            configRepository.wakeWordEnabled = enabled
+                            wakeWordEnabled = enabled
                             if (enabled) startWakeWordService() else stopWakeWordService()
                         },
                         httpServer = configHttpServer,
