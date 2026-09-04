@@ -215,6 +215,9 @@
       VRMUtils.removeUnnecessaryJoints(gltf.scene);
       VRMUtils.rotateVRM0(vrm);
 
+      // Fix arms and fingers to natural standing pose (not T-pose).
+      restoreDefaultPose();
+
       scene.add(vrm.scene);
       vrm.scene.position.set(0, AVATAR_Y, 0);
 
@@ -246,6 +249,76 @@
         hideLoading();
         console.log('[INFO] VRM model ready');
       }, 300);
+    }
+
+    // Restore arms and fingers to the natural standing pose (not T-pose).
+    function restoreDefaultPose() {
+      if (!vrm?.humanoid) return;
+      const down = 77.4 * (Math.PI / 180);
+      const s = Math.sin(down / 2);
+      const c = Math.cos(down / 2);
+      const eS = Math.sin(4 * (Math.PI / 180));
+      const eC = Math.cos(4 * (Math.PI / 180));
+
+      // Build the full normalized pose: arms + fingers + reset all other bones.
+      const pose = {
+        leftUpperArm:  { rotation: [0, 0, -s, c] },
+        rightUpperArm: { rotation: [0, 0,  s, c] },
+        leftLowerArm:  { rotation: [0, 0,  eS, eC] },
+        rightLowerArm: { rotation: [0, 0, -eS, eC] },
+      };
+
+      // Reset all finger bones to identity (T-pose), then add curl.
+      const fingerBones = [
+        'leftThumbMetacarpal','leftThumbProximal','leftThumbIntermediate','leftThumbDistal',
+        'leftIndexProximal','leftIndexIntermediate','leftIndexDistal',
+        'leftMiddleProximal','leftMiddleIntermediate','leftMiddleDistal',
+        'leftRingProximal','leftRingIntermediate','leftRingDistal',
+        'leftLittleProximal','leftLittleIntermediate','leftLittleDistal',
+        'rightThumbMetacarpal','rightThumbProximal','rightThumbIntermediate','rightThumbDistal',
+        'rightIndexProximal','rightIndexIntermediate','rightIndexDistal',
+        'rightMiddleProximal','rightMiddleIntermediate','rightMiddleDistal',
+        'rightRingProximal','rightRingIntermediate','rightRingDistal',
+        'rightLittleProximal','rightLittleIntermediate','rightLittleDistal',
+      ];
+      const identity = [0, 0, 0, 1];
+      for (const name of fingerBones) {
+        pose[name] = { rotation: identity };
+      }
+
+      // Apply finger curl as quaternion rotations around the local Z axis.
+      const fingerCurl = {
+        index:  { proximal: 0.15, intermediate: 0.25, distal: 0.15 },
+        middle: { proximal: 0.12, intermediate: 0.20, distal: 0.12 },
+        ring:   { proximal: 0.18, intermediate: 0.28, distal: 0.18 },
+        little: { proximal: 0.22, intermediate: 0.35, distal: 0.22 },
+      };
+      const thumbCurl = { meta: 0.10, prox: 0.15, inter: 0.10, dist: 0.08 };
+
+      const sides = ['left', 'right'];
+      for (const side of sides) {
+        const curlDir = side === 'left' ? -1 : 1;
+
+        for (const [finger, angles] of Object.entries(fingerCurl)) {
+          const cap = finger.charAt(0).toUpperCase() + finger.slice(1);
+          for (const [joint, angle] of Object.entries(angles)) {
+            const jointName = joint.charAt(0).toUpperCase() + joint.slice(1);
+            const boneName = side + cap + jointName;
+            const a = curlDir * angle;
+            const hs = Math.sin(a / 2);
+            const hc = Math.cos(a / 2);
+            pose[boneName] = { rotation: [0, 0, hs, hc] };
+          }
+        }
+
+        // Thumb
+        pose[side + 'ThumbMetacarpal']    = { rotation: [0, 0, Math.sin(curlDir * thumbCurl.meta / 2),  Math.cos(curlDir * thumbCurl.meta / 2)] };
+        pose[side + 'ThumbProximal']      = { rotation: [0, 0, Math.sin(curlDir * thumbCurl.prox / 2),  Math.cos(curlDir * thumbCurl.prox / 2)] };
+        pose[side + 'ThumbIntermediate']  = { rotation: [0, 0, Math.sin(curlDir * thumbCurl.inter / 2), Math.cos(curlDir * thumbCurl.inter / 2)] };
+        pose[side + 'ThumbDistal']        = { rotation: [0, 0, Math.sin(curlDir * thumbCurl.dist / 2),  Math.cos(curlDir * thumbCurl.dist / 2)] };
+      }
+
+      vrm.humanoid.setNormalizedPose(pose);
     }
 
     function buildEmotionMorphMap() {
