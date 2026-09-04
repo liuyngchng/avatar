@@ -4,7 +4,6 @@ import android.annotation.SuppressLint
 import android.webkit.WebChromeClient
 import android.webkit.WebView
 import android.webkit.WebViewClient
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -17,7 +16,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.CircularProgressIndicator
@@ -27,9 +25,10 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -121,19 +120,27 @@ fun VrmFaceScreen(
         if (loadingStatus.isNotEmpty()) {
             Column(
                 modifier = Modifier
-                    .align(Alignment.Center)
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(Color(0xCC1A1A2E))
-                    .padding(horizontal = 24.dp, vertical = 20.dp),
+                    .align(Alignment.Center),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                CircularProgressIndicator(color = Color.White, modifier = Modifier.size(32.dp))
+                CircularProgressIndicator(
+                    color = Color.White,
+                    modifier = Modifier.size(32.dp),
+                    strokeWidth = 2.5.dp,
+                )
                 Spacer(modifier = Modifier.height(12.dp))
                 Text(
                     text = loadingStatus,
-                    color = Color.White.copy(alpha = 0.9f),
+                    color = Color.White,
                     fontSize = 15.sp,
                     textAlign = TextAlign.Center,
+                    style = TextStyle(
+                        shadow = Shadow(
+                            color = Color.Black.copy(alpha = 0.7f),
+                            blurRadius = 6f,
+                            offset = androidx.compose.ui.geometry.Offset(0f, 1f),
+                        ),
+                    ),
                 )
             }
         }
@@ -214,7 +221,7 @@ class VrmController(
     var onTap: () -> Unit = onTap
 
     val bridge = VrmBridge(onEvent = { type, _ ->
-        if (type == "tap") onTap()
+        if (type == "tap") this.onTap()
     })
 
     /** Local HTTP server serving VRM assets. Set by [VrmFaceScreen] factory. */

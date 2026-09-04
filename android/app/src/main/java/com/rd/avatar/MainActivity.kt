@@ -370,7 +370,6 @@ class MainActivity : ComponentActivity() {
                     calibrateNoiseOnce()
                     // ASR + TTS are ready. VRM loads in the WebView.
                     enginesReady = true
-                    loadingStatus = "正在加载 VRM 数字人模型..."
                     robotState = robotState.copy(mode = RobotMode.IDLE, emotion = Emotion.NEUTRAL)
                 } else if (asrReady && ttsReady) {
                     enginesReady = true

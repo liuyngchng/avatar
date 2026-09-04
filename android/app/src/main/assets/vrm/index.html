@@ -46,37 +46,9 @@
     }
     .subtitle.hidden { opacity: 0; }
 
-    .loading-overlay {
-      position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-      display: flex; flex-direction: column; align-items: center; justify-content: center;
-      background: transparent; z-index: 999;
-      transition: opacity 0.5s ease-out;
-      pointer-events: none;
-    }
-    .loading-overlay.hidden {
-      opacity: 0; pointer-events: none;
-    }
-    .loading-spinner {
-      width: 36px; height: 36px;
-      border: 3px solid rgba(255,255,255,0.15);
-      border-top-color: rgba(255,255,255,0.7);
-      border-radius: 50%;
-      animation: spin 0.8s linear infinite;
-      margin-bottom: 16px;
-    }
-    @keyframes spin { to { transform: rotate(360deg); } }
-    .loading-text {
-      color: rgba(255,255,255,0.65);
-      font-family: 'PingFang SC', 'Microsoft YaHei', sans-serif;
-      font-size: 15px;
-    }
   </style>
 </head>
 <body>
-  <div class="loading-overlay" id="loading">
-    <div class="loading-spinner"></div>
-    <div class="loading-text">加载 VRM 模型</div>
-  </div>
   <canvas id="canvas"></canvas>
   <div class="status" id="status"></div>
   <div class="subtitle hidden" id="subtitle"></div>
@@ -282,7 +254,6 @@
 
       setTimeout(() => {
         canvas.classList.add('visible');
-        hideLoading();
         console.log('[INFO] VRM model ready');
       }, 300);
     }
@@ -449,7 +420,6 @@
 
       setTimeout(() => {
         canvas.classList.add('visible');
-        hideLoading();
       }, 300);
     }
 
@@ -1051,21 +1021,37 @@
       canvas.classList.add('fading');
     }
 
-    function hideLoading() {
-      const el = document.getElementById('loading');
-      if (el) el.classList.add('hidden');
-    }
-
     // ─── Input: tap → send to Kotlin ─────────────────────────
-    // Use 'click' instead of manual mousedown/up + touchstart/end.
-    // OrbitControls calls setPointerCapture which can steal touchend
-    // on Android WebView; 'click' is synthesized by the browser and
-    // fires reliably regardless of pointer capture. The browser also
-    // automatically distinguishes clicks from drags, so no manual
-    // drag-distance tracking is needed.
-    document.addEventListener('click', (e) => {
-      console.log('[INPUT] tap');
-      sendEvent('tap', {});
+    // OrbitControls uses setPointerCapture which can steal touch events
+    // and prevent the browser from synthesizing a 'click'. So we detect
+    // taps directly via touchstart/touchend with a small drag threshold.
+    let tapState = null;
+
+    document.addEventListener('touchstart', (e) => {
+      if (e.touches.length !== 1) { tapState = null; return; }
+      tapState = {
+        startX: e.touches[0].screenX,
+        startY: e.touches[0].screenY,
+        moved: false,
+      };
+    });
+
+    document.addEventListener('touchmove', (e) => {
+      if (!tapState || e.touches.length !== 1) { tapState = null; return; }
+      if (!tapState.moved &&
+          (Math.abs(e.touches[0].screenX - tapState.startX) > 8 ||
+           Math.abs(e.touches[0].screenY - tapState.startY) > 8)) {
+        tapState.moved = true;
+      }
+    });
+
+    document.addEventListener('touchend', (e) => {
+      if (!tapState) return;
+      const wasDrag = tapState.moved;
+      tapState = null;
+      if (!wasDrag) {
+        sendEvent('tap', {});
+      }
     });
 
     // ─── Resize Handler ─────────────────────────────────────
