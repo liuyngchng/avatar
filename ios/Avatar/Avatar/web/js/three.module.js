@@ -15828,7 +15828,12 @@ function WebGLCapabilities( gl, extensions, parameters ) {
 
 	}
 
-	const isWebGL2 = typeof WebGL2RenderingContext !== 'undefined' && gl.constructor.name === 'WebGL2RenderingContext';
+	// WKWebView quirk: some iOS versions expose WebGL2 contexts without the
+	// WebGL2RenderingContext global, which made the original check fail and
+	// skinned meshes compile as GLSL ES 1.00 (textureSize/texelFetch errors).
+	// Feature-detect WebGL2 as a fallback so the global is not required.
+	const isWebGL2 = ( typeof WebGL2RenderingContext !== 'undefined' && gl.constructor.name === 'WebGL2RenderingContext' ) ||
+		( typeof gl.texStorage2D === 'function' && typeof gl.createVertexArray === 'function' && typeof gl.bindVertexArray === 'function' );
 
 	let precision = parameters.precision !== undefined ? parameters.precision : 'highp';
 	const maxPrecision = getMaxPrecision( precision );

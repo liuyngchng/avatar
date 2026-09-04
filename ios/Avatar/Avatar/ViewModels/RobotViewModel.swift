@@ -526,6 +526,29 @@ class RobotViewModel: ObservableObject {
                     return
                 }
 
+                // Filler/interjection filter: "嗯", "啊" etc. are
+                // environmental noise, not real input — ignore silently.
+                if Self.isAsrNoise(text) {
+                    os_log(.info, "RobotVM: ASR noise ignored: '%{public}@'", text)
+                    if self.isMultiTurn {
+                        self.multiTurnBlankCount += 1
+                        if self.multiTurnBlankCount >= self.maxMultiTurnBlanks {
+                            self.endMultiTurn()
+                        } else {
+                            // Silently re-listen (no TTS prompt for noise)
+                            self.startListening()
+                        }
+                    } else {
+                        self.robotState.mode = .idle
+                        if self.wakeWordTriggered {
+                            self.wakeWordManager.notifyFalseTrigger()
+                            self.wakeWordTriggered = false
+                            self.wakeWordManager.notifyVoiceFlowDone()
+                        }
+                    }
+                    return
+                }
+
                 self.robotState.lastUserText = text
                 self.multiTurnBlankCount = 0   // reset silence counter on valid input
 
@@ -1007,6 +1030,32 @@ class RobotViewModel: ObservableObject {
             sum += s * s
         }
         return sqrt(sum / Float(samples.count))
+    }
+
+    // MARK: - ASR noise filter
+
+    /// Common Chinese filler syllables / interjections that ASR produces for
+    /// environmental noise or non-speech vocalizations ("嗯", "啊", "哦"...).
+    private static let asrNoiseFillers: Set<Character> = [
+        "嗯", "啊", "哦", "噢", "呃", "额", "唉", "哎", "诶", "嘿",
+        "呵", "哈", "哼", "唔", "喔", "哟", "哇", "呀", "耶", "啧", "嘶",
+    ]
+
+    /// True when the ASR result is only filler syllables (optionally
+    /// repeated, possibly with punctuation/whitespace) — i.e. noise rather
+    /// than real user input.
+    private static func isAsrNoise(_ raw: String) -> Bool {
+        let scalars = raw.unicodeScalars.filter { scalar in
+            !CharacterSet.whitespacesAndNewlines.contains(scalar)
+                && !CharacterSet.punctuationCharacters.contains(scalar)
+                && !CharacterSet.symbols.contains(scalar)
+        }
+        let text = String(String.UnicodeScalarView(scalars))
+        // Punctuation-only input is noise too (handled before the empty check).
+        guard !text.isEmpty else { return true }
+        // Every remaining char must be a known filler, e.g. "嗯", "啊哦", "嗯嗯".
+        // (No length cap: a real utterance is never composed only of fillers.)
+        return Set(text).isSubset(of: asrNoiseFillers)
     }
 
     /// Convert an emotion string from the LLM to the Emotion enum.

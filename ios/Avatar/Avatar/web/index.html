@@ -98,10 +98,49 @@
 
   <!-- All JS loaded locally -->
 
+  <!-- Bridge buffer + console forwarding: defined synchronously -->
+  <script>
+  window._pendingMessages = [];
+  window.handleMessage = function(jsonStr) {
+    window._pendingMessages.push(jsonStr);
+  };
+  console.log('sync bridge script executed');
+
+  // Forward console logs to Swift so we can see WebView errors in Xcode.
+  (function() {
+    const _log = console.log.bind(console);
+    const _warn = console.warn.bind(console);
+    const _error = console.error.bind(console);
+    function forward(level, args) {
+      const msg = Array.from(args).map(function(a) {
+        try { return typeof a === 'object' ? JSON.stringify(a) : String(a); }
+        catch(e) { return String(a); }
+      }).join(' ');
+      // Use sendEvent — it posts through the bridge message handler
+      var ev = { type: 'log', level: level, text: level + ': ' + msg };
+      if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.bridge) {
+        window.webkit.messageHandlers.bridge.postMessage(JSON.stringify(ev));
+      }
+    }
+    console.log   = function() { _log.apply(console, arguments); forward('log', arguments); };
+    console.warn  = function() { _warn.apply(console, arguments); forward('warn', arguments); };
+    console.error = function() { _error.apply(console, arguments); forward('error', arguments); };
+    window.onerror = function(msg, url, line, col, err) {
+      var text = 'error: ' + msg + ' at ' + url + ':' + line + ':' + col;
+      if (err && err.stack) text += '\n' + err.stack;
+      _error(msg);
+      if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.bridge) {
+        window.webkit.messageHandlers.bridge.postMessage(JSON.stringify({ type: 'log', level: 'error', text: text }));
+      }
+    };
+  })();
+  </script>
+
   <script type="module">
     import * as THREE from './js/three.module.js';
     import { GLTFLoader } from './js/addons/loaders/GLTFLoader.js';
     import { VRMLoaderPlugin, VRMUtils } from './js/three-vrm.module.js';
+    console.log('module imports OK, THREE=' + (THREE ? THREE.REVISION : 'undefined'));
 
     // ─── Globals ────────────────────────────────────────────
     let vrm = null;
@@ -151,6 +190,16 @@
     // ─── Three.js Setup ─────────────────────────────────────
     const canvas = document.getElementById('canvas');
     const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false });
+    console.log('[diag] isWebGL2=' + renderer.capabilities.isWebGL2 + ', ua=' + navigator.userAgent);
+
+    // iOS 14 is WebGL1-only; three r160 cannot render skinned meshes there,
+    // so the VRM avatar is unavailable. Fall back to the built-in placeholder
+    // character. iOS 15+ (WebGL2) gets the real VRM avatar.
+    let webgl2Unsupported = false;
+    if (!renderer.capabilities.isWebGL2) {
+      webgl2Unsupported = true;
+      console.error('[fallback] WebGL2 not supported (need iOS 15+); using placeholder avatar');
+    }
     // Mobile: use pixel ratio 1 for performance, 2 on high-end devices.
     // iPhone 12 Mini has a high-res screen but A14 GPU handles pixel ratio 2 fine.
     // We cap at 2 and let the frame rate adapt instead.
@@ -556,6 +605,10 @@
     // ─── Status UI ──────────────────────────────────────────
     function updateStatus() {
       const el = document.getElementById('status');
+      if (webgl2Unsupported) {
+        el.textContent = '系统版本低于 iOS 15，已使用简易形象';
+        return;
+      }
       switch (currentMode) {
         case 'idle':      el.textContent = ''; break;
         case 'listening': el.textContent = '聆听中...'; break;
@@ -575,7 +628,7 @@
     }
 
     // ─── JS Bridge: Receive messages from Swift ──────────────
-    window.handleMessage = function(jsonStr) {
+    window._realHandleMessage = function(jsonStr) {
       try {
         const msg = JSON.parse(jsonStr);
         if (msg.cmd === 'fade_out') {
@@ -951,9 +1004,27 @@
     });
 
     // ─── Start ──────────────────────────────────────────────
-    initAvatar().then(() => {
+    if (webgl2Unsupported) {
+      createPlaceholderAvatar();
       animate();
-    });
+    } else {
+      initAvatar().then(() => {
+        animate();
+      });
+    }
+
+    // ─── Bridge: swap in the real handler and flush pending messages ───
+    const pending = window._pendingMessages || [];
+    window.handleMessage = function(jsonStr) {
+      window._realHandleMessage(jsonStr);
+    };
+    if (pending.length > 0) {
+      console.log('[BRIDGE] flushing ' + pending.length + ' pending messages');
+      for (const msg of pending) {
+        window._realHandleMessage(msg);
+      }
+      window._pendingMessages = [];
+    }
 
     // Clean up
     window.addEventListener('beforeunload', () => {
