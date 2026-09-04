@@ -395,19 +395,23 @@
       head.castShadow = true;
       headGroup.add(head);
 
-      const eyeGeo = new THREE.SphereGeometry(0.045, 16, 16);
+      // Face features sit on the +Z side of the head — the front. The
+      // default camera looks down -Z from +Z, so the face must point +Z.
+      // The head sphere surface at eye/mouth height is z ≈ +0.18~+0.19,
+      // so features are pushed past it to stay clearly visible.
+      const eyeGeo = new THREE.SphereGeometry(0.05, 16, 16);
       const eyeMat = new THREE.MeshStandardMaterial({ color: '#111111', roughness: 0.1 });
       const leftEye = new THREE.Mesh(eyeGeo, eyeMat);
-      leftEye.position.set(-0.07, 0.04, -0.17);
+      leftEye.position.set(-0.075, 0.04, 0.16);
       headGroup.add(leftEye);
       const rightEye = new THREE.Mesh(eyeGeo, eyeMat);
-      rightEye.position.set(0.07, 0.04, -0.17);
+      rightEye.position.set(0.075, 0.04, 0.16);
       headGroup.add(rightEye);
 
-      const mouthGeo = new THREE.BoxGeometry(0.1, 0.02, 0.01);
+      const mouthGeo = new THREE.BoxGeometry(0.12, 0.02, 0.03);
       const mouthMat = new THREE.MeshStandardMaterial({ color: '#cc4444', roughness: 0.3 });
       const mouth = new THREE.Mesh(mouthGeo, mouthMat);
-      mouth.position.set(0, -0.06, -0.18);
+      mouth.position.set(0, -0.065, 0.185);
       mouth.name = 'mouth';
       headGroup.add(mouth);
 
@@ -787,13 +791,13 @@
 
     // ─── Auto-fit camera ────────────────────────────────────
     function fitWindowToAvatar() {
-      if (!vrm?.scene) return;
+      // Works for both the VRM avatar and the placeholder character
+      // (whose front — eyes/mouth — faces +Z, toward the default camera).
+      const target = vrm?.scene ?? (window._placeholder ? window._placeholder.group : null);
+      if (!target) return;
 
       const box = new THREE.Box3();
-      scene.traverse((obj) => {
-        if (!obj.isMesh || obj === shadowDisc || obj === gridHelper) return;
-        box.expandByObject(obj);
-      });
+      box.expandByObject(target);
       if (box.isEmpty()) return;
 
       const size = new THREE.Vector3();
