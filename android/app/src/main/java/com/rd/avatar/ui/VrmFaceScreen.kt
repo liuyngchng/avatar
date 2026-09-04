@@ -182,7 +182,11 @@ fun VrmFaceScreen(
                 )
             }
             Spacer(modifier = Modifier.width(2.dp))
-            IconButton(onClick = onSettingsClick) {
+            // Settings button nudged left (extra right padding) for easier reach
+            IconButton(
+                onClick = onSettingsClick,
+                modifier = Modifier.padding(end = 16.dp),
+            ) {
                 Icon(
                     imageVector = Icons.Filled.Settings,
                     contentDescription = "设置",

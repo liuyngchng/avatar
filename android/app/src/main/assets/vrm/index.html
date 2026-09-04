@@ -75,7 +75,7 @@
 <body>
   <div class="loading-overlay" id="loading">
     <div class="loading-spinner"></div>
-    <div class="loading-text">加载中...</div>
+    <div class="loading-text">加载 VRM 模型</div>
   </div>
   <canvas id="canvas"></canvas>
   <div class="status" id="status"></div>
@@ -93,6 +93,8 @@
   <script type="module">
     import * as THREE from 'three';
     import { GLTFLoader } from './js/addons/loaders/GLTFLoader.js';
+    import { FBXLoader } from './js/addons/loaders/FBXLoader.js';
+    import { mixamoVRMRigMap } from './js/mixamoVRMRigMap.js';
     import { OrbitControls } from './js/addons/controls/OrbitControls.js';
     import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm';
 
@@ -130,6 +132,31 @@
     const AVATAR_Y = -0.95;
 
     const avatarBounds = { worldW: 1.1, worldH: 1.7, worldCenter: new THREE.Vector3(0, 0.85, 0) };
+
+    // ─── FBX Animation System ────────────────────────────────
+    let mixer = null;              // THREE.AnimationMixer
+    let animationMap = new Map();  // name → THREE.AnimationAction
+    let currentAnimation = null;   // currently playing action name
+    const animCrossFadeDuration = 0.35; // seconds for cross-fade
+
+    // Idle animation system: after IDLE_ANIM_DELAY seconds of idle, randomly
+    // play FBX animations. When the user interacts, stop and restore the
+    // default standing pose.
+    const IDLE_ANIM_DELAY = 10; // seconds before starting idle animations
+    let idleAnimTimer = 0;     // counts up when in idle mode with no animation
+    let idleAnimActive = false; // true when random idle animations are playing
+    let idleAnimNextSwitch = 0; // time when we should switch to the next random anim
+
+    // Idle animation pool — all 11 FBX animations for random idle playback.
+    const idleAnimPool = [
+      'Bored', 'CrossJumps', 'FightIdle', 'JumpingRope', 'Looking',
+      'LookingAround', 'MagicSpellCasting', 'OffensiveIdle',
+      'SearchingFilesHigh', 'StandingMagicAttack', 'TextingWhileStanding'
+    ];
+
+    // FBX animation toggle — read from URL query parameter.
+    // Defaults to true (enabled). Set enable_fbx=0 to disable.
+    const enableFBX = !(new URLSearchParams(window.location.search).get('enable_fbx') === '0');
 
     // ─── Three.js Setup ─────────────────────────────────────
     const canvas = document.getElementById('canvas');
@@ -237,6 +264,15 @@
 
       buildEmotionMorphMap();
       updateStatus();
+
+      // Load FBX animations and initialize the mixer (if enabled).
+      if (enableFBX) {
+        loadFBXAnimations().then(() => {
+          initAnimationMixer();
+        });
+      } else {
+        console.log('[FBX] FBX animation disabled by config (enable_fbx=0)');
+      }
 
       // Fit camera to the VRM model on mobile.
       setTimeout(() => {
@@ -439,12 +475,31 @@
         const dt = Math.min(clock.getDelta(), 0.1);
         idleTime += dt;
 
+        // Update FBX animation mixer (retargeted skeleton animation).
+        if (mixer) {
+          mixer.update(dt);
+        }
+
         if (vrm) {
           updateVRMBlink(dt);
           updateVRMVisemes(dt);
           updateVRMIdleMicro(dt);
           vrm.update(dt);
           updateEmotionMorphs();
+
+          // Idle animation timer: start random FBX animations after a delay.
+          if (currentMode === 'idle' && mixer && animationMap.size > 0) {
+            if (!idleAnimActive && !isSpeaking) {
+              idleAnimTimer += dt;
+              if (idleAnimTimer >= IDLE_ANIM_DELAY) {
+                startIdleAnimations();
+              }
+            }
+            // Rotate to next random animation when the current one's time is up.
+            if (idleAnimActive && idleAnimNextSwitch > 0 && idleTime >= idleAnimNextSwitch) {
+              playRandomIdleAnim();
+            }
+          }
         } else if (window._placeholder) {
           updatePlaceholderBlink(dt);
           updatePlaceholderMouth(dt);
@@ -540,6 +595,8 @@
     function updateVRMIdleMicro(dt) {
       if (currentMode !== 'idle') return;
       if (!vrm?.scene) return;
+      // When FBX idle animation is playing, the animation drives body movement.
+      if (idleAnimActive) return;
 
       const t = idleTime;
       const breathe = Math.sin(t * 1.4) * 0.008;
@@ -660,6 +717,15 @@
           updateStatus();
           updateSubtitle(msg.speakingText);
 
+          // Stop idle FBX animations when entering conversation modes.
+          if (currentMode !== 'idle') {
+            stopIdleAnimations();
+            idleAnimTimer = 0;
+          } else {
+            // Reset idle timer when returning to idle (fresh countdown).
+            idleAnimTimer = 0;
+          }
+
           if (currentMode === 'speaking' && pendingTimeline) {
             playVisemeTimeline(pendingTimeline);
             pendingTimeline = null;
@@ -726,6 +792,199 @@
       if (!isSpeaking) {
         applyViseme('rest', 0);
       }
+    }
+
+    // ─── FBX Animation Loading & Retargeting ─────────────────
+    // Same approach as the desktop version: Mixamo FBX → VRM skeleton
+    // via quaternion-space retargeting (mixamoVRMRigMap).
+
+    // Stores loaded but not-yet-retargeted clips (name → AnimationClip).
+    let rawClipMap = new Map();
+
+    // Load all FBX animations from /models/animations/.
+    async function loadFBXAnimations() {
+      const animNames = [
+        'Bored', 'CrossJumps', 'FightIdle', 'JumpingRope', 'Looking',
+        'LookingAround', 'MagicSpellCasting', 'OffensiveIdle',
+        'SearchingFilesHigh', 'StandingMagicAttack', 'TextingWhileStanding'
+      ];
+
+      const fbxLoader = new FBXLoader();
+      const results = await Promise.allSettled(
+        animNames.map(name =>
+          fbxLoader.loadAsync(`./models/animations/${name}.fbx`)
+            .then(group => ({ name, group }))
+        )
+      );
+
+      for (const result of results) {
+        if (result.status !== 'fulfilled') {
+          console.warn('FBX load failed:', result.reason?.message);
+          continue;
+        }
+        const { name, group } = result.value;
+        const clips = group.animations;
+        if (!clips || clips.length === 0) {
+          console.warn(`FBX ${name}: no animation clips found`);
+          continue;
+        }
+
+        // Store the raw clip + its FBX group for retargeting.
+        rawClipMap.set(name, { clip: clips[0], group });
+        console.log(`FBX loaded: ${name} (${clips[0].duration.toFixed(1)}s)`);
+      }
+
+      console.log(`FBX animations loaded: ${rawClipMap.size}/${animNames.length}`);
+    }
+
+    // Retarget a single Mixamo AnimationClip to the VRM skeleton using the
+    // official three-vrm approach (quaternion space transform).
+    function retargetMixamoClip(rawClip, fbxGroup, vrm) {
+      const clip = rawClip;
+
+      const tracks = [];
+
+      const restRotationInverse = new THREE.Quaternion();
+      const parentRestWorldRotation = new THREE.Quaternion();
+      const _quatA = new THREE.Quaternion();
+
+      // Adjust position with reference to hips height.
+      const motionHipsNode = fbxGroup.getObjectByName('mixamorigHips');
+      const motionHipsHeight = motionHipsNode ? motionHipsNode.position.y : 0;
+      const vrmHipsY = vrm.humanoid.normalizedRestPose.hips.position[1];
+      const hipsPositionScale = vrmHipsY / (motionHipsHeight || 1);
+
+      clip.tracks.forEach((track) => {
+        const trackSplitted = track.name.split('.');
+        const mixamoRigName = trackSplitted[0];
+        const vrmBoneName = mixamoVRMRigMap[mixamoRigName];
+        const vrmNodeName = vrm.humanoid?.getNormalizedBoneNode(vrmBoneName)?.name;
+        const mixamoRigNode = fbxGroup.getObjectByName(mixamoRigName);
+
+        if (vrmNodeName != null && mixamoRigNode != null) {
+          const propertyName = trackSplitted[1];
+
+          // Store rest-pose world rotations.
+          mixamoRigNode.getWorldQuaternion(restRotationInverse).invert();
+          mixamoRigNode.parent.getWorldQuaternion(parentRestWorldRotation);
+
+          if (track instanceof THREE.QuaternionKeyframeTrack) {
+            for (let i = 0; i < track.values.length; i += 4) {
+              const flatQuaternion = track.values.slice(i, i + 4);
+              _quatA.fromArray(flatQuaternion);
+              _quatA.premultiply(parentRestWorldRotation).multiply(restRotationInverse);
+              _quatA.toArray(flatQuaternion);
+              flatQuaternion.forEach((v, index) => {
+                track.values[index + i] = v;
+              });
+            }
+
+            tracks.push(
+              new THREE.QuaternionKeyframeTrack(
+                `${vrmNodeName}.${propertyName}`,
+                track.times,
+                track.values.map((v, i) => (
+                  vrm.meta?.metaVersion === '0' && i % 2 === 0 ? -v : v
+                )),
+              ),
+            );
+          } else if (track instanceof THREE.VectorKeyframeTrack) {
+            const value = track.values.map(
+              (v, i) => (vrm.meta?.metaVersion === '0' && i % 3 !== 1 ? -v : v) * hipsPositionScale
+            );
+            tracks.push(new THREE.VectorKeyframeTrack(`${vrmNodeName}.${propertyName}`, track.times, value));
+          }
+        }
+      });
+
+      return new THREE.AnimationClip('vrmAnimation', clip.duration, tracks);
+    }
+
+    // Create the AnimationMixer and retarget all loaded clips.
+    function initAnimationMixer() {
+      if (!vrm?.scene) return;
+      if (rawClipMap.size === 0) return;
+
+      mixer = new THREE.AnimationMixer(vrm.scene);
+
+      for (const [name, { clip, group }] of rawClipMap) {
+        const retargetedClip = retargetMixamoClip(clip, group, vrm);
+        const action = mixer.clipAction(retargetedClip);
+        action.setLoop(THREE.LoopRepeat);
+        action.clampWhenFinished = false;
+        animationMap.set(name, action);
+      }
+
+      // Free raw clip data (no longer needed).
+      rawClipMap.clear();
+
+      console.log(`[FBX] AnimationMixer initialized with ${animationMap.size} actions`);
+      console.log(`[FBX] 空闲动画将在 ${IDLE_ANIM_DELAY}s 后开始随机播放`);
+    }
+
+    // ─── Idle Animation Control ─────────────────────────────
+    // Start playing random idle animations. Called when the idle timer expires.
+    function startIdleAnimations() {
+      if (idleAnimActive) return;
+      if (!mixer || animationMap.size === 0) return;
+      idleAnimActive = true;
+      playRandomIdleAnim();
+      console.log('[FBX] 空闲动画开始播放');
+    }
+
+    // Stop all animations and restore the default standing pose.
+    function stopIdleAnimations() {
+      if (!idleAnimActive) return;
+      idleAnimActive = false;
+      idleAnimNextSwitch = 0;
+
+      // Fade out all running actions, then restore the default pose.
+      if (mixer && currentAnimation) {
+        const action = animationMap.get(currentAnimation);
+        if (action && action.isRunning()) {
+          action.fadeOut(animCrossFadeDuration);
+        }
+      }
+      currentAnimation = null;
+
+      // Defer pose restore until after the fadeOut completes.
+      setTimeout(() => {
+        if (!idleAnimActive) {
+          restoreDefaultPose();
+        }
+      }, animCrossFadeDuration * 1000 + 50);
+
+      console.log('[FBX] 空闲动画停止, 恢复默认站姿');
+    }
+
+    // Pick and play a random animation from the idle pool.
+    function playRandomIdleAnim() {
+      if (!mixer || !idleAnimActive) return;
+
+      // Pick a random animation different from the current one.
+      let pool = idleAnimPool;
+      if (currentAnimation && pool.length > 1) {
+        pool = pool.filter(n => n !== currentAnimation);
+      }
+      const animName = pool[Math.floor(Math.random() * pool.length)];
+      const action = animationMap.get(animName);
+      if (!action) return;
+
+      const prevAction = currentAnimation ? animationMap.get(currentAnimation) : null;
+      currentAnimation = animName;
+
+      if (prevAction && prevAction.isRunning()) {
+        action.reset().play();
+        action.crossFadeFrom(prevAction, animCrossFadeDuration, true);
+      } else {
+        action.reset().play();
+        action.setEffectiveWeight(1.0);
+      }
+
+      // Schedule next switch: play for 4-8 seconds.
+      const duration = 4 + Math.random() * 4;
+      idleAnimNextSwitch = idleTime + duration;
+      console.log(`[FBX] 播放动画: ${animName} (${duration.toFixed(1)}s)`);
     }
 
     // ─── Fit camera to model bounding box ─────────────────────

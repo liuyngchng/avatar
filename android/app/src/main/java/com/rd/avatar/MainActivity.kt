@@ -356,12 +356,12 @@ class MainActivity : ComponentActivity() {
             LaunchedEffect(modelsReady) {
                 if (modelsReady && !asrReady) {
                     robotState = robotState.copy(mode = RobotMode.THINKING, emotion = Emotion.SLEEPY)
-                    loadingStatus = "正在加载 ASR 语音识别模型..."
+                    loadingStatus = "加载 ASR 模型"
                     withContext(Dispatchers.IO) {
                         asrReady = asrEngine.initialize()
                     }
                     if (asrReady) {
-                        loadingStatus = "正在加载 TTS 语音合成模型..."
+                        loadingStatus = "加载 TTS 模型"
                         withContext(Dispatchers.IO) {
                             ttsReady = ttsEngine.initialize()
                         }
