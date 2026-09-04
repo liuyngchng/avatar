@@ -53,7 +53,7 @@ data class RobotState(
     /** Last recognized user utterance */
     val lastUserText: String? = null,
 
-    /** Response text to speak */
+    /** Subtitle text: user utterance while thinking, reply while speaking */
     val responseText: String? = null,
 
     /** Blink trigger — UI toggles each time this changes */

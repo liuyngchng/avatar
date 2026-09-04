@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
+import android.os.SystemClock
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -37,6 +38,7 @@ import com.rd.avatar.ui.SettingsHubScreen
 import com.rd.avatar.ui.SettingsScreen
 import com.rd.avatar.ui.TextReaderScreen
 import kotlinx.coroutines.*
+import kotlinx.coroutines.channels.Channel
 import kotlin.random.Random
 
 /** Navigation destinations for the settings stack. */
@@ -68,6 +70,13 @@ class MainActivity : ComponentActivity() {
     @Volatile private var onSpeechEnd: ((String?) -> Unit)? = null
     @Volatile private var lastSpeechChunkCount = 0
     @Volatile private var recordingGeneration = 0
+    // While > now, mic audio is dropped — used while the wake greeting plays
+    // so its echo never reaches the ASR or trips the VAD.
+    @Volatile private var suppressRecordUntil = 0L
+    // True when the current conversation was started by the wake word (not tap).
+    @Volatile private var conversationStartedByWake = false
+    // The job currently playing a reply — cancelled for tap-to-interrupt.
+    @Volatile private var currentSpeakJob: Job? = null
 
     // Lifecycle-aware scope
     private val activityScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
@@ -75,7 +84,9 @@ class MainActivity : ComponentActivity() {
     // VAD constants
     companion object {
         private const val VAD_SILENCE_THRESHOLD = 0.022f
-        private const val VAD_MAX_SILENT_CHUNKS = 20
+        // 12 × ~80ms ≈ 1s of trailing silence ends the turn (was 20 → ~3.2s
+        // with the old 4× recorder buffers, which felt like the robot was deaf).
+        private const val VAD_MAX_SILENT_CHUNKS = 12
         private const val NOISE_CALIBRATION_CHUNKS = 20
         private const val MAX_RECORD_SECONDS = 10f
         // Multi-turn conversation: if no one speaks within this time, go to sleep.
@@ -130,33 +141,172 @@ class MainActivity : ComponentActivity() {
                     delay(CONVERSATION_TIMEOUT_MS)
                     Log.i("MainActivity", "Conversation timeout (${CONVERSATION_TIMEOUT_MS}ms) — going to sleep")
                     conversationActive = false
+                    conversationStartedByWake = false
                     stopRecording { } // stop any in-progress recording
                     WakeWordManager.notifyVoiceFlowDone()
                     audioPlayer.stop()
-                    robotState = robotState.copy(mode = RobotMode.IDLE, isSpeaking = false)
+                    robotState = robotState.copy(mode = RobotMode.IDLE, isSpeaking = false, responseText = null)
                 }
             }
 
             /** End the conversation and return to idle. */
             fun endConversation() {
                 conversationActive = false
+                conversationStartedByWake = false
                 conversationTimeoutJob?.cancel()
                 conversationTimeoutJob = null
                 WakeWordManager.notifyVoiceFlowDone()
-                robotState = robotState.copy(mode = RobotMode.IDLE, isSpeaking = false)
+                robotState = robotState.copy(mode = RobotMode.IDLE, isSpeaking = false, responseText = null)
             }
 
             // ─── Speech result handler ─────────────────────────────────
             var onSpeechResult: ((String?) -> Unit)? = null
+
+            /** After a reply finishes: brief cooldown, then auto-listen (or idle). */
+            fun afterSpeaking() {
+                if (conversationActive) {
+                    scope.launch {
+                        delay(300)  // short cooldown so the reply's reverb dies out
+                        robotState = robotState.copy(
+                            mode = RobotMode.LISTENING, isSpeaking = false, responseText = null
+                        )
+                        startRecording(onSpeechResult!!)
+                    }
+                } else {
+                    robotState = robotState.copy(mode = RobotMode.IDLE, isSpeaking = false, responseText = null)
+                }
+            }
+
+            /**
+             * Speak a reply to [userText]: stream the LLM response, synthesize
+             * sentence by sentence, and play each sentence while the next one
+             * synthesizes (pipelined). The subtitle grows sentence by sentence.
+             * Falls back to the rule engine when the LLM is unavailable/fails.
+             * Cancelled by tap-to-interrupt via [currentSpeakJob].
+             */
+            suspend fun speakReply(userText: String, onDone: () -> Unit) {
+                if (!configRepository.hasConfig) {
+                    val (response, emotion) = behaviorEngine.respond(userText)
+                    robotState = robotState.copy(
+                        mode = RobotMode.SPEAKING, responseText = response,
+                        emotion = emotion, isSpeaking = true
+                    )
+                    speak(response, onDone)
+                    return
+                }
+
+                val streamResult = chatSession.sendStream(userText)
+                if (streamResult.isFailure) {
+                    Log.w("MainActivity", "LLM stream setup failed, falling back to rules",
+                        streamResult.exceptionOrNull())
+                    val (response, emotion) = behaviorEngine.respond(userText)
+                    robotState = robotState.copy(
+                        mode = RobotMode.SPEAKING, responseText = response,
+                        emotion = emotion, isSpeaking = true
+                    )
+                    speak(response, onDone)
+                    return
+                }
+
+                val flow = streamResult.getOrThrow()
+                val sr = ttsEngine.getSampleRate()
+                val queue = Channel<SpeechChunk>(capacity = 2)
+
+                // Producer: stream text → complete sentences → synthesized PCM.
+                // Runs ahead of playback so the next sentence is ready in time.
+                val producer = scope.launch(Dispatchers.IO) {
+                    var acc = ""
+                    try {
+                        flow.collect { delta ->
+                            acc += delta
+                            val (complete, rest) = TextNormalizer.extractCompleteSentences(acc)
+                            if (complete.isNotEmpty()) {
+                                acc = rest
+                                for (sentence in complete) {
+                                    val normalized = TextNormalizer.normalize(sentence)
+                                    if (normalized.isBlank()) continue
+                                    val pcm = ttsEngine.synthesize(normalized)
+                                    if (pcm != null) queue.send(SpeechChunk(pcm, sentence))
+                                }
+                            }
+                        }
+                        // Stream finished — flush whatever remains.
+                        val last = acc.trim()
+                        if (last.isNotBlank()) {
+                            val normalized = TextNormalizer.normalize(last)
+                            if (normalized.isNotBlank()) {
+                                val pcm = ttsEngine.synthesize(normalized)
+                                if (pcm != null) queue.send(SpeechChunk(pcm, last))
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Log.w("MainActivity", "LLM stream error, speaking what arrived", e)
+                    } finally {
+                        queue.close()
+                    }
+                }
+
+                // Consumer: play sentences in order; the subtitle shows the
+                // text spoken so far (progressive, not the whole reply at once).
+                val spokenText = StringBuilder()
+                var spoken = false
+                try {
+                    for (chunk in queue) {
+                        spokenText.append(chunk.text)
+                        if (!spoken) {
+                            spoken = true
+                            robotState = robotState.copy(
+                                mode = RobotMode.SPEAKING, emotion = Emotion.HAPPY, isSpeaking = true
+                            )
+                        }
+                        robotState = robotState.copy(responseText = spokenText.toString())
+                        val durationMs = (chunk.pcm.size.toLong() * 1000 / sr).toInt()
+                        val timeline = VisemeGenerator.generateVisemeTimeline(chunk.text, durationMs)
+                        if (timeline != null) {
+                            vrmController.sendVisemeTimeline(timeline)
+                        }
+                        audioPlayer.play(chunk.pcm, sr)
+                    }
+                } catch (e: CancellationException) {
+                    throw e  // tap-to-interrupt: finally below persists partial text
+                } catch (e: Exception) {
+                    Log.w("MainActivity", "Playback error, ending turn", e)
+                } finally {
+                    producer.cancel()
+                    // Persist whatever was actually delivered (partial on interrupt).
+                    if (spokenText.isNotEmpty()) {
+                        chatSession.appendAssistantReply(spokenText.toString())
+                    }
+                }
+
+                if (spoken) {
+                    onDone()
+                } else {
+                    // Stream produced nothing usable — fall back to rules.
+                    val (response, emotion) = behaviorEngine.respond(userText)
+                    robotState = robotState.copy(
+                        mode = RobotMode.SPEAKING, responseText = response,
+                        emotion = emotion, isSpeaking = true
+                    )
+                    speak(response, onDone)
+                }
+            }
+
             onSpeechResult = onResult@ { text ->
                 // Minimum-speech gate: filter out echo/reverb.
                 val minSpeechChunks = 6  // ~500ms at ~80ms/buffer
                 if (lastSpeechChunkCount < minSpeechChunks) {
                     Log.i("MainActivity",
                         "Utterance too short (${lastSpeechChunkCount} chunks < $minSpeechChunks), treating as echo")
+                    if (conversationStartedByWake) {
+                        conversationStartedByWake = false
+                        WakeWordManager.notifyFalseTrigger()
+                    }
                     if (conversationActive) {
                         // Still in conversation — go back to listening.
-                        robotState = robotState.copy(mode = RobotMode.LISTENING, isSpeaking = false)
+                        robotState = robotState.copy(
+                            mode = RobotMode.LISTENING, isSpeaking = false, responseText = null
+                        )
                         startRecording(onSpeechResult!!)
                     }
                     return@onResult
@@ -164,51 +314,36 @@ class MainActivity : ComponentActivity() {
 
                 if (text != null && text.isNotBlank()) {
                     resetConversationTimeout()
+                    if (conversationStartedByWake) {
+                        conversationStartedByWake = false
+                        WakeWordManager.notifyProductiveWake()
+                    }
+                    // Show what was heard while thinking (subtitle feedback),
+                    // then swap to the reply as it streams in.
                     robotState = robotState.copy(
                         mode = RobotMode.THINKING,
                         lastUserText = text,
+                        responseText = text,
                         emotion = Emotion.CURIOUS,
                         isSpeaking = false
                     )
-                    scope.launch {
-                        val (response, emotion) = if (configRepository.hasConfig) {
-                            chatSession.send(text).fold(
-                                onSuccess = { it to Emotion.HAPPY },
-                                onFailure = { e ->
-                                    Log.w("MainActivity", "LLM fail, fallback to rules", e)
-                                    behaviorEngine.respond(text)
-                                }
-                            )
-                        } else {
-                            behaviorEngine.respond(text)
-                        }
-                        robotState = robotState.copy(
-                            mode = RobotMode.SPEAKING,
-                            responseText = response,
-                            emotion = emotion,
-                            isSpeaking = true
-                        )
-                        speak(response) {
-                            if (conversationActive) {
-                                // Post-speech cooldown, then auto-listen.
-                                scope.launch {
-                                    delay(800)
-                                    robotState = robotState.copy(mode = RobotMode.LISTENING, isSpeaking = false)
-                                    startRecording(onSpeechResult!!)
-                                }
-                            } else {
-                                robotState = robotState.copy(mode = RobotMode.IDLE, isSpeaking = false)
-                            }
-                        }
+                    currentSpeakJob = scope.launch {
+                        speakReply(text) { afterSpeaking() }
                     }
                 } else {
                     // Blank / empty speech
+                    if (conversationStartedByWake) {
+                        conversationStartedByWake = false
+                        WakeWordManager.notifyFalseTrigger()
+                    }
                     if (conversationActive) {
                         // Go back to listening — timeout will fire if user stays silent.
-                        robotState = robotState.copy(mode = RobotMode.LISTENING, isSpeaking = false)
+                        robotState = robotState.copy(
+                            mode = RobotMode.LISTENING, isSpeaking = false, responseText = null
+                        )
                         startRecording(onSpeechResult!!)
                     } else {
-                        robotState = robotState.copy(mode = RobotMode.IDLE)
+                        robotState = robotState.copy(mode = RobotMode.IDLE, responseText = null)
                     }
                 }
             }
@@ -290,7 +425,7 @@ class MainActivity : ComponentActivity() {
                                 mode = RobotMode.SPEAKING, responseText = remark, isSpeaking = true
                             )
                             speak(remark) {
-                                robotState = robotState.copy(mode = RobotMode.IDLE, isSpeaking = false)
+                                robotState = robotState.copy(mode = RobotMode.IDLE, isSpeaking = false, responseText = null)
                             }
                         }
                     }
@@ -326,30 +461,40 @@ class MainActivity : ComponentActivity() {
                     Log.i("MainActivity", "Wake word triggered — starting conversation")
 
                     conversationActive = true
+                    conversationStartedByWake = true
                     resetConversationTimeout()
                     // Pause KWS so ASR can use the mic. VoiceService stays alive
                     // and will resume KWS when the conversation ends.
                     WakeWordManager.notifyPause()
 
-                    // Greeting TTS
-                    val greetingPcm = withContext(Dispatchers.IO) {
-                        ttsEngine.synthesize("哎，我在呢")
-                    }
-                    if (greetingPcm != null) {
-                        robotState = robotState.copy(mode = RobotMode.SPEAKING, isSpeaking = true)
-                        val sr = ttsEngine.getSampleRate()
-                        val greetingDurMs = (greetingPcm.size.toLong() * 1000 / sr).toInt()
-                        val timeline = VisemeGenerator.generateVisemeTimeline("哎，我在呢", greetingDurMs)
-                        if (timeline != null) {
-                            vrmController.sendVisemeTimeline(timeline)
-                        }
-                        withContext(Dispatchers.IO) {
-                            audioPlayer.play(greetingPcm, sr)
-                        }
-                    }
-                    delay(800)  // post-speech cooldown
-                    robotState = robotState.copy(mode = RobotMode.LISTENING, isSpeaking = false)
+                    // Listen IMMEDIATELY — the user's first words after the
+                    // wake word must not be lost to greeting synthesis.
+                    robotState = robotState.copy(
+                        mode = RobotMode.LISTENING, isSpeaking = false, responseText = null
+                    )
                     startRecording(onSpeechResult)
+
+                    // Greeting plays as a concurrent overlay; the mic stays open.
+                    scope.launch {
+                        val greetingPcm = withContext(Dispatchers.IO) {
+                            ttsEngine.synthesize("哎，我在呢")
+                        }
+                        if (greetingPcm != null) {
+                            val sr = ttsEngine.getSampleRate()
+                            val greetingDurMs = (greetingPcm.size.toLong() * 1000 / sr).toInt()
+                            // Drop mic audio while the greeting plays (+ a small
+                            // tail) so its echo never reaches the ASR or VAD.
+                            suppressRecordUntil =
+                                SystemClock.elapsedRealtime() + greetingDurMs + 250L
+                            val timeline = VisemeGenerator.generateVisemeTimeline("哎，我在呢", greetingDurMs)
+                            if (timeline != null) {
+                                vrmController.sendVisemeTimeline(timeline)
+                            }
+                            withContext(Dispatchers.IO) {
+                                audioPlayer.play(greetingPcm, sr)
+                            }
+                        }
+                    }
                 }
             }
 
@@ -377,13 +522,17 @@ class MainActivity : ComponentActivity() {
                                     stopRecording { onSpeechResult(it) }
                                 }
                                 RobotMode.SPEAKING -> {
-                                    // Stop TTS.
+                                    // Stop TTS and cancel the whole reply pipeline
+                                    // (otherwise remaining queued sentences keep playing).
+                                    currentSpeakJob?.cancel()
                                     audioPlayer.stop()
                                     if (conversationActive) {
                                         // Still in conversation — go to listening.
                                         scope.launch {
                                             delay(300)
-                                            robotState = robotState.copy(mode = RobotMode.LISTENING, isSpeaking = false)
+                                            robotState = robotState.copy(
+                                                mode = RobotMode.LISTENING, isSpeaking = false, responseText = null
+                                            )
                                             startRecording(onSpeechResult)
                                         }
                                         robotState = robotState.copy(isSpeaking = false)
@@ -403,7 +552,9 @@ class MainActivity : ComponentActivity() {
                                     conversationActive = true
                                     resetConversationTimeout()
                                     startRecording { onSpeechResult(it) }
-                                    robotState = robotState.copy(mode = RobotMode.LISTENING)
+                                    robotState = robotState.copy(
+                                        mode = RobotMode.LISTENING, responseText = null
+                                    )
                                 }
                             }
                         },
@@ -463,7 +614,7 @@ class MainActivity : ComponentActivity() {
                                 mode = RobotMode.SPEAKING, responseText = text, isSpeaking = true
                             )
                             speak(text) {
-                                robotState = robotState.copy(mode = RobotMode.IDLE, isSpeaking = false)
+                                robotState = robotState.copy(mode = RobotMode.IDLE, isSpeaking = false, responseText = null)
                             }
                         }
                     )
@@ -534,7 +685,7 @@ class MainActivity : ComponentActivity() {
         isRecording = true
         onSpeechEnd = onResult
         var silentChunks = 0
-        var warmupBuffers = 5
+        var warmupBuffers = 2  // ~160ms: skip the mic ramp click without eating real speech
         var speechChunkCount = 0
         val effectiveThreshold = calibratedNoiseThreshold
 
@@ -553,6 +704,12 @@ class MainActivity : ComponentActivity() {
                 }
 
                 audioRecorder.startRecording().collect { samples ->
+                    // While the wake greeting is playing, drop mic audio so its
+                    // echo doesn't reach the ASR or trip the VAD.
+                    if (SystemClock.elapsedRealtime() < suppressRecordUntil) {
+                        return@collect
+                    }
+
                     if (warmupBuffers > 0) {
                         warmupBuffers--
                         return@collect
@@ -591,14 +748,23 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun stopRecording(onResult: (String?) -> Unit) {
-        recordingGeneration++
+        val myGeneration = ++recordingGeneration
         isRecording = false
-        onSpeechEnd = onResult
-        recordingJob?.cancel()
+        onSpeechEnd = null
+        val job = recordingJob
         recordingJob = null
         audioRecorder.stopRecording()
-        onSpeechEnd = null
-        onResult(null)
+        // Let the cancelled collect loop fully release the AudioRecord, then
+        // finalize ASR ourselves — this is the tap-to-submit path and must
+        // return the actual recognized text instead of throwing it away.
+        activityScope.launch(Dispatchers.IO) {
+            try { job?.join() } catch (_: Exception) {}
+            // A new recording session started meanwhile — leave its ASR state alone.
+            if (recordingGeneration != myGeneration) return@launch
+            val text = try { asrEngine.inputFinished() } catch (_: Exception) { null }
+            if (recordingGeneration != myGeneration) return@launch
+            withContext(Dispatchers.Main) { onResult(text) }
+        }
     }
 
     // ── TTS playback (sentence-by-sentence streaming) ─────────────────
@@ -606,7 +772,7 @@ class MainActivity : ComponentActivity() {
     private fun speak(text: String, onDone: (() -> Unit)? = null) {
         if (!ttsReady) return
         val sentences = TextNormalizer.splitSentences(text)
-        activityScope.launch(Dispatchers.IO) {
+        currentSpeakJob = activityScope.launch(Dispatchers.IO) {
             val sr = ttsEngine.getSampleRate()
             for (sentence in sentences) {
                 val normalized = TextNormalizer.normalize(sentence)
@@ -631,3 +797,6 @@ class MainActivity : ComponentActivity() {
         ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) ==
             PackageManager.PERMISSION_GRANTED
 }
+
+/** One synthesized sentence of a reply, paired with its display text. */
+private class SpeechChunk(val pcm: FloatArray, val text: String)

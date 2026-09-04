@@ -21,7 +21,9 @@ class AudioRecorder(private val context: Context) {
         const val SAMPLE_RATE = 16000
         const val CHANNEL_CONFIG = AudioFormat.CHANNEL_IN_MONO
         const val AUDIO_FORMAT = AudioFormat.ENCODING_PCM_16BIT
-        const val BUFFER_SIZE_FACTOR = 4
+        // 2 × minBufSize ≈ 80ms chunks at 16kHz. Small chunks keep the VAD
+        // end-of-speech tail short (the old factor 4 made it ~3.2s).
+        const val BUFFER_SIZE_FACTOR = 2
 
         fun isPermissionGranted(context: Context): Boolean =
             ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
