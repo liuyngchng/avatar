@@ -31,6 +31,7 @@ echo "✔ OK: avatar-ui built"
 
 # ─── 5. Build avatar-desktop (Go, garble 混淆) ─────────────────────
 echo "🔨 Building avatar-desktop (garble obfuscated)..."
+go mod download
 GOTOOLCHAIN=local GOGARBLE=github.com/liuyngchng/avatar-desktop \
   go run mvdan.cc/garble@v0.14.2 -literals build -o avatar-desktop .
 echo "✔ OK: avatar-desktop built"

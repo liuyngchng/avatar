@@ -72,6 +72,7 @@ desktop/models/*
 !desktop/models/README.md
 desktop/cfg.yml
 desktop/dist/
+desktop/build/
 
 # ── Web (Go) ───────────────────────────────────────────
 web/avatar-server
