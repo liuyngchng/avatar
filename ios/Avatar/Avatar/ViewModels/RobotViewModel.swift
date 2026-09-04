@@ -322,7 +322,7 @@ class RobotViewModel: ObservableObject {
 
     func onTap() {
         guard enginesReady else {
-            // Silently ignore taps while engines are loading ("小火正在醒来...");
+            // Silently ignore taps while engines are loading ("小然正在醒来...");
             // only show an error if initialization completed but failed.
             if !isInitializingEngines {
                 errorMessage = "模型加载失败，请检查模型文件"

@@ -24,8 +24,8 @@ class WakeWordEngine {
         static let energyHangoverBuffers: Int = 6
     }
 
-    // Keywords definition (same as Android: "小火小火")
-    private let keywordsText = "x iǎo h uǒ x iǎo h uǒ @小火小火"
+    // Keywords definition: "小然小然"
+    private let keywordsText = "x iǎo r án x iǎo r án @小然小然"
 
     private var spotterPtr: OpaquePointer?
 

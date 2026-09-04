@@ -169,7 +169,7 @@ func findFile(dir, keyword, suffix string) string {
 // GenerateWakeWord generates a sherpa-onnx wake word string from a Chinese name.
 // The format is: "initial final initial final ... @name+name" (name repeated twice).
 // The initial and final are separated by spaces, with tone marks preserved on the
-// final (e.g. "x iǎo h uǒ @小火小火").
+// final (e.g. "x iǎo r án @小然小然").
 //
 // If the name is empty, returns an empty string.
 // If the name contains non-Chinese characters, they are skipped.
@@ -219,7 +219,7 @@ func GenerateWakeWord(name string) string {
 }
 
 // splitPinyinTone splits a pinyin syllable with tone into initial (声母) and
-// final with tone (韵母+声调). e.g. "xiǎo" → ("x", "iǎo"), "huǒ" → ("h", "uǒ").
+// final with tone (韵母+声调). e.g. "xiǎo" → ("x", "iǎo"), "rán" → ("r", "án").
 // This preserves tone marks on the final, unlike the viseme splitter which
 // strips them.
 func splitPinyinTone(py string) (initial, final string) {

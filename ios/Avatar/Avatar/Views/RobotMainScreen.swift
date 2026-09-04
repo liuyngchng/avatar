@@ -82,7 +82,7 @@ struct RobotMainScreen: View {
                         // Bottom: status text
                         let statusText: String = {
                             if !viewModel.enginesReady {
-                                return "小火正在醒来..."
+                                return "小然正在醒来..."
                             }
                             switch viewModel.robotState.mode {
                             case .listening:

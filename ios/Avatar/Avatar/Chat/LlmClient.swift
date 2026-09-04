@@ -41,7 +41,7 @@ class LlmClient {
         df.locale = Locale(identifier: "zh_CN")
         df.dateFormat = "yyyy年M月d日 EEEE"
         let now = df.string(from: Date())
-        let base = "你是一个语音助手，名字叫「小火」。用口语化的中文回复，自然友好、直接明了。" +
+        let base = "你是一个语音助手，名字叫「小然」。用口语化的中文回复，自然友好、直接明了。" +
             "闲聊或简单问题控制在1-3句话（80字以内）；" +
             "知识类问题可以适当展开解释，但保持简洁，不超过150字。" +
             "围绕用户的问题回答，不要偏离话题。" +

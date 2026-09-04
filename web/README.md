@@ -39,7 +39,7 @@ llm:
   api_key: "sk-xxx"                       # API 密钥
   model: "deepseek-v4-flash"              # 模型名称
 
-wake_word: "x iǎo h uǒ x iǎo h uǒ @小火小火"
+wake_word: "x iǎo r án x iǎo r án @小然小然"
 
 # ASR 语音识别
 asr:

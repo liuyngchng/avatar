@@ -102,7 +102,7 @@ RobotMode + Emotion (状态机驱动)
 | **RobotViewModel** | 主状态机，编排各模块 | Combine + Swift Concurrency / Coroutines |
 | **SherpaAsrEngine** | 离线语音识别 | sherpa-onnx SenseVoiceSmall |
 | **SherpaTtsEngine** | 离线语音合成 | sherpa-onnx Matcha-TTS + vocos |
-| **WakeWordEngine** | 唤醒词检测 ("小火小火") | sherpa-onnx Zipformer KWS |
+| **WakeWordEngine** | 唤醒词检测 ("小然小然") | sherpa-onnx Zipformer KWS |
 | **WakeWordManager** | 唤醒状态管理 + 自适应防抖 | Combine / StateFlow |
 | **ChatSession** | 对话管理 | LLM HTTP streaming |
 | **BehaviorEngine** | 规则对话 (无 LLM 时的后备) | 关键词匹配 |
