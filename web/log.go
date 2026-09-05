@@ -167,23 +167,31 @@ func isLoggingPackage(file string) bool {
 	return false
 }
 
-// appendFileLine appends "<basename>:<line> " to buf, stripping the
-// ".go" suffix from the basename so it reads "main:287" instead of
-// "main.go:287".
+// appendFileLine appends "<dir-initials>/<basename>:<line> " to buf.
+// Each directory component becomes its first letter, e.g.
+// "internal/brain/statemachine.go" → "i/b/statemachine:247".
 func appendFileLine(buf []byte, file string, line int) []byte {
-	// Strip leading path segments, keep only the basename.
-	short := file
-	for i := len(short) - 1; i >= 0; i-- {
-		if short[i] == '/' {
-			short = short[i+1:]
-			break
+	// Split path into segments, keep first letter of each directory
+	// and the full basename (without .go suffix).
+	start := 0
+	for i := 0; i < len(file); i++ {
+		if file[i] == '/' {
+			if i > start {
+				buf = append(buf, file[start]) // first letter of directory
+				buf = append(buf, '/')
+			}
+			start = i + 1
 		}
 	}
-	// Strip ".go" suffix.
-	if len(short) > 3 && short[len(short)-3:] == ".go" {
-		short = short[:len(short)-3]
+	// Basename (the last segment).
+	if start < len(file) {
+		basename := file[start:]
+		// Strip ".go" suffix.
+		if len(basename) > 3 && basename[len(basename)-3:] == ".go" {
+			basename = basename[:len(basename)-3]
+		}
+		buf = append(buf, basename...)
 	}
-	buf = append(buf, short...)
 	buf = append(buf, ':')
 	buf = strconv.AppendInt(buf, int64(line), 10)
 	buf = append(buf, ' ')
