@@ -81,7 +81,7 @@ func newPlatformRenderer(webFS fs.FS, enableFBX bool) (Renderer, error) {
 	if !enableFBX {
 		url += "?enable_fbx=0"
 	}
-	slog.Info("renderer serving", "url", url)
+	slog.Info("renderer_serving", "url", url)
 
 	// Locate and start the C UI child process.
 	uiBin, err := findUIBinary()
@@ -129,13 +129,13 @@ func newPlatformRenderer(webFS fs.FS, enableFBX bool) (Renderer, error) {
 			}
 			var ev brain.Event
 			if err := json.Unmarshal([]byte(line), &ev); err != nil {
-				slog.Warn("renderer bad message from UI", "error", err, "raw", line)
+				slog.Warn("renderer_bad_message_from_ui", "error", err, "raw", line)
 				continue
 			}
 			select {
 			case r.events <- ev:
 			default:
-				slog.Warn("renderer dropping event channel full", "type", ev.Type)
+				slog.Warn("renderer_dropping_event_channel_full", "type", ev.Type)
 			}
 		}
 		// stdout closed (UI exited) — unblock Run() if it's still waiting.
@@ -155,7 +155,7 @@ func newPlatformRenderer(webFS fs.FS, enableFBX bool) (Renderer, error) {
 func (r *gtkRenderer) SendMessage(msg any) {
 	data, err := json.Marshal(msg)
 	if err != nil {
-		slog.Warn("renderer marshal error", "error", err)
+		slog.Warn("renderer_send_message_marshal_error", "error", err)
 		return
 	}
 	js := "if(window.handleMessage)handleMessage(" + strconv.Quote(string(data)) + ")"
@@ -172,11 +172,11 @@ func (r *gtkRenderer) writeCommand(cmd any) {
 	}
 	data, err := json.Marshal(cmd)
 	if err != nil {
-		slog.Warn("renderer marshal error", "error", err)
+		slog.Warn("renderer_write_command_marshal_error", "error", err)
 		return
 	}
 	if _, err := r.stdin.Write(append(data, '\n')); err != nil {
-		slog.Warn("renderer write to UI failed", "error", err)
+		slog.Warn("renderer_write_to_ui_failed", "error", err)
 	}
 }
 

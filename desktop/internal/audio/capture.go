@@ -89,7 +89,7 @@ func NewCapture(cfg CaptureConfig) (*Capture, error) {
 		return nil, err
 	}
 
-	slog.Info("audio capture opened", "device", cfg.Device, "rate", cfg.SampleRate, "channels", cfg.Channels, "bufferMs", cfg.BufferMs)
+	slog.Info("audio_capture_opened", "device", cfg.Device, "rate", cfg.SampleRate, "channels", cfg.Channels, "bufferMs", cfg.BufferMs)
 	return c, nil
 }
 
@@ -183,7 +183,7 @@ func (c *Capture) loop() {
 			// xrun or error — try to recover.
 			rec := C.snd_pcm_recover(c.handle, C.int(n), 1)
 			if rec < 0 {
-				slog.Warn("audio capture error", "error", alsaStrError(rec))
+				slog.Warn("audio_capture_error", "error", alsaStrError(rec))
 				return
 			}
 			continue
@@ -231,7 +231,7 @@ func (c *Capture) Close() {
 	if c.handle != nil {
 		C.snd_pcm_close(c.handle)
 		c.handle = nil
-		slog.Info("audio capture closed")
+		slog.Info("audio_capture_closed")
 	}
 }
 

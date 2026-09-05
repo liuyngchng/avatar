@@ -30,14 +30,14 @@ func NewPlayer(sampleRate int) (*Player, error) {
 	if err != nil {
 		return nil, err
 	}
-	slog.Info("audio player created", "sample_rate", sampleRate)
+	slog.Info("audio_player_created", "sample_rate", sampleRate)
 	return &Player{ctx: ctx, ready: ready}, nil
 }
 
 // WaitReady blocks until the audio context is ready.
 func (p *Player) WaitReady() {
 	<-p.ready
-	slog.Info("audio player ready")
+	slog.Info("audio_player_ready")
 }
 
 // float32ToBytes converts normalized float32 samples in [-1, 1] to
@@ -89,7 +89,7 @@ func waitDone(player *oto.Player) error {
 func (p *Player) Close() {
 	if p.ctx != nil {
 		if err := p.ctx.Suspend(); err != nil {
-			slog.Warn("audio player suspend error", "error", err)
+			slog.Warn("audio_player_suspend_error", "error", err)
 		}
 	}
 }

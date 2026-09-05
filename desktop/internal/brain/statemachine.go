@@ -109,7 +109,7 @@ func NewStateMachine(
 	if capture != nil {
 		ch, err := capture.Start()
 		if err != nil {
-			slog.Warn("state audio capture start error", "error", err)
+			slog.Warn("fsm_capture_start_error", "error", err)
 		} else {
 			sm.audioSink = ch
 		}
@@ -128,7 +128,7 @@ func (sm *StateMachine) Run() {
 	sm.emit()
 
 	if sm.audioSink == nil {
-		slog.Info("state no audio capture, event-only mode")
+		slog.Info("fsm_no_audio_capture_event_only_mode")
 		for {
 			select {
 			case ev := <-sm.events:
@@ -139,7 +139,7 @@ func (sm *StateMachine) Run() {
 		}
 	}
 
-	slog.Info("state FSM running, audio capture active")
+	slog.Info("fsm_running_audio_capture_active")
 
 	for {
 		select {
@@ -148,7 +148,7 @@ func (sm *StateMachine) Run() {
 
 		case samples, ok := <-sm.audioSink:
 			if !ok {
-				slog.Info("state audio channel closed, FSM exiting")
+				slog.Info("fsm_audio_channel_closed_exiting")
 				return
 			}
 
@@ -169,14 +169,14 @@ func (sm *StateMachine) Run() {
 				if sm.kwsEngine != nil {
 					keyword := sm.kwsEngine.ProcessSamples(samples)
 					if keyword != "" {
-						slog.Info("state KWS detected", "keyword", keyword)
+						slog.Info("kws_detected_keyword", "keyword", keyword)
 						sm.HandleEvent(Event{Type: "wake_detected"})
 					}
 				}
 			}
 
 		case <-sm.done:
-			slog.Info("state FSM shutdown signal, exiting")
+			slog.Info("fsm_shutdown_signal_exiting")
 			return
 		}
 	}
@@ -227,13 +227,13 @@ func (sm *StateMachine) handleEvent(ev Event) {
 		sm.mu.Lock()
 		if sm.busy {
 			sm.mu.Unlock()
-			slog.Info("state event ignored (busy)", "type", ev.Type)
+			slog.Info("fsm_event_ignored_busy", "type", ev.Type)
 			return
 		}
 		sm.busy = true
 		sm.mu.Unlock()
 
-		slog.Info("state event starting conversation turn", "type", ev.Type)
+		slog.Info("fsm_event_starting_conversation_turn", "type", ev.Type)
 
 		// Kick off the conversation turn in a separate goroutine so that
 		// the FSM Run() loop is never blocked.  For wake-word triggers we
@@ -258,7 +258,7 @@ func (sm *StateMachine) sayGreeting() {
 
 	result, err := sm.ttsEngine.Synthesize("哎，我在呢", 1.0)
 	if err != nil {
-		slog.Warn("state greeting TTS error", "error", err)
+		slog.Warn("fsm_greeting_tts_error", "error", err)
 		return
 	}
 
@@ -272,7 +272,7 @@ func (sm *StateMachine) sayGreeting() {
 	}
 
 	if err := sm.audioPlayer.PlaySync(result.Samples); err != nil {
-		slog.Warn("state greeting playback error", "error", err)
+		slog.Warn("fsm_greeting_playback_error", "error", err)
 	}
 
 	sm.mu.Lock()
@@ -298,7 +298,7 @@ func (sm *StateMachine) pipeline() {
 	// stays silent, then fall back to idle (wake-word required again).
 	for turn := 1; ; turn++ {
 		// ── Phase 1: LISTENING — capture audio for ASR ──────────
-		slog.Info("[ASR] 开始聆听...", "turn", turn)
+		slog.Info("asr_listening_start", "turn", turn)
 		sm.setState(ModeListening, EmotionNeutral, "")
 		sm.mu.Lock()
 		sm.state.IsSpeaking = false
@@ -319,7 +319,7 @@ func (sm *StateMachine) pipeline() {
 		sm.mu.Unlock()
 
 		if len(audioSamples) == 0 {
-			slog.Info("state no speech detected, ending conversation")
+			slog.Info("asr_no_speech_detected_ending_conversation")
 			sm.setState(ModeIdle, EmotionNeutral, "")
 			sm.emit()
 			return
@@ -333,17 +333,17 @@ func (sm *StateMachine) pipeline() {
 		if sm.asrEngine != nil {
 			result, err := sm.asrEngine.Decode(audioSamples)
 			if err != nil {
-				slog.Warn("state ASR error", "error", err)
+				slog.Warn("asr_error_ending_conversation", "error", err)
 				sm.setState(ModeIdle, EmotionNeutral, "")
 				sm.emit()
 				return
 			}
 			userText = strings.TrimSpace(result.Text)
-			slog.Info("[ASR] 结束", "result", userText, "lang", result.Lang, "emotion", result.Emotion)
+			slog.Info("asr_result", "text", userText, "lang", result.Lang, "emotion", result.Emotion)
 		}
 
 		if userText == "" {
-			slog.Info("state ASR returned empty text, skipping turn")
+			slog.Info("asr_empty_text_ending_conversation")
 			sm.setState(ModeIdle, EmotionNeutral, "")
 			sm.emit()
 			return
@@ -354,10 +354,10 @@ func (sm *StateMachine) pipeline() {
 		sm.mu.Unlock()
 
 		// Call LLM.
-		slog.Info("[LLM] 请求开始", "user", userText)
+		slog.Info("llm_request_start", "user", userText)
 		llmStart := time.Now()
 		llmText := sm.callLLM(userText)
-		slog.Info("[LLM] 请求结束", "duration", time.Since(llmStart).Round(time.Millisecond), "chars", len(llmText))
+		slog.Info("llm_request_done", "duration", time.Since(llmStart).Round(time.Millisecond), "chars", len(llmText))
 		if llmText == "" {
 			llmText = "你好，我是企业数字人，请问有什么可以帮你的？"
 		}
@@ -369,21 +369,21 @@ func (sm *StateMachine) pipeline() {
 		sm.emit()
 
 		// ── Phase 3: SPEAKING — TTS synthesis + playback ─────────
-		slog.Info("[TTS] 合成开始", "text", cleanText)
+		slog.Info("tts_synthesis_start", "text", cleanText)
 		ttsStart := time.Now()
 		result, err := sm.ttsEngine.Synthesize(cleanText, 1.0)
 		if err != nil {
-			slog.Warn("[TTS] 合成失败", "error", err)
+			slog.Warn("tts_synthesis_failed", "error", err)
 			sm.setState(ModeIdle, EmotionNeutral, "")
 			sm.emit()
 			return
 		}
 
 		audioDurMs := int(float64(len(result.Samples)) / float64(result.SampleRate) * 1000)
-		slog.Info("[TTS] 合成结束", "duration", time.Since(ttsStart).Round(time.Millisecond), "audio_ms", audioDurMs, "samples", len(result.Samples))
+		slog.Info("tts_synthesis_done", "duration", time.Since(ttsStart).Round(time.Millisecond), "audio_ms", audioDurMs, "samples", len(result.Samples))
 		timeline := GenerateVisemeTimeline(cleanText, audioDurMs)
 		if timeline != nil {
-			slog.Info("state viseme timeline", "entries", len(timeline.Timeline), "audio_ms", audioDurMs)
+			slog.Info("viseme_timeline", "entries", len(timeline.Timeline), "audio_ms", audioDurMs)
 			select {
 			case sm.outbound <- timeline:
 			default:
@@ -398,9 +398,9 @@ func (sm *StateMachine) pipeline() {
 		sm.emit()
 
 		if err := sm.audioPlayer.PlaySync(result.Samples); err != nil {
-			slog.Warn("[TTS] 播放错误", "error", err)
+			slog.Warn("tts_playback_error", "error", err)
 		}
-		slog.Info("[TTS] 播放结束", "turn", turn)
+		slog.Info("tts_playback_done", "turn", turn)
 
 		sm.mu.Lock()
 		sm.state.IsSpeaking = false
@@ -439,9 +439,9 @@ func (sm *StateMachine) collectSpeech() []float32 {
 
 	// returns true if we collected enough real speech to be worth decoding.
 	finish := func(why string) []float32 {
-		slog.Info("state collect speech", "reason", why, "speech_buffers", speechCount, "silence_buffers", silentCount, "total_samples", len(allSamples))
+		slog.Info("vad_collect_speech", "reason", why, "speech_buffers", speechCount, "silence_buffers", silentCount, "total_samples", len(allSamples))
 		if speechCount < minSpeechBuffers {
-			slog.Warn("state too little speech, treating as silence", "reason", why)
+			slog.Warn("vad_too_little_speech", "reason", why)
 			return nil
 		}
 		return allSamples
@@ -491,7 +491,7 @@ func (sm *StateMachine) collectSpeech() []float32 {
 // callLLM sends the user text to the LLM and returns the full response.
 func (sm *StateMachine) callLLM(userText string) string {
 	if sm.llmClient == nil || !sm.llmClient.IsConfigured() {
-		slog.Warn("state LLM not configured, using fallback")
+		slog.Warn("llm_not_configured_using_fallback")
 		return ""
 	}
 
@@ -522,17 +522,17 @@ func (sm *StateMachine) callLLM(userText string) string {
 			}
 		case err := <-errCh:
 			if err != nil {
-				slog.Warn("state LLM error", "error", err)
+				slog.Warn("llm_chat_error", "error", err)
 				return ""
 			}
 		case <-sm.done:
-			slog.Info("state LLM cancelled by shutdown")
+			slog.Info("llm_cancelled_by_shutdown")
 			return ""
 		}
 	}
 
 	response := fullText.String()
-	slog.Info("state LLM response", "chars", len(response), "response", truncate(response, 100))
+	slog.Info("llm_response", "chars", len(response), "preview", truncate(response, 100))
 
 	if response != "" {
 		_, cleanText := llm.ParseEmotion(response)

@@ -46,10 +46,10 @@ func New(modelDir string, wakeWord string) (*Engine, error) {
 		}
 	}
 
-	slog.Info("kws encoder", "encoder", encoder)
-	slog.Info("kws decoder", "decoder", decoder)
-	slog.Info("kws joiner", "joiner", joiner)
-	slog.Info("kws tokens", "tokens", tokens)
+	slog.Info("kws_encoder_file", "path", encoder)
+	slog.Info("kws_decoder_file", "path", decoder)
+	slog.Info("kws_joiner_file", "path", joiner)
+	slog.Info("kws_tokens_file", "path", tokens)
 
 	numThreads := 1 // keep low, runs concurrently with ASR/TTS.
 
@@ -87,7 +87,7 @@ func New(modelDir string, wakeWord string) (*Engine, error) {
 		return nil, fmt.Errorf("kws: failed to create keyword stream")
 	}
 
-	slog.Info("kws engine created", "keywords", wakeWord, "num_threads", numThreads)
+	slog.Info("kws_engine_created", "keywords", wakeWord, "num_threads", numThreads)
 
 	return &Engine{
 		spotter:  spotter,
