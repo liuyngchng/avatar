@@ -7,7 +7,7 @@
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     html, body { width: 100%; height: 100%; overflow: hidden; background: transparent; }
-    #canvas { display: block; opacity: 0; transition: opacity 1s ease-out; }
+    #canvas { display: block; position: fixed; top: 0; left: 0; opacity: 0; transition: opacity 1s ease-out; }
     #canvas.visible { opacity: 1; }
     #canvas.fading { opacity: 0; }
 
@@ -45,6 +45,29 @@
     }
     .subtitle.hidden { opacity: 0; }
 
+    /* User-text overlay — ASR transcription of what the user said. */
+    .user-text {
+      position: fixed; bottom: 140px; left: 0; right: 0;
+      text-align: center;
+      color: #ffd97a;
+      font-family: 'PingFang SC', 'Microsoft YaHei', sans-serif;
+      font-size: 18px;
+      font-weight: 500;
+      line-height: 1.5;
+      pointer-events: none;
+      padding: 0 24px;
+      max-width: 100%;
+      text-shadow:
+        -1px -1px 0 rgba(0,0,0,0.85),
+         1px -1px 0 rgba(0,0,0,0.85),
+        -1px  1px 0 rgba(0,0,0,0.85),
+         1px  1px 0 rgba(0,0,0,0.85),
+         0 2px 6px rgba(0,0,0,0.6);
+      transition: opacity 0.3s;
+      word-break: break-word;
+    }
+    .user-text.hidden { opacity: 0; }
+
     /* Loading overlay — shows during VRM model load + first frame. */
     .loading-overlay {
       position: fixed; top: 0; left: 0; width: 100%; height: 100%;
@@ -58,29 +81,66 @@
     }
     .loading-spinner {
       width: 36px; height: 36px;
-      border: 3px solid rgba(255,255,255,0.15);
-      border-top-color: rgba(255,255,255,0.7);
+      border: 3px solid rgba(0,0,0,0.12);
+      border-top-color: rgba(0,0,0,0.5);
       border-radius: 50%;
       animation: spin 0.8s linear infinite;
       margin-bottom: 16px;
     }
     @keyframes spin { to { transform: rotate(360deg); } }
     .loading-text {
-      color: rgba(255,255,255,0.65);
+      color: rgba(0,0,0,0.7);
       font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
       font-size: 15px;
+      font-weight: 500;
+      text-shadow: 0 0 4px rgba(255,255,255,0.8);
+      margin-bottom: 12px;
+    }
+
+    /* Progress bar — shown during VRM model download */
+    .progress-bar-wrap {
+      width: 200px; height: 4px;
+      background: rgba(0,0,0,0.1);
+      border-radius: 2px;
+      overflow: hidden;
+    }
+    .progress-bar-fill {
+      height: 100%; width: 0%;
+      background: rgba(0,0,0,0.4);
+      border-radius: 2px;
+      transition: width 0.2s ease-out;
+    }
+    .progress-text {
+      margin-top: 6px;
+      color: rgba(0,0,0,0.45);
+      font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+      font-size: 12px;
     }
 
     /* Connection indicator */
     .connection {
       position: fixed; top: 12px; right: 16px;
-      display: flex; align-items: center; gap: 6px;
+      display: flex; align-items: center; gap: 8px;
       font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
-      font-size: 12px; color: rgba(255,255,255,0.5);
+      font-size: 14px; color: rgba(0,0,0,0.55);
       pointer-events: none;
+      text-shadow: 0 0 4px rgba(255,255,255,0.8);
     }
-    .connection .dot { width: 8px; height: 8px; border-radius: 50%; background: #f44; }
-    .connection.connected .dot { background: #4f4; }
+    .connection .dot {
+      width: 14px; height: 14px; border-radius: 50%;
+      background: #e33;
+      box-shadow: 0 0 0 3px rgba(227, 51, 51, 0.25);
+    }
+    .connection.connecting .dot {
+      background: #fc0;
+      box-shadow: 0 0 0 3px rgba(252, 204, 0, 0.25);
+      animation: blink 0.8s ease-in-out infinite;
+    }
+    .connection.connected .dot {
+      background: #3c3;
+      box-shadow: 0 0 0 3px rgba(51, 204, 51, 0.25);
+    }
+    @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
 
     /* Fullscreen button */
     .fullscreen-btn {
@@ -115,11 +175,14 @@
   <div class="loading-overlay" id="loading">
     <div class="loading-spinner"></div>
     <div class="loading-text">加载中...</div>
+    <div class="progress-bar-wrap"><div class="progress-bar-fill" id="progressFill"></div></div>
+    <div class="progress-text" id="progressText"></div>
   </div>
   <canvas id="canvas"></canvas>
   <button class="fullscreen-btn" id="fullscreenBtn" title="全屏">⛶</button>
-  <div class="connection" id="connection"><span class="dot"></span><span class="label">断开</span></div>
+  <div class="connection" id="connection"><span class="dot"></span></div>
   <div class="status" id="status"></div>
+  <div class="user-text hidden" id="userText"></div>
   <div class="subtitle hidden" id="subtitle"></div>
   <div class="mic-prompt hidden" id="micPrompt">
     <p>🎤 需要麦克风权限才能与数字人对话</p>
@@ -180,14 +243,28 @@
       };
     }
 
+    let wsConnected = false;
+    let avatarReady = false;
+
     function updateConnectionStatus(connected) {
+      wsConnected = connected;
+      refreshConnectionUI();
+    }
+
+    function setAvatarReady() {
+      avatarReady = true;
+      refreshConnectionUI();
+    }
+
+    function refreshConnectionUI() {
       const el = document.getElementById('connection');
-      if (connected) {
+      el.classList.remove('connecting', 'connected');
+      if (wsConnected && avatarReady) {
         el.classList.add('connected');
-        el.querySelector('.label').textContent = '已连接';
+      } else if (wsConnected) {
+        el.classList.add('connecting');
       } else {
-        el.classList.remove('connected');
-        el.querySelector('.label').textContent = '断开';
+        el.classList.add('connecting');
       }
     }
 
@@ -420,18 +497,43 @@
     shadowDisc.receiveShadow = true;
     scene.add(shadowDisc);
 
-    const gridHelper = new THREE.GridHelper(20, 40, 0x888888, 0xcccccc);
+    const gridHelper = new THREE.GridHelper(20, 40, 0x555555, 0x999999);
     gridHelper.position.y = groundY;
-    gridHelper.material.opacity = 0.18;
+    gridHelper.material.opacity = 0.5;
     gridHelper.material.transparent = true;
     scene.add(gridHelper);
 
     // ─── Load VRM ───────────────────────────────────────────
+    function updateLoadProgress(text, pct) {
+      const elt = document.getElementById('loading');
+      const textEl = elt.querySelector('.loading-text');
+      const fillEl = document.getElementById('progressFill');
+      const pctEl = document.getElementById('progressText');
+      if (textEl) textEl.textContent = text;
+      if (fillEl) fillEl.style.width = pct + '%';
+      if (pctEl) pctEl.textContent = pct > 0 ? pct + '%' : '';
+    }
+
     async function loadVRM(url) {
       const loader = new GLTFLoader();
       loader.register((parser) => new VRMLoaderPlugin(parser));
 
-      const gltf = await loader.loadAsync(url);
+      updateLoadProgress('正在下载模型...', 0);
+
+      const gltf = await new Promise((resolve, reject) => {
+        loader.load(url, resolve,
+          (ev) => {
+            if (ev.total > 0) {
+              const pct = Math.round(ev.loaded / ev.total * 100);
+              updateLoadProgress('正在下载模型...', pct);
+            }
+          },
+          reject
+        );
+      });
+
+      updateLoadProgress('正在初始化...', 100);
+
       vrm = gltf.userData.vrm;
       VRMUtils.removeUnnecessaryVertices(gltf.scene);
       VRMUtils.removeUnnecessaryJoints(gltf.scene);
@@ -476,6 +578,7 @@
       setTimeout(() => {
         canvas.classList.add('visible');
         hideLoading();
+        setAvatarReady();
         console.log('[INFO] 数字人淡入完成');
       }, 300);
     }
@@ -602,6 +705,7 @@
       setTimeout(() => {
         canvas.classList.add('visible');
         hideLoading();
+        setAvatarReady();
       }, 300);
 
       setTimeout(fitWindowToAvatar, 100);
@@ -825,6 +929,16 @@
       }
     }
 
+    function updateUserText(text) {
+      const el = document.getElementById('userText');
+      if (text && text.length > 0) {
+        el.textContent = '💬 ' + text;
+        el.classList.remove('hidden');
+      } else {
+        el.classList.add('hidden');
+      }
+    }
+
     // ─── Handle server messages (WebSocket) ─────────────────
     function handleServerMessage(msg) {
       // State update: { mode, emotion, isSpeaking, speakingText, ... }
@@ -834,6 +948,7 @@
         if (msg.emotion) currentEmotion = msg.emotion;
         updateStatus();
         updateSubtitle(msg.speakingText);
+        updateUserText(msg.lastUserText);
 
         if (currentMode !== 'idle') {
           stopIdleAnimations(); idleAnimTimer = 0;

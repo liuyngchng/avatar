@@ -309,6 +309,7 @@ func (sm *StateMachine) pipeline() {
 		sm.mu.Lock()
 		sm.state.IsSpeaking = false
 		sm.state.SpeakingText = ""
+		sm.state.LastUserText = ""
 		sm.mu.Unlock()
 		sm.emit()
 
@@ -359,6 +360,9 @@ func (sm *StateMachine) pipeline() {
 		sm.mu.Lock()
 		sm.state.LastUserText = userText
 		sm.mu.Unlock()
+		// Emit immediately so the browser can show the ASR text while
+		// the LLM is still thinking (before the speaking state arrives).
+		sm.emit()
 
 		// Call LLM.
 		slog.Info("llm_request_start", "user", userText)
@@ -592,6 +596,9 @@ func (sm *StateMachine) setState(mode Mode, emotion Emotion, responseText string
 	defer sm.mu.Unlock()
 	sm.state.Mode = mode
 	sm.state.Emotion = emotion
+	if mode == ModeIdle {
+		sm.state.LastUserText = ""
+	}
 }
 
 // EmotionFromString converts a string to an Emotion enum.

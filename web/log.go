@@ -167,7 +167,9 @@ func isLoggingPackage(file string) bool {
 	return false
 }
 
-// appendFileLine appends "<basename>:<line> " to buf.
+// appendFileLine appends "<basename>:<line> " to buf, stripping the
+// ".go" suffix from the basename so it reads "main:287" instead of
+// "main.go:287".
 func appendFileLine(buf []byte, file string, line int) []byte {
 	// Strip leading path segments, keep only the basename.
 	short := file
@@ -176,6 +178,10 @@ func appendFileLine(buf []byte, file string, line int) []byte {
 			short = short[i+1:]
 			break
 		}
+	}
+	// Strip ".go" suffix.
+	if len(short) > 3 && short[len(short)-3:] == ".go" {
+		short = short[:len(short)-3]
 	}
 	buf = append(buf, short...)
 	buf = append(buf, ':')

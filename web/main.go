@@ -249,6 +249,12 @@ func main() {
 	server := &http.Server{
 		Addr:    addr,
 		Handler: mux,
+		// Route net/http's own logs (e.g. "TLS handshake error from ...")
+		// through slog.Warn instead of slog.Info. These are routine — the
+		// browser rejects the self-signed cert on the first HTTPS attempt —
+		// so INFO would only add noise; WARN keeps them visible if ever
+		// needed for debugging.
+		ErrorLog: slog.NewLogLogger(slog.Default().Handler(), slog.LevelWarn),
 	}
 
 	// ── Handle SIGINT/SIGTERM ──────────────────────────────
