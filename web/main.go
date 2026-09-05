@@ -40,7 +40,7 @@ const (
 )
 
 func main() {
-	slog.SetDefault(slog.New(newHumanHandler(os.Stderr, slog.LevelInfo)))
+	slog.SetDefault(slog.New(newHumanHandler(os.Stderr, slog.LevelInfo, pkgDir)))
 
 	genCert := flag.Bool("gen-cert", false, "Generate self-signed TLS certificate and exit")
 	flag.Parse()

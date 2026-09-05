@@ -16,30 +16,46 @@ import (
 	"os"
 	"runtime"
 	"strconv"
+	"strings"
 	"sync"
 )
+
+// pkgDir is the absolute path of the directory containing this file, captured
+// at init so source paths can be trimmed to their module-relative form.
+var pkgDir = func() string {
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		return ""
+	}
+	if i := strings.LastIndexByte(file, '/'); i >= 0 {
+		return file[:i+1]
+	}
+	return ""
+}()
 
 // setupLogging configures the default slog logger to use the compact
 // human-readable handler writing to stderr.
 func setupLogging() {
-	slog.SetDefault(slog.New(newHumanHandler(os.Stderr, slog.LevelInfo)))
+	slog.SetDefault(slog.New(newHumanHandler(os.Stderr, slog.LevelInfo, pkgDir)))
 }
 
 // humanHandler implements slog.Handler with a compact single-line format.
 type humanHandler struct {
-	w         io.Writer
-	mu        *sync.Mutex
-	min       slog.Level
-	addSource bool
+	w           io.Writer
+	mu          *sync.Mutex
+	min         slog.Level
+	addSource   bool
+	stripPrefix string // absolute path prefix to remove from frame.File
 }
 
 // newHumanHandler returns a handler writing to w, emitting records at or
-// above minLevel.
-func newHumanHandler(w io.Writer, minLevel slog.Level) *humanHandler {
+// above minLevel. stripPrefix is removed from the front of source file paths
+// so only the module-relative path is shown in log output.
+func newHumanHandler(w io.Writer, minLevel slog.Level, stripPrefix string) *humanHandler {
 	if minLevel == 0 {
 		minLevel = slog.LevelInfo
 	}
-	return &humanHandler{w: w, mu: &sync.Mutex{}, min: minLevel, addSource: true}
+	return &humanHandler{w: w, mu: &sync.Mutex{}, min: minLevel, addSource: true, stripPrefix: stripPrefix}
 }
 
 // Enabled reports whether the handler handles records at the given level.
@@ -59,7 +75,7 @@ func (h *humanHandler) Handle(_ context.Context, r slog.Record) error {
 	buf = append(buf, "] "...)
 
 	if h.addSource {
-		buf = appendSource(buf)
+		buf = h.appendSource(buf)
 	}
 
 	buf = append(buf, r.Message...)
@@ -134,7 +150,7 @@ func needsQuoting(s string) bool {
 // and appends "file:line " to buf.  When garble strips source paths, this
 // produces "?:1 "; when built with `go build` (no obfuscation), it gives the
 // real file name and line.
-func appendSource(buf []byte) []byte {
+func (h *humanHandler) appendSource(buf []byte) []byte {
 	var pcs [8]uintptr
 	n := runtime.Callers(3, pcs[:])
 	frames := runtime.CallersFrames(pcs[:n])
@@ -148,7 +164,7 @@ func appendSource(buf []byte) []byte {
 			}
 			continue
 		}
-		buf = appendFileLine(buf, frame.File, frame.Line)
+		buf = appendFileLine(buf, frame.File, frame.Line, h.stripPrefix)
 		return buf
 	}
 	return append(buf, "?:? "...)
@@ -173,7 +189,14 @@ func isLoggingPackage(file string) bool {
 // appendFileLine appends "<dir-initials>/<basename>:<line> " to buf. Each
 // directory component becomes its first letter and the ".go" suffix is
 // dropped, e.g. "internal/brain/statemachine.go" → "i/b/statemachine:247".
-func appendFileLine(buf []byte, file string, line int) []byte {
+// stripPrefix is removed from the front of the file path before formatting.
+func appendFileLine(buf []byte, file string, line int, stripPrefix string) []byte {
+	// Strip the absolute path prefix (e.g. /home/rd/workspace/avatar/desktop/).
+	if stripPrefix != "" && len(file) > len(stripPrefix) {
+		if file[:len(stripPrefix)] == stripPrefix {
+			file = file[len(stripPrefix):]
+		}
+	}
 	// Split path into segments, keep first letter of each directory
 	// and the full basename (without .go suffix).
 	start := 0

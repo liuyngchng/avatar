@@ -1,7 +1,7 @@
 // Package main — custom slog handler that emits a compact, human-friendly
 // one-line format:
 //
-//	2026-09-05T15:56:40.931+08:00 [INFO] tts_mode_offline_matcha key=value key=value
+//	2026-09-05T15:56:40.931+08:00 [INFO] i/b/statemachine:247 message key=value
 //
 // This is used instead of slog's default TextHandler (which prefixes every
 // field with time= / level= / msg=) to keep the log lines short and scannable
@@ -15,24 +15,40 @@ import (
 	"log/slog"
 	"runtime"
 	"strconv"
+	"strings"
 	"sync"
 )
 
+// pkgDir is the absolute path of the directory containing this file, captured
+// at init so source paths can be trimmed to their module-relative form.
+var pkgDir = func() string {
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		return ""
+	}
+	if i := strings.LastIndexByte(file, '/'); i >= 0 {
+		return file[:i+1]
+	}
+	return ""
+}()
+
 // humanHandler implements slog.Handler with a compact single-line format.
 type humanHandler struct {
-	w         io.Writer
-	mu        *sync.Mutex
-	min       slog.Level
-	addSource bool
+	w           io.Writer
+	mu          *sync.Mutex
+	min         slog.Level
+	addSource   bool
+	stripPrefix string // absolute path prefix to remove from frame.File
 }
 
 // newHumanHandler returns a handler writing to w, emitting records at or
-// above minLevel.
-func newHumanHandler(w io.Writer, minLevel slog.Level) *humanHandler {
+// above minLevel. stripPrefix is removed from the front of source file paths
+// so only the module-relative path is shown in log output.
+func newHumanHandler(w io.Writer, minLevel slog.Level, stripPrefix string) *humanHandler {
 	if minLevel == 0 {
 		minLevel = slog.LevelInfo
 	}
-	return &humanHandler{w: w, mu: &sync.Mutex{}, min: minLevel, addSource: true}
+	return &humanHandler{w: w, mu: &sync.Mutex{}, min: minLevel, addSource: true, stripPrefix: stripPrefix}
 }
 
 // Enabled reports whether the handler handles records at the given level.
@@ -52,7 +68,7 @@ func (h *humanHandler) Handle(_ context.Context, r slog.Record) error {
 	buf = append(buf, "] "...)
 
 	if h.addSource {
-		buf = appendSource(buf)
+		buf = h.appendSource(buf)
 	}
 
 	buf = append(buf, r.Message...)
@@ -131,7 +147,7 @@ func needsQuoting(s string) bool {
 // We capture a few frames from within Handle and skip over the log/slog
 // package (and this file) so inlining of slog.Info/Logger.Info can't shift
 // the result off by a frame.
-func appendSource(buf []byte) []byte {
+func (h *humanHandler) appendSource(buf []byte) []byte {
 	var pcs [8]uintptr
 	n := runtime.Callers(3, pcs[:])
 	frames := runtime.CallersFrames(pcs[:n])
@@ -145,7 +161,7 @@ func appendSource(buf []byte) []byte {
 			}
 			continue
 		}
-		buf = appendFileLine(buf, frame.File, frame.Line)
+		buf = appendFileLine(buf, frame.File, frame.Line, h.stripPrefix)
 		return buf
 	}
 	return append(buf, "?:? "...)
@@ -170,7 +186,14 @@ func isLoggingPackage(file string) bool {
 // appendFileLine appends "<dir-initials>/<basename>:<line> " to buf.
 // Each directory component becomes its first letter, e.g.
 // "internal/brain/statemachine.go" → "i/b/statemachine:247".
-func appendFileLine(buf []byte, file string, line int) []byte {
+// stripPrefix is removed from the front of the file path before formatting.
+func appendFileLine(buf []byte, file string, line int, stripPrefix string) []byte {
+	// Strip the absolute path prefix (e.g. /home/rd/workspace/avatar/web/).
+	if stripPrefix != "" && len(file) > len(stripPrefix) {
+		if file[:len(stripPrefix)] == stripPrefix {
+			file = file[len(stripPrefix):]
+		}
+	}
 	// Split path into segments, keep first letter of each directory
 	// and the full basename (without .go suffix).
 	start := 0
