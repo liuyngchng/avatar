@@ -76,7 +76,9 @@ desktop/build/
 
 # ── Web (Go) ───────────────────────────────────────────
 web/avatar-server
+web/avatar-web
 web/avatar-server.exe
+web/avatar-web.exe
 web/cfg.yml
 web/cert.pem
 web/key.pem

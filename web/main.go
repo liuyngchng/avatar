@@ -3,17 +3,17 @@
 // provides a WebSocket endpoint for real-time audio communication.
 //
 // HTTPS:
-//   If cert.pem and key.pem exist in the working directory, the server
-//   automatically serves HTTPS. Otherwise, plain HTTP.
-//   Generate them with:  ./avatar-server -gen-cert
+//
+//	If cert.pem and key.pem exist in the working directory, the server
+//	automatically serves HTTPS. Otherwise, plain HTTP.
+//	Generate them with:  ./avatar-server -gen-cert
 package main
 
 import (
 	"embed"
 	"flag"
-	"fmt"
 	"io/fs"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -40,7 +40,7 @@ const (
 )
 
 func main() {
-	log.SetFlags(log.Ltime | log.Lshortfile)
+	slog.SetDefault(slog.New(newHumanHandler(os.Stderr, slog.LevelInfo)))
 
 	genCert := flag.Bool("gen-cert", false, "Generate self-signed TLS certificate and exit")
 	flag.Parse()
@@ -48,26 +48,27 @@ func main() {
 	// ── -gen-cert: generate certs, then exit ──────────────────
 	if *genCert {
 		ips := certgen.LocalIPs()
-		fmt.Printf("Generating self-signed certificate for these local IPs:\n")
+		slog.Info("generating_self_signed_certificate")
 		for _, ip := range ips {
-			fmt.Printf("  %s\n", ip)
+			slog.Info("cert_san_ip", "ip", ip.String())
 		}
 		hosts := []string{"localhost"}
 		if err := certgen.Generate(defaultCertFile, defaultKeyFile, hosts, ips); err != nil {
-			log.Fatalf("Failed to generate certificate: %v", err)
+			slog.Error("certificate_generation_failed", "error", err)
+			os.Exit(1)
 		}
-		fmt.Printf("\nCertificate written to: %s\n", defaultCertFile)
-		fmt.Printf("Private key written to:  %s\n", defaultKeyFile)
-		fmt.Println("\nRestart the server without -gen-cert to use HTTPS.")
+		slog.Info("certificate_written_to", "path", defaultCertFile)
+		slog.Info("private_key_written_to", "path", defaultKeyFile)
+		slog.Info("restart_without_gen_cert_to_use_https")
 		return
 	}
 
-	log.Println("Avatar Web starting...")
+	slog.Info("avatar_web_starting")
 
 	// ── Load config ────────────────────────────────────────
 	cfg, err := config.Load()
 	if err != nil {
-		log.Printf("Warning: failed to load config: %v (using env vars as fallback)", err)
+		slog.Warn("config_load_failed", "error", err)
 		cfg = &config.Config{
 			LLM: config.LLMConfig{
 				BaseURL: os.Getenv("AVATAR_LLM_BASE_URL"),
@@ -104,7 +105,7 @@ func main() {
 	}
 
 	// Print proxy state so the user knows at a glance.
-	log.Printf("main: %s", config.ProxyDesc(cfg.Proxy, cfg.ProxyDisabled))
+	slog.Info("proxy_current_state", "desc", config.ProxyDesc(cfg.Proxy, cfg.ProxyDisabled))
 
 	// ── Initialize TTS engine ────────────────────────────────
 	ttsDir := tts.ModelsDir()
@@ -118,18 +119,19 @@ func main() {
 		Lexicon:       filepath.Join(ttsDir, "lexicon.txt"),
 	}, cfg.TTS.URL, cfg.TTS.Model, cfg.TTS.Voice, ttsAPIKey, cfg.TTS.Format, cfg.TTS.SampleRate, config.ProxyFunc(cfg.Proxy, cfg.ProxyDisabled))
 	if err != nil {
-		log.Fatalf("Failed to create TTS engine: %v", err)
+		slog.Error("tts_engine_create_failed", "error", err)
+		os.Exit(1)
 	}
 	defer ttsEngine.Close()
 
 	// Print TTS mode prominently.
-	log.Printf("══════════════════════════════════════")
+	slog.Info("tts_mode_banner_top")
 	if ttsMode == tts.ModeOnline {
-		log.Printf("  TTS 语音合成: 在线模式 (阿里云百炼 Qwen-TTS)")
+		slog.Info("tts_mode_online_dashscope_qwen")
 	} else {
-		log.Printf("  TTS 语音合成: 离线模式 (本地 Matcha-TTS)")
+		slog.Info("tts_mode_offline_matcha")
 	}
-	log.Printf("══════════════════════════════════════")
+	slog.Info("tts_mode_banner_bottom")
 
 	// ── Initialize ASR engine ────────────────────────────────
 	asrDir := asr.ModelsDir()
@@ -142,22 +144,22 @@ func main() {
 		Tokens: filepath.Join(asrDir, "tokens.txt"),
 	}, cfg.ASR.URL, cfg.ASR.Model, asrAPIKey, cfg.ASR.Format, cfg.ASR.SampleRate, config.ProxyFunc(cfg.Proxy, cfg.ProxyDisabled))
 	if err != nil {
-		log.Printf("Warning: ASR engine init failed (continuing without ASR): %v", err)
+		slog.Warn("asr_engine_init_failed_continuing_without", "error", err)
 		asrEngine = nil
 	} else {
 		defer asrEngine.Close()
 	}
 
 	// Print ASR mode prominently.
-	log.Printf("══════════════════════════════════════")
+	slog.Info("asr_mode_banner_top")
 	if asrEngine == nil {
-		log.Printf("  ASR 语音识别: 未启用 (初始化失败)")
+		slog.Info("asr_mode_disabled_init_failed")
 	} else if asrMode == asr.ModeOnline {
-		log.Printf("  ASR 语音识别: 在线模式 (阿里云百炼 Qwen-ASR)")
+		slog.Info("asr_mode_online_dashscope_qwen")
 	} else {
-		log.Printf("  ASR 语音识别: 离线模式 (本地 SenseVoiceSmall)")
+		slog.Info("asr_mode_offline_sensevoice")
 	}
-	log.Printf("══════════════════════════════════════")
+	slog.Info("asr_mode_banner_bottom")
 
 	// ── Initialize KWS engine ────────────────────────────────
 	kwsDir := kws.ModelsDir()
@@ -171,7 +173,7 @@ func main() {
 	}
 	kwsEngine, err = kws.New(kwsDir, wakeWord)
 	if err != nil {
-		log.Printf("Warning: KWS engine init failed (continuing without wake word): %v", err)
+		slog.Warn("kws_engine_init_failed_continuing_without", "error", err)
 		kwsEngine = nil
 	} else {
 		defer kwsEngine.Close()
@@ -183,24 +185,39 @@ func main() {
 	if llmAPIKey == "" {
 		llmAPIKey = cfg.APIKey
 	}
+	// Always log the effective LLM config so the user can verify.
+	llmBaseURL := cfg.LLM.BaseURL
+	llmModel := cfg.LLM.Model
+	llmHasBaseURL := llmBaseURL != ""
+	llmHasAPIKey := llmAPIKey != ""
+	slog.Info("llm_config_base_url", "set", llmHasBaseURL, "value", llmBaseURL)
+	slog.Info("llm_config_api_key", "set", llmHasAPIKey)
+	slog.Info("llm_config_model", "model", llmModel)
+
 	llmClient := llm.New(llm.Config{
-		BaseURL:   cfg.LLM.BaseURL,
+		BaseURL:   llmBaseURL,
 		APIKey:    llmAPIKey,
-		Model:     cfg.LLM.Model,
+		Model:     llmModel,
 		Name:      cfg.LLM.Name,
 		ProxyFunc: config.ProxyFunc(cfg.Proxy, cfg.ProxyDisabled),
 	})
+
 	if llmClient.IsConfigured() {
-		log.Println("LLM client configured (streaming enabled)")
+		slog.Info("llm_client_configured_streaming")
 	} else {
-		log.Println("LLM client NOT configured — set values in cfg.yml. Using fallback responses.")
+		if !llmHasBaseURL {
+			slog.Warn("llm_client_missing_base_url")
+		}
+		if !llmHasAPIKey {
+			slog.Warn("llm_client_missing_api_key")
+		}
 	}
 
 	// ── Create the brain (state machine) ─────────────────────
 	sm := brain.NewStateMachine(ttsEngine, asrEngine, kwsEngine, llmClient, brain.Config{
 		NoSpeechTimeout: cfg.NoSpeechTimeout(),
 	})
-	log.Printf("main: 多轮对话无语音超时 = %s (修改请改 cfg.yml 的 no_speech_timeout_sec)", cfg.NoSpeechTimeout())
+	slog.Info("no_speech_timeout_configured", "timeout", cfg.NoSpeechTimeout())
 	defer sm.Stop() // must run before engine Close()s to avoid use-after-free crashes
 
 	// Start the FSM loop.
@@ -213,7 +230,7 @@ func main() {
 	mux.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
 		_, err := transport.NewSession(w, r, sm)
 		if err != nil {
-			log.Printf("WebSocket upgrade failed: %v", err)
+			slog.Warn("websocket_upgrade_failed", "error", err)
 			http.Error(w, "WebSocket upgrade failed", http.StatusBadRequest)
 			return
 		}
@@ -222,7 +239,8 @@ func main() {
 	// Static file server for the 3D frontend.
 	webFS, err := fs.Sub(webAssets, "web")
 	if err != nil {
-		log.Fatalf("Failed to create web sub-filesystem: %v", err)
+		slog.Error("web_sub_filesystem_create_failed", "error", err)
+		os.Exit(1)
 	}
 	fsHandler := http.FileServer(http.FS(webFS))
 	mux.Handle("/", fsHandler)
@@ -238,7 +256,7 @@ func main() {
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		<-sigCh
-		log.Println("Avatar Web shutting down...")
+		slog.Info("avatar_web_shutting_down")
 		server.Close()
 	}()
 
@@ -255,21 +273,31 @@ func main() {
 	useTLS := fileExists(certFile) && fileExists(keyFile)
 
 	if useTLS {
-		log.Printf("Avatar Web listening on https://localhost%s", addr)
-		log.Printf("Open https://localhost%s in your browser", addr)
+		ips := certgen.LocalIPs()
+		slog.Info("listening_on_https_localhost", "addr", "localhost"+addr)
+		for _, ip := range ips {
+			slog.Info("listening_on_https_ip", "addr", ip.String()+addr)
+		}
+		slog.Info("open_https_in_browser", "url", "https://localhost"+addr)
 		if err := server.ListenAndServeTLS(certFile, keyFile); err != http.ErrServerClosed {
-			log.Fatalf("Server error: %v", err)
+			slog.Error("server_listen_tls_error", "error", err)
+			os.Exit(1)
 		}
 	} else {
-		log.Printf("Avatar Web listening on http://localhost%s", addr)
-		log.Printf("Open http://localhost%s in your browser", addr)
-		log.Printf("(Tip: run with -gen-cert to enable HTTPS for microphone access from other devices)")
+		ips := certgen.LocalIPs()
+		slog.Info("listening_on_http_localhost", "addr", "localhost"+addr)
+		for _, ip := range ips {
+			slog.Info("listening_on_http_ip", "addr", ip.String()+addr)
+		}
+		slog.Info("open_http_in_browser", "url", "http://localhost"+addr)
+		slog.Info("tip_run_gen_cert_for_https")
 		if err := server.ListenAndServe(); err != http.ErrServerClosed {
-			log.Fatalf("Server error: %v", err)
+			slog.Error("server_listen_error", "error", err)
+			os.Exit(1)
 		}
 	}
 
-	log.Println("Avatar Web stopped.")
+	slog.Info("avatar_web_stopped")
 }
 
 func fileExists(path string) bool {

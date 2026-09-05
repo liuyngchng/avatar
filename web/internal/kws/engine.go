@@ -4,7 +4,7 @@ package kws
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -46,10 +46,10 @@ func New(modelDir string, wakeWord string) (*Engine, error) {
 		}
 	}
 
-	log.Printf("kws: encoder=%s", encoder)
-	log.Printf("kws: decoder=%s", decoder)
-	log.Printf("kws: joiner=%s", joiner)
-	log.Printf("kws: tokens=%s", tokens)
+	slog.Info("kws_encoder_file", "path", encoder)
+	slog.Info("kws_decoder_file", "path", decoder)
+	slog.Info("kws_joiner_file", "path", joiner)
+	slog.Info("kws_tokens_file", "path", tokens)
 
 	numThreads := 1 // keep low, runs concurrently with ASR/TTS.
 
@@ -87,7 +87,7 @@ func New(modelDir string, wakeWord string) (*Engine, error) {
 		return nil, fmt.Errorf("kws: failed to create keyword stream")
 	}
 
-	log.Printf("kws: engine created, keywords=%q, num_threads=%d", wakeWord, numThreads)
+	slog.Info("kws_engine_created", "keywords", wakeWord, "num_threads", numThreads)
 
 	return &Engine{
 		spotter:  spotter,

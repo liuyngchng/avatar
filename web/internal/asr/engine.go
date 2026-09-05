@@ -7,7 +7,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"math"
 	"net/http"
 	"net/url"
@@ -92,7 +92,7 @@ func New(mode Mode, p ModelPaths, onlineURL, onlineModel, onlineAPIKey string, o
 		if onlineSampleRate <= 0 {
 			e.onlineSampleRate = 16000
 		}
-		log.Printf("asr: using online engine (DashScope), model=%s", onlineModel)
+		slog.Info("asr_online_engine_dashscope", "model", onlineModel)
 		return e, nil
 	}
 
@@ -136,7 +136,7 @@ func New(mode Mode, p ModelPaths, onlineURL, onlineModel, onlineAPIKey string, o
 	}
 
 	e.recognizer = recognizer
-	log.Printf("asr: offline engine created, num_threads=%d", numThreads)
+	slog.Info("asr_offline_engine_created", "num_threads", numThreads)
 	return e, nil
 }
 
@@ -171,8 +171,7 @@ func (e *Engine) decodeOffline(samples []float32) (*Result, error) {
 		return nil, fmt.Errorf("asr: no result")
 	}
 
-	log.Printf("asr: offline decoded %d samples → text=%q, lang=%s, emotion=%s",
-		len(samples), r.Text, r.Lang, r.Emotion)
+	slog.Info("asr_offline_decoded", "samples", len(samples), "text", r.Text, "lang", r.Lang, "emotion", r.Emotion)
 
 	return &Result{
 		Text:    r.Text,
@@ -216,7 +215,7 @@ func (e *Engine) decodeOnline(samples []float32) (*Result, error) {
 		},
 	}
 	if err := e.conn.WriteJSON(runTask); err != nil {
-		log.Printf("asr: write run-task failed, reconnecting: %v", err)
+		slog.Warn("asr_online_write_run_task_failed_reconnecting", "error", err)
 		e.closeLocked()
 		if err2 := e.ensureConnectedLocked(); err2 != nil {
 			e.mu.Unlock()
@@ -227,7 +226,7 @@ func (e *Engine) decodeOnline(samples []float32) (*Result, error) {
 			return nil, fmt.Errorf("asr: send run-task: %w", err)
 		}
 	}
-	log.Printf("asr: sent run-task (task=%s, model=%s)", taskID, e.onlineModel)
+	slog.Info("asr_online_sent_run_task", "task_id", taskID, "model", e.onlineModel)
 
 	conn := e.conn
 	e.mu.Unlock()
@@ -255,7 +254,7 @@ func (e *Engine) decodeOnline(samples []float32) (*Result, error) {
 
 			var event map[string]interface{}
 			if err := json.Unmarshal(msg, &event); err != nil {
-				log.Printf("asr: parse event: %v", err)
+				slog.Warn("asr_online_parse_event", "error", err)
 				continue
 			}
 
@@ -264,13 +263,13 @@ func (e *Engine) decodeOnline(samples []float32) (*Result, error) {
 
 			switch eventName {
 			case "task-started":
-				log.Printf("asr: task-started")
+				slog.Info("asr_online_task_started")
 				taskStarted = true
 				if !audioSent {
 					audioSent = true
 					go func() {
 						if err := e.sendAudio(conn, samples, e.onlineSampleRate); err != nil {
-							log.Printf("asr: send audio: %v", err)
+							slog.Warn("asr_online_send_audio_error", "error", err)
 						}
 						finishTask := map[string]interface{}{
 							"header": map[string]interface{}{
@@ -283,9 +282,9 @@ func (e *Engine) decodeOnline(samples []float32) (*Result, error) {
 							},
 						}
 						if err := conn.WriteJSON(finishTask); err != nil {
-							log.Printf("asr: send finish-task: %v", err)
+							slog.Warn("asr_online_send_finish_task_error", "error", err)
 						}
-						log.Printf("asr: sent finish-task")
+						slog.Info("asr_online_sent_finish_task")
 					}()
 				}
 
@@ -303,7 +302,7 @@ func (e *Engine) decodeOnline(samples []float32) (*Result, error) {
 				}
 
 			case "task-finished":
-				log.Printf("asr: task-finished")
+				slog.Info("asr_online_task_finished")
 				return
 
 			case "task-failed":
@@ -312,7 +311,7 @@ func (e *Engine) decodeOnline(samples []float32) (*Result, error) {
 				return
 
 			default:
-				log.Printf("asr: unknown event: %s", eventName)
+				slog.Warn("asr_online_unknown_event", "event", eventName)
 			}
 		}
 	}()
@@ -333,8 +332,8 @@ func (e *Engine) decodeOnline(samples []float32) (*Result, error) {
 		return nil, fmt.Errorf("asr: task never started")
 	}
 
-	log.Printf("asr: online final text: %q", finalText)
-	log.Printf("[timing] ASR: total=%dms", time.Since(t0).Milliseconds())
+	slog.Info("asr_online_final_text", "text", finalText)
+	slog.Info("asr_timing_total", "ms", time.Since(t0).Milliseconds())
 
 	// Close the connection after each request. DashScope's WebSocket ASR
 	// closes the socket server-side after task-finished, so reusing it for
@@ -369,7 +368,7 @@ func (e *Engine) ensureConnectedLocked() error {
 		return fmt.Errorf("asr: websocket dial: %w", err)
 	}
 	e.conn = conn
-	log.Printf("[timing] ASR: ws_connect=%dms", time.Since(t0).Milliseconds())
+	slog.Info("asr_timing_ws_connect", "ms", time.Since(t0).Milliseconds())
 	return nil
 }
 
@@ -394,7 +393,7 @@ func (e *Engine) sendAudio(conn *websocket.Conn, samples []float32, sampleRate i
 		}
 	}
 
-	log.Printf("asr: sent %d bytes PCM audio in %d-byte chunks", len(pcm), chunkSize)
+	slog.Info("asr_online_sent_pcm_audio", "bytes", len(pcm), "chunk_size", chunkSize)
 	return nil
 }
 

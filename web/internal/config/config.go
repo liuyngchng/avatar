@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"path/filepath"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -64,12 +63,9 @@ type ServerConfig struct {
 	KeyFile  string `yaml:"key_file"`
 }
 
-// Load reads cfg.yml from standard locations.
+// Load reads cfg.yml from the current working directory only.
 func Load() (*Config, error) {
-	path := findCfg()
-	if path == "" {
-		return nil, fmt.Errorf("config: cfg.yml not found")
-	}
+	path := "cfg.yml"
 
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -90,21 +86,6 @@ func Load() (*Config, error) {
 	}
 
 	return cfg, nil
-}
-
-// findCfg searches for cfg.yml in standard locations.
-func findCfg() string {
-	candidates := []string{
-		"cfg.yml",
-		"../cfg.yml",
-		filepath.Join(filepath.Dir(os.Args[0]), "cfg.yml"),
-	}
-	for _, p := range candidates {
-		if _, err := os.Stat(p); err == nil {
-			return p
-		}
-	}
-	return ""
 }
 
 // IsFBXEnabled returns true if FBX animation should be loaded.

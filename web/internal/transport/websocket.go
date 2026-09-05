@@ -4,7 +4,7 @@ package transport
 
 import (
 	"encoding/json"
-	"log"
+	"log/slog"
 	"net/http"
 	"sync"
 	"time"
@@ -32,10 +32,10 @@ type Session struct {
 	conn *websocket.Conn
 	sm   *brain.StateMachine
 
-	mu       sync.Mutex
-	writeCh  chan []byte
-	closeCh  chan struct{}
-	closed   bool
+	mu      sync.Mutex
+	writeCh chan []byte
+	closeCh chan struct{}
+	closed  bool
 }
 
 // NewSession upgrades an HTTP connection to WebSocket and starts
@@ -64,7 +64,7 @@ func NewSession(w http.ResponseWriter, r *http.Request, sm *brain.StateMachine) 
 	go s.forwardOutbound()
 	go s.forwardAudio()
 
-	log.Printf("transport: WebSocket session started")
+	slog.Info("websocket_session_started")
 	return s, nil
 }
 
@@ -85,14 +85,14 @@ func (s *Session) readPump() {
 		_, message, err := s.conn.ReadMessage()
 		if err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseNormalClosure) {
-				log.Printf("transport: read error: %v", err)
+				slog.Warn("websocket_read_error", "error", err)
 			}
 			return
 		}
 
 		var pkt WSPacket
 		if err := json.Unmarshal(message, &pkt); err != nil {
-			log.Printf("transport: bad JSON from browser: %v", err)
+			slog.Warn("websocket_bad_json_from_browser", "error", err)
 			continue
 		}
 
@@ -107,7 +107,7 @@ func (s *Session) handlePacket(pkt WSPacket) {
 		// Browser sent microphone audio (PCM float32 array).
 		var samples []float32
 		if err := json.Unmarshal(pkt.Data, &samples); err != nil {
-			log.Printf("transport: bad audio data: %v", err)
+			slog.Warn("websocket_bad_audio_data", "error", err)
 			return
 		}
 		s.sm.FeedAudio(samples)
@@ -119,7 +119,7 @@ func (s *Session) handlePacket(pkt WSPacket) {
 		s.writeJSON(WSPacket{Type: "pong"})
 
 	default:
-		log.Printf("transport: unknown packet type: %s", pkt.Type)
+		slog.Warn("websocket_unknown_packet_type", "type", pkt.Type)
 	}
 }
 
@@ -148,7 +148,7 @@ func (s *Session) forwardAudio() {
 func (s *Session) writeJSON(v any) {
 	data, err := json.Marshal(v)
 	if err != nil {
-		log.Printf("transport: marshal error: %v", err)
+		slog.Warn("websocket_marshal_error", "error", err)
 		return
 	}
 
@@ -162,7 +162,7 @@ func (s *Session) writeJSON(v any) {
 	select {
 	case s.writeCh <- data:
 	default:
-		log.Printf("transport: write buffer full, dropping message")
+		slog.Warn("websocket_write_buffer_full_dropping")
 	}
 }
 
@@ -179,14 +179,14 @@ func (s *Session) writePump() {
 			}
 			s.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 			if err := s.conn.WriteMessage(websocket.TextMessage, data); err != nil {
-				log.Printf("transport: write error: %v", err)
+				slog.Warn("websocket_write_error", "error", err)
 				return
 			}
 
 		case <-ticker.C:
 			s.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 			if err := s.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
-				log.Printf("transport: ping error: %v", err)
+				slog.Warn("websocket_ping_error", "error", err)
 				return
 			}
 
@@ -209,5 +209,5 @@ func (s *Session) Close() {
 	close(s.closeCh)
 	close(s.writeCh)
 	s.conn.Close()
-	log.Printf("transport: WebSocket session closed")
+	slog.Info("websocket_session_closed")
 }

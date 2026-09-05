@@ -8,7 +8,7 @@ package brain
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 	"math"
 	"strings"
 	"sync"
@@ -43,7 +43,7 @@ type AudioPacket struct {
 type StateMachine struct {
 	state        State
 	stateChanges chan State
-	outbound     chan any // viseme timeline, state updates → browser
+	outbound     chan any         // viseme timeline, state updates → browser
 	audioOut     chan AudioPacket // TTS audio → browser
 	events       chan Event
 
@@ -68,8 +68,8 @@ type StateMachine struct {
 
 	mu       sync.Mutex
 	busy     bool
-	done     chan struct{} // closed by Stop() to signal shutdown
-	stopOnce sync.Once     // ensures Stop() is idempotent
+	done     chan struct{}  // closed by Stop() to signal shutdown
+	stopOnce sync.Once      // ensures Stop() is idempotent
 	wg       sync.WaitGroup // tracks Run() and pipeline() goroutines
 }
 
@@ -139,7 +139,7 @@ func (sm *StateMachine) Run() {
 	defer sm.wg.Done()
 
 	sm.emit()
-	log.Println("state: FSM running, waiting for audio from browser")
+	slog.Info("fsm_running_waiting_for_audio")
 
 	for {
 		select {
@@ -148,7 +148,7 @@ func (sm *StateMachine) Run() {
 
 		case samples, ok := <-sm.audioSink:
 			if !ok {
-				log.Println("state: audio channel closed, FSM exiting")
+				slog.Info("fsm_audio_channel_closed_exiting")
 				return
 			}
 
@@ -169,14 +169,14 @@ func (sm *StateMachine) Run() {
 				if sm.kwsEngine != nil {
 					keyword := sm.kwsEngine.ProcessSamples(samples)
 					if keyword != "" {
-						log.Printf("state: KWS detected keyword=%q", keyword)
+						slog.Info("kws_detected_keyword", "keyword", keyword)
 						sm.HandleEvent(Event{Type: "wake_detected"})
 					}
 				}
 			}
 
 		case <-sm.done:
-			log.Println("state: FSM shutdown signal, exiting")
+			slog.Info("fsm_shutdown_signal_exiting")
 			return
 		}
 	}
@@ -212,7 +212,7 @@ func (sm *StateMachine) HandleEvent(ev Event) {
 	select {
 	case sm.events <- ev:
 	default:
-		log.Printf("state: dropping event (channel full): %s", ev.Type)
+		slog.Warn("fsm_dropping_event_channel_full", "type", ev.Type)
 	}
 }
 
@@ -232,13 +232,13 @@ func (sm *StateMachine) handleEvent(ev Event) {
 		sm.mu.Lock()
 		if sm.busy {
 			sm.mu.Unlock()
-			log.Printf("state: event=%s ignored (busy)", ev.Type)
+			slog.Info("fsm_event_ignored_busy", "type", ev.Type)
 			return
 		}
 		sm.busy = true
 		sm.mu.Unlock()
 
-		log.Printf("state: event=%s → starting conversation turn", ev.Type)
+		slog.Info("fsm_event_starting_conversation_turn", "type", ev.Type)
 
 		// Kick off the conversation turn in a separate goroutine so that
 		// the FSM Run() loop is never blocked.  For wake-word triggers we
@@ -264,7 +264,7 @@ func (sm *StateMachine) sayGreeting() {
 
 	result, err := sm.ttsEngine.Synthesize("哎，我在呢", 1.0)
 	if err != nil {
-		log.Printf("state: greeting TTS error: %v", err)
+		slog.Warn("fsm_greeting_tts_error", "error", err)
 		return
 	}
 
@@ -304,7 +304,7 @@ func (sm *StateMachine) pipeline() {
 	// stays silent, then fall back to idle (wake-word required again).
 	for turn := 1; ; turn++ {
 		// ── Phase 1: LISTENING — capture audio for ASR ──────────
-		log.Printf("[ASR] 开始聆听... (第%d轮)", turn)
+		slog.Info("asr_listening_start", "turn", turn)
 		sm.setState(ModeListening, EmotionNeutral, "")
 		sm.mu.Lock()
 		sm.state.IsSpeaking = false
@@ -326,7 +326,7 @@ func (sm *StateMachine) pipeline() {
 		sm.mu.Unlock()
 
 		if len(audioSamples) == 0 {
-			log.Println("state: no speech detected, ending conversation")
+			slog.Info("asr_no_speech_detected_ending_conversation")
 			sm.setState(ModeIdle, EmotionNeutral, "")
 			sm.emit()
 			return
@@ -340,17 +340,17 @@ func (sm *StateMachine) pipeline() {
 		if sm.asrEngine != nil {
 			result, err := sm.asrEngine.Decode(audioSamples)
 			if err != nil {
-				log.Printf("state: ASR error: %v", err)
+				slog.Warn("asr_error_ending_conversation", "error", err)
 				sm.setState(ModeIdle, EmotionNeutral, "")
 				sm.emit()
 				return
 			}
 			userText = strings.TrimSpace(result.Text)
-			log.Printf("[ASR] 结束: result=%q, lang=%s, emotion=%s", userText, result.Lang, result.Emotion)
+			slog.Info("asr_result", "text", userText, "lang", result.Lang, "emotion", result.Emotion)
 		}
 
 		if userText == "" {
-			log.Println("state: ASR returned empty text, ending conversation")
+			slog.Info("asr_empty_text_ending_conversation")
 			sm.setState(ModeIdle, EmotionNeutral, "")
 			sm.emit()
 			return
@@ -361,10 +361,10 @@ func (sm *StateMachine) pipeline() {
 		sm.mu.Unlock()
 
 		// Call LLM.
-		log.Printf("[LLM] 请求开始: user=%q", userText)
+		slog.Info("llm_request_start", "user", userText)
 		llmStart := time.Now()
 		llmText := sm.callLLM(userText)
-		log.Printf("[LLM] 请求结束: 耗时=%v, chars=%d", time.Since(llmStart).Round(time.Millisecond), len(llmText))
+		slog.Info("llm_request_done", "duration", time.Since(llmStart).Round(time.Millisecond), "chars", len(llmText))
 		if llmText == "" {
 			llmText = "你好，我是企业数字人，请问有什么可以帮你的？"
 		}
@@ -373,22 +373,21 @@ func (sm *StateMachine) pipeline() {
 		emotion := EmotionFromString(emotionStr)
 
 		// ── Phase 3: SPEAKING — TTS synthesis ────────────────────
-		log.Printf("[TTS] 合成开始: text=%q", cleanText)
+		slog.Info("tts_synthesis_start", "text", cleanText)
 		ttsStart := time.Now()
 		result, err := sm.ttsEngine.Synthesize(cleanText, 1.0)
 		if err != nil {
-			log.Printf("[TTS] 合成失败: %v", err)
+			slog.Warn("tts_synthesis_failed", "error", err)
 			sm.setState(ModeIdle, EmotionNeutral, "")
 			sm.emit()
 			return
 		}
 
 		audioDurMs := int(float64(len(result.Samples)) / float64(result.SampleRate) * 1000)
-		log.Printf("[TTS] 合成结束: 耗时=%v, 音频=%dms, samples=%d",
-			time.Since(ttsStart).Round(time.Millisecond), audioDurMs, len(result.Samples))
+		slog.Info("tts_synthesis_done", "duration", time.Since(ttsStart).Round(time.Millisecond), "audio_ms", audioDurMs, "samples", len(result.Samples))
 		timeline := GenerateVisemeTimeline(cleanText, audioDurMs)
 		if timeline != nil {
-			log.Printf("state: viseme timeline: %d entries, audio %dms", len(timeline.Timeline), audioDurMs)
+			slog.Info("viseme_timeline", "entries", len(timeline.Timeline), "audio_ms", audioDurMs)
 			select {
 			case sm.outbound <- timeline:
 			default:
@@ -406,7 +405,7 @@ func (sm *StateMachine) pipeline() {
 		// Send audio to browser for playback.
 		sm.sendAudioOut(result)
 
-		log.Printf("[TTS] 播放结束, 对话回合%d完成", turn)
+		slog.Info("tts_playback_done", "turn", turn)
 
 		sm.mu.Lock()
 		sm.state.IsSpeaking = false
@@ -428,7 +427,7 @@ func (sm *StateMachine) sendAudioOut(result *tts.SynthesizeResult) {
 		SampleRate: result.SampleRate,
 	}:
 	default:
-		log.Printf("state: audioOut channel full, dropping audio")
+		slog.Warn("audio_out_channel_full_dropping")
 	}
 }
 
@@ -459,10 +458,9 @@ func (sm *StateMachine) collectSpeech() []float32 {
 
 	// returns nil if we didn't collect enough real speech to be worth decoding.
 	finish := func(why string) []float32 {
-		log.Printf("state: %s — speech=%d buffers, silence=%d, total=%d samples",
-			why, speechCount, silentCount, len(allSamples))
+		slog.Info("vad_collect_speech", "reason", why, "speech_buffers", speechCount, "silence_buffers", silentCount, "total_samples", len(allSamples))
 		if speechCount < minSpeechBuffers {
-			log.Printf("state: %s → too little speech, treating as silence", why)
+			slog.Info("vad_too_little_speech", "reason", why)
 			return nil
 		}
 		return allSamples
@@ -512,7 +510,7 @@ func (sm *StateMachine) collectSpeech() []float32 {
 // callLLM sends the user text to the LLM and returns the full response.
 func (sm *StateMachine) callLLM(userText string) string {
 	if sm.llmClient == nil || !sm.llmClient.IsConfigured() {
-		log.Println("state: LLM not configured, using fallback")
+		slog.Warn("llm_not_configured_using_fallback")
 		return ""
 	}
 
@@ -543,17 +541,17 @@ func (sm *StateMachine) callLLM(userText string) string {
 			}
 		case err := <-errCh:
 			if err != nil {
-				log.Printf("state: LLM error: %v", err)
+				slog.Warn("llm_chat_error", "error", err)
 				return ""
 			}
 		case <-sm.done:
-			log.Println("state: LLM cancelled by shutdown")
+			slog.Info("llm_cancelled_by_shutdown")
 			return ""
 		}
 	}
 
 	response := fullText.String()
-	log.Printf("state: LLM response (%d chars): %s", len(response), truncate(response, 100))
+	slog.Info("llm_response", "chars", len(response), "preview", truncate(response, 100))
 
 	if response != "" {
 		_, cleanText := llm.ParseEmotion(response)

@@ -8,7 +8,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"math"
 	"net/http"
 	"net/url"
@@ -97,7 +97,7 @@ func New(mode Mode, p ModelPaths, onlineURL, onlineModel, onlineVoice, onlineAPI
 			e.onlineSampleRate = 24000
 		}
 		e.sampleRate = e.onlineSampleRate
-		log.Printf("tts: using online engine (DashScope Qwen-TTS), model=%s, voice=%s", onlineModel, onlineVoice)
+		slog.Info("tts_online_engine_dashscope", "model", onlineModel, "voice", onlineVoice)
 		return e, nil
 	}
 
@@ -141,7 +141,7 @@ func New(mode Mode, p ModelPaths, onlineURL, onlineModel, onlineVoice, onlineAPI
 
 	e.tts = tts
 	e.sampleRate = tts.SampleRate()
-	log.Printf("tts: offline engine created, sample_rate=%d, num_threads=%d", e.sampleRate, numThreads)
+	slog.Info("tts_offline_engine_created", "sample_rate", e.sampleRate, "num_threads", numThreads)
 	return e, nil
 }
 
@@ -171,8 +171,7 @@ func (e *Engine) synthesizeOffline(text string, speed float32) (*SynthesizeResul
 	}
 
 	dur := float64(len(audio.Samples)) / float64(audio.SampleRate)
-	log.Printf("tts: offline synthesized %d samples (%.1fs) for %d chars",
-		len(audio.Samples), dur, len([]rune(text)))
+	slog.Info("tts_offline_synthesized", "samples", len(audio.Samples), "duration_sec", dur, "chars", len([]rune(text)))
 
 	return &SynthesizeResult{
 		Samples:    audio.Samples,
@@ -203,7 +202,7 @@ func (e *Engine) synthesizeOnline(text string, speed float32) (*SynthesizeResult
 		"text":     text,
 	}
 	if err := e.conn.WriteJSON(appendEvent); err != nil {
-		log.Printf("tts: write append failed, reconnecting: %v", err)
+		slog.Warn("tts_online_write_append_failed_reconnecting", "error", err)
 		e.closeLocked()
 		if err2 := e.ensureConnectedLocked(); err2 != nil {
 			e.mu.Unlock()
@@ -214,7 +213,7 @@ func (e *Engine) synthesizeOnline(text string, speed float32) (*SynthesizeResult
 			return nil, fmt.Errorf("tts: send input_text_buffer.append: %w", err)
 		}
 	}
-	log.Printf("tts: sent input_text_buffer.append (%d chars)", len([]rune(text)))
+	slog.Info("tts_online_sent_append", "chars", len([]rune(text)))
 
 	// Commit to trigger synthesis.
 	commitEvent := map[string]interface{}{
@@ -225,7 +224,7 @@ func (e *Engine) synthesizeOnline(text string, speed float32) (*SynthesizeResult
 		e.mu.Unlock()
 		return nil, fmt.Errorf("tts: send input_text_buffer.commit: %w", err)
 	}
-	log.Printf("tts: sent input_text_buffer.commit")
+	slog.Info("tts_online_sent_commit")
 
 	conn := e.conn
 	e.mu.Unlock()
@@ -243,9 +242,8 @@ func (e *Engine) synthesizeOnline(text string, speed float32) (*SynthesizeResult
 	}
 
 	dur := float64(len(allSamples)) / float64(e.sampleRate)
-	log.Printf("tts: online synthesized %d samples (%.1fs) for %d chars",
-		len(allSamples), dur, len([]rune(text)))
-	log.Printf("[timing] TTS: total=%dms", time.Since(t0).Milliseconds())
+	slog.Info("tts_online_synthesized", "samples", len(allSamples), "duration_sec", dur, "chars", len([]rune(text)))
+	slog.Info("tts_timing_total", "ms", time.Since(t0).Milliseconds())
 
 	// Close the connection after each synthesis. The DashScope TTS session
 	// is single-use (response.done closes the session). Reconnecting fresh
@@ -280,7 +278,7 @@ func (e *Engine) ensureConnectedLocked() error {
 		}
 		return fmt.Errorf("tts: websocket dial: %w", err)
 	}
-	log.Printf("tts: connected to %s (%dms)", wsURL, time.Since(t0).Milliseconds())
+	slog.Info("tts_online_connected", "url", wsURL, "ms", time.Since(t0).Milliseconds())
 
 	// Wait for session.created.
 	_, msg, err := conn.ReadMessage()
@@ -300,7 +298,7 @@ func (e *Engine) ensureConnectedLocked() error {
 	}
 	sess, _ := event["session"].(map[string]interface{})
 	sid, _ := sess["id"].(string)
-	log.Printf("tts: session.created id=%s", sid)
+	slog.Info("tts_online_session_created", "id", sid)
 
 	// Send session.update (commit mode).
 	updateEvent := map[string]interface{}{
@@ -318,8 +316,7 @@ func (e *Engine) ensureConnectedLocked() error {
 		conn.Close()
 		return fmt.Errorf("tts: send session.update: %w", err)
 	}
-	log.Printf("tts: sent session.update (voice=%s, mode=commit, format=%s, rate=%d)",
-		e.onlineVoice, e.onlineFormat, e.onlineSampleRate)
+	slog.Info("tts_online_sent_session_update", "voice", e.onlineVoice, "format", e.onlineFormat, "rate", e.onlineSampleRate)
 
 	// Wait for session.updated.
 	_, msg, err = conn.ReadMessage()
@@ -343,10 +340,10 @@ func (e *Engine) ensureConnectedLocked() error {
 		conn.Close()
 		return fmt.Errorf("tts: expected session.updated, got %q", et)
 	}
-	log.Printf("tts: session.updated")
+	slog.Info("tts_online_session_updated")
 
 	e.conn = conn
-	log.Printf("[timing] TTS: ws_connect+handshake=%dms", time.Since(t0).Milliseconds())
+	slog.Info("tts_timing_ws_connect_handshake", "ms", time.Since(t0).Milliseconds())
 	return nil
 }
 
@@ -361,7 +358,7 @@ func (e *Engine) readAudioLoop(conn *websocket.Conn, allSamples *[]float32) erro
 
 		var event map[string]interface{}
 		if err := json.Unmarshal(msg, &event); err != nil {
-			log.Printf("tts: parse event: %v", err)
+			slog.Warn("tts_online_parse_event", "error", err)
 			continue
 		}
 
@@ -375,17 +372,17 @@ func (e *Engine) readAudioLoop(conn *websocket.Conn, allSamples *[]float32) erro
 			}
 			raw, err := base64.StdEncoding.DecodeString(deltaB64)
 			if err != nil {
-				log.Printf("tts: decode base64 audio: %v", err)
+				slog.Warn("tts_online_decode_base64_audio", "error", err)
 				continue
 			}
 			samples := pcmToFloat32(raw)
 			*allSamples = append(*allSamples, samples...)
 
 		case "response.audio.done":
-			log.Printf("tts: response.audio.done")
+			slog.Info("tts_online_response_audio_done")
 
 		case "response.done":
-			log.Printf("tts: response.done")
+			slog.Info("tts_online_response_done")
 			return nil
 
 		case "error":
@@ -433,7 +430,7 @@ func (e *Engine) Close() {
 		}
 		e.conn.SetWriteDeadline(time.Now().Add(3 * time.Second))
 		if err := e.conn.WriteJSON(finishEvent); err != nil {
-			log.Printf("tts: session.finish write failed: %v", err)
+			slog.Warn("tts_online_session_finish_write_failed", "error", err)
 		}
 
 		// Read until session.finished or timeout.
@@ -446,7 +443,7 @@ func (e *Engine) Close() {
 			var event map[string]interface{}
 			if json.Unmarshal(msg, &event) == nil {
 				if t, _ := event["type"].(string); t == "session.finished" {
-					log.Printf("tts: session.finished (clean close)")
+					slog.Info("tts_online_session_finished_clean_close")
 					break
 				}
 			}
