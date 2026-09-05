@@ -5,7 +5,8 @@ package main
 
 import (
 	"embed"
-	"log"
+	"fmt"
+	"log/slog"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -26,13 +27,13 @@ import (
 var webAssets embed.FS
 
 func main() {
-	log.SetFlags(log.Ltime | log.Lshortfile)
-	log.Println("Avatar PC starting...")
+	setupLogging()
+	slog.Info("Avatar PC starting...")
 
 	// ── Load config ────────────────────────────────────────
 	cfg, err := config.Load()
 	if err != nil {
-		log.Printf("Warning: cfg.yml 加载失败 — 无法进行对话，数字人将使用默认响应 (error: %v)", err)
+		slog.Warn(fmt.Sprintf("cfg.yml 加载失败 — 无法进行对话，数字人将使用默认响应 (error: %v)", err))
 		cfg = &config.Config{
 			LLM: config.LLMConfig{
 				BaseURL: os.Getenv("AVATAR_LLM_BASE_URL"),
@@ -58,7 +59,7 @@ func main() {
 	}
 
 	// Print proxy state so the user knows at a glance.
-	log.Printf("main: %s", config.ProxyDesc(cfg.Proxy, cfg.ProxyDisabled))
+	slog.Info(fmt.Sprintf("main: %s", config.ProxyDesc(cfg.Proxy, cfg.ProxyDisabled)))
 
 	// ── Initialize TTS engine (offline Matcha-TTS or online Qwen-TTS) ──
 	ttsDir := tts.ModelsDir()
@@ -70,23 +71,25 @@ func main() {
 		Lexicon:       filepath.Join(ttsDir, "lexicon.txt"),
 	}, cfg.TTS.URL, cfg.TTS.Model, cfg.TTS.Voice, cfg.APIKey, cfg.TTS.Format, cfg.TTS.SampleRate, config.ProxyFunc(cfg.Proxy, cfg.ProxyDisabled))
 	if err != nil {
-		log.Fatalf("Failed to create TTS engine: %v", err)
+		slog.Error("Failed to create TTS engine", "error", err)
+		os.Exit(1)
 	}
 	defer ttsEngine.Close()
 
 	// Print TTS mode prominently.
-	log.Printf("══════════════════════════════════════")
+	slog.Info("══════════════════════════════════════")
 	if ttsMode == tts.ModeOnline {
-		log.Printf("  TTS 语音合成: 在线模式 (阿里云百炼 Qwen-TTS)")
+		slog.Info("  TTS 语音合成: 在线模式 (阿里云百炼 Qwen-TTS)")
 	} else {
-		log.Printf("  TTS 语音合成: 离线模式 (本地 Matcha-TTS)")
+		slog.Info("  TTS 语音合成: 离线模式 (本地 Matcha-TTS)")
 	}
-	log.Printf("══════════════════════════════════════")
+	slog.Info("══════════════════════════════════════")
 
 	// ── Initialize audio player ──────────────────────────────
 	player, err := audio.NewPlayer(ttsEngine.SampleRate())
 	if err != nil {
-		log.Fatalf("Failed to create audio player: %v", err)
+		slog.Error("Failed to create audio player", "error", err)
+		os.Exit(1)
 	}
 	player.WaitReady()
 	defer player.Close()
@@ -100,22 +103,22 @@ func main() {
 		Tokens: filepath.Join(asrDir, "tokens.txt"),
 	}, cfg.ASR.URL, cfg.ASR.Model, cfg.APIKey, cfg.ASR.Format, cfg.ASR.SampleRate, config.ProxyFunc(cfg.Proxy, cfg.ProxyDisabled))
 	if err != nil {
-		log.Printf("Warning: ASR engine init failed (continuing without ASR): %v", err)
+		slog.Warn(fmt.Sprintf("ASR engine init failed (continuing without ASR): %v", err))
 		asrEngine = nil
 	} else {
 		defer asrEngine.Close()
 	}
 
 	// Print ASR mode prominently.
-	log.Printf("══════════════════════════════════════")
+	slog.Info("══════════════════════════════════════")
 	if asrEngine == nil {
-		log.Printf("  ASR 语音识别: 未启用 (初始化失败)")
+		slog.Info("  ASR 语音识别: 未启用 (初始化失败)")
 	} else if asrMode == asr.ModeOnline {
-		log.Printf("  ASR 语音识别: 在线模式 (阿里云百炼 Qwen-ASR)")
+		slog.Info("  ASR 语音识别: 在线模式 (阿里云百炼 Qwen-ASR)")
 	} else {
-		log.Printf("  ASR 语音识别: 离线模式 (本地 SenseVoiceSmall)")
+		slog.Info("  ASR 语音识别: 离线模式 (本地 SenseVoiceSmall)")
 	}
-	log.Printf("══════════════════════════════════════")
+	slog.Info("══════════════════════════════════════")
 
 	// ── Initialize KWS engine (Zipformer wake word) ──────────
 	kwsDir := kws.ModelsDir()
@@ -129,7 +132,7 @@ func main() {
 	}
 	kwsEngine, err = kws.New(kwsDir, wakeWord)
 	if err != nil {
-		log.Printf("Warning: KWS engine init failed (continuing without wake word): %v", err)
+		slog.Warn(fmt.Sprintf("KWS engine init failed (continuing without wake word): %v", err))
 		kwsEngine = nil
 	} else {
 		defer kwsEngine.Close()
@@ -138,7 +141,7 @@ func main() {
 	// ── Initialize microphone capture ────────────────────────
 	capture, err := audio.NewCapture(audio.DefaultCaptureConfig())
 	if err != nil {
-		log.Printf("Warning: microphone capture init failed (continuing without audio input): %v", err)
+		slog.Warn(fmt.Sprintf("microphone capture init failed (continuing without audio input): %v", err))
 		capture = nil
 	}
 	// Capture is closed by sm.Stop() (it owns the capture lifecycle).
@@ -157,15 +160,16 @@ func main() {
 		ProxyFunc: config.ProxyFunc(cfg.Proxy, cfg.ProxyDisabled),
 	})
 	if llmClient.IsConfigured() {
-		log.Println("LLM client configured (streaming enabled)")
+		slog.Info("LLM client configured (streaming enabled)")
 	} else {
-		log.Println("LLM client NOT configured — set values in cfg.yml. Using fallback responses.")
+		slog.Info("LLM client NOT configured — set values in cfg.yml. Using fallback responses.")
 	}
 
 	// ── Create the renderer window (platform-specific) ──────
 	r, err := renderer.New(webAssets, cfg.IsFBXEnabled())
 	if err != nil {
-		log.Fatalf("Failed to create renderer: %v", err)
+		slog.Error("Failed to create renderer", "error", err)
+		os.Exit(1)
 	}
 	defer r.Close()
 
@@ -173,7 +177,7 @@ func main() {
 	sm := brain.NewStateMachine(ttsEngine, player, asrEngine, kwsEngine, llmClient, capture, brain.Config{
 		NoSpeechTimeout: cfg.NoSpeechTimeout(),
 	})
-	log.Printf("main: 多轮对话无语音超时 = %s（修改请改 cfg.yml 的 no_speech_timeout_sec）", cfg.NoSpeechTimeout())
+	slog.Info(fmt.Sprintf("main: 多轮对话无语音超时 = %s（修改请改 cfg.yml 的 no_speech_timeout_sec）", cfg.NoSpeechTimeout()))
 	defer sm.Stop() // must run before engine Close()s to avoid use-after-free crashes
 
 	// Start the FSM loop.
@@ -207,7 +211,7 @@ func main() {
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		<-sigCh
-		log.Println("Avatar PC shutting down...")
+		slog.Info("Avatar PC shutting down...")
 		// Send fade-out before closing.
 		r.SendMessage(map[string]string{"cmd": "fade_out"})
 		time.Sleep(1100 * time.Millisecond)

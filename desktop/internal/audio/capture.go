@@ -12,7 +12,7 @@ import "C"
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 	"sync"
 	"sync/atomic"
 	"unsafe"
@@ -89,8 +89,7 @@ func NewCapture(cfg CaptureConfig) (*Capture, error) {
 		return nil, err
 	}
 
-	log.Printf("audio: capture opened device=%q rate=%d channels=%d bufferMs=%d",
-		cfg.Device, cfg.SampleRate, cfg.Channels, cfg.BufferMs)
+	slog.Info("audio capture opened", "device", cfg.Device, "rate", cfg.SampleRate, "channels", cfg.Channels, "bufferMs", cfg.BufferMs)
 	return c, nil
 }
 
@@ -184,7 +183,7 @@ func (c *Capture) loop() {
 			// xrun or error — try to recover.
 			rec := C.snd_pcm_recover(c.handle, C.int(n), 1)
 			if rec < 0 {
-				log.Printf("audio: capture error: %s", alsaStrError(rec))
+				slog.Warn("audio capture error", "error", alsaStrError(rec))
 				return
 			}
 			continue
@@ -232,7 +231,7 @@ func (c *Capture) Close() {
 	if c.handle != nil {
 		C.snd_pcm_close(c.handle)
 		c.handle = nil
-		log.Printf("audio: capture closed")
+		slog.Info("audio capture closed")
 	}
 }
 
