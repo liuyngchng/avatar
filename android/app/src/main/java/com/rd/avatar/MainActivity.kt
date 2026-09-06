@@ -623,6 +623,10 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        // Stop the wake word foreground service so the microphone is
+        // released immediately — the user has explicitly closed the app.
+        stopWakeWordService()
+
         // Stop active audio operations first so their native resources
         // are released cleanly before the engines are torn down.
         audioRecorder.stopRecording()
