@@ -181,6 +181,11 @@ func (c *Client) IsConfigured() bool {
 	return c.config.BaseURL != "" && c.config.APIKey != ""
 }
 
+// Close releases the client's idle HTTP connections.
+func (c *Client) Close() {
+	c.http.CloseIdleConnections()
+}
+
 // doRequest sends the JSON body to the chat completions endpoint and
 // returns the response body reader.
 func (c *Client) doRequest(body []byte) (io.ReadCloser, error) {

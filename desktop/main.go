@@ -164,6 +164,7 @@ func main() {
 	} else {
 		slog.Info("LLM client NOT configured — set values in cfg.yml. Using fallback responses.")
 	}
+	defer llmClient.Close()
 
 	// ── Create the renderer window (platform-specific) ──────
 	r, err := renderer.New(webAssets, cfg.IsFBXEnabled())

@@ -10,6 +10,7 @@
 package main
 
 import (
+	"context"
 	"embed"
 	"flag"
 	"io/fs"
@@ -20,6 +21,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"syscall"
+	"time"
 
 	"github.com/liuyngchng/avatar-web/internal/asr"
 	"github.com/liuyngchng/avatar-web/internal/brain"
@@ -212,6 +214,7 @@ func main() {
 			slog.Warn("llm_client_missing_api_key")
 		}
 	}
+	defer llmClient.Close()
 
 	// ── Create the brain (state machine) ─────────────────────
 	sm := brain.NewStateMachine(ttsEngine, asrEngine, kwsEngine, llmClient, brain.Config{
@@ -263,7 +266,13 @@ func main() {
 	go func() {
 		<-sigCh
 		slog.Info("avatar_web_shutting_down")
-		server.Close()
+		// Graceful shutdown: wait up to 5s for in-flight requests/websockets.
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := server.Shutdown(shutdownCtx); err != nil {
+			slog.Warn("server_shutdown_error", "error", err)
+			_ = server.Close()
+		}
 	}()
 
 	// ── Determine whether to use HTTPS ──────────────────────

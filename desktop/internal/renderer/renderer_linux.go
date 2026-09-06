@@ -4,6 +4,7 @@ package renderer
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -17,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/liuyngchng/avatar-desktop/internal/brain"
 )
@@ -33,6 +35,8 @@ type gtkRenderer struct {
 	stdin  io.WriteCloser
 	events chan brain.Event
 	done   chan struct{}
+
+	srv *http.Server // asset HTTP server, shut down on Close
 
 	mu       sync.Mutex
 	closed   bool
@@ -114,6 +118,7 @@ func newPlatformRenderer(webFS fs.FS, enableFBX bool) (Renderer, error) {
 		stdin:  stdin,
 		events: make(chan brain.Event, 16),
 		done:   make(chan struct{}),
+		srv:    srv,
 	}
 
 	// Read events from the C process's stdout and forward them to the events
@@ -190,7 +195,7 @@ func (r *gtkRenderer) Run() {
 	<-r.done
 }
 
-// Close quits the UI process.
+// Close quits the UI process and shuts down the asset HTTP server.
 func (r *gtkRenderer) Close() {
 	r.mu.Lock()
 	if r.closed {
@@ -199,7 +204,18 @@ func (r *gtkRenderer) Close() {
 	}
 	r.closed = true
 	stdin := r.stdin
+	srv := r.srv
 	r.mu.Unlock()
+
+	if srv != nil {
+		// Stop serving assets; allow in-flight requests a brief grace period.
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(ctx)
+		r.mu.Lock()
+		r.srv = nil
+		r.mu.Unlock()
+	}
 
 	if stdin != nil {
 		// Ask the UI to quit gracefully.

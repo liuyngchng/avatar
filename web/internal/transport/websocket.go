@@ -125,22 +125,46 @@ func (s *Session) handlePacket(pkt WSPacket) {
 
 // forwardStates pushes state machine mode/emotion changes to the browser.
 func (s *Session) forwardStates() {
-	for state := range s.sm.StateChanges() {
-		s.writeJSON(state)
+	for {
+		select {
+		case state, ok := <-s.sm.StateChanges():
+			if !ok {
+				return
+			}
+			s.writeJSON(state)
+		case <-s.closeCh:
+			return
+		}
 	}
 }
 
 // forwardOutbound pushes viseme timelines and other messages to the browser.
 func (s *Session) forwardOutbound() {
-	for msg := range s.sm.Outbound() {
-		s.writeJSON(msg)
+	for {
+		select {
+		case msg, ok := <-s.sm.Outbound():
+			if !ok {
+				return
+			}
+			s.writeJSON(msg)
+		case <-s.closeCh:
+			return
+		}
 	}
 }
 
 // forwardAudio pushes TTS audio samples to the browser.
 func (s *Session) forwardAudio() {
-	for audio := range s.sm.AudioOut() {
-		s.writeJSON(audio)
+	for {
+		select {
+		case audio, ok := <-s.sm.AudioOut():
+			if !ok {
+				return
+			}
+			s.writeJSON(audio)
+		case <-s.closeCh:
+			return
+		}
 	}
 }
 
