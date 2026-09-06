@@ -623,7 +623,28 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        // Stop active audio operations first so their native resources
+        // are released cleanly before the engines are torn down.
+        audioRecorder.stopRecording()
+        audioPlayer.release()
+        recordingJob?.cancel()
+        currentSpeakJob?.cancel()
+
+        // Release native Sherpa-onnx engines (ASR + TTS).
+        asrEngine.destroy()
+        ttsEngine.destroy()
+
+        // Stop the HTTP config server if it was started.
+        if (configHttpServer.isRunning) {
+            configHttpServer.stop()
+        }
+
+        // Shut down the OkHttp connection pool / dispatcher.
+        llmClient.shutdown()
+
+        // Cancel all remaining coroutines in the activity scope.
         activityScope.cancel()
+
         super.onDestroy()
     }
 

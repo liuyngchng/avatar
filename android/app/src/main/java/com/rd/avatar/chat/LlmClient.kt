@@ -58,6 +58,12 @@ class LlmClient(private val configRepository: ConfigRepository) {
         .writeTimeout(30, TimeUnit.SECONDS)
         .build()
 
+    /** Release the OkHttp connection pool and dispatcher threads. */
+    fun shutdown() {
+        client.dispatcher.executorService.shutdown()
+        client.connectionPool.evictAll()
+    }
+
     private val defaultParams = LlmParams()
 
     suspend fun chat(
