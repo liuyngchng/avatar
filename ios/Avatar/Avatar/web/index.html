@@ -27,16 +27,6 @@
     #canvas.visible { opacity: 1; }
     #canvas.fading { opacity: 0; }
 
-    /* Status overlay */
-    .status {
-      position: fixed; bottom: 40px; left: 0; right: 0;
-      text-align: center; color: rgba(255,255,255,0.7);
-      font-family: 'PingFang SC', 'Microsoft YaHei', sans-serif;
-      font-size: 16px; pointer-events: none;
-      transition: opacity 0.3s;
-    }
-    .status.hidden { opacity: 0; }
-
     /* Subtitle overlay */
     .subtitle {
       position: fixed; bottom: 80px; left: 0; right: 0;
@@ -93,7 +83,6 @@
     <div class="loading-text">加载中...</div>
   </div>
   <canvas id="canvas"></canvas>
-  <div class="status" id="status"></div>
   <div class="subtitle hidden" id="subtitle"></div>
 
   <!-- All JS loaded locally -->
@@ -290,7 +279,6 @@
       console.log('VRM loaded:', vrm.meta?.metaVersion);
 
       buildEmotionMorphMap();
-      updateStatus();
 
       setTimeout(fitWindowToAvatar, 100);
 
@@ -422,7 +410,15 @@
       window._placeholder = { group, headGroup, mouth, leftEye, rightEye };
 
       console.log('Placeholder avatar created');
-      updateStatus();
+
+      // Show a hint in the subtitle so the user knows why the avatar is simplified.
+      const subtitleEl = document.getElementById('subtitle');
+      if (webgl2Unsupported) {
+        subtitleEl.textContent = '系统版本低于 iOS 15，已使用简易形象';
+      } else {
+        subtitleEl.textContent = 'VRM 模型加载失败，已使用简易形象';
+      }
+      subtitleEl.classList.remove('hidden');
 
       setTimeout(() => {
         canvas.classList.add('visible');
@@ -607,20 +603,6 @@
     }
 
     // ─── Status UI ──────────────────────────────────────────
-    function updateStatus() {
-      const el = document.getElementById('status');
-      if (webgl2Unsupported) {
-        el.textContent = '系统版本低于 iOS 15，已使用简易形象';
-        return;
-      }
-      switch (currentMode) {
-        case 'idle':      el.textContent = ''; break;
-        case 'listening': el.textContent = '聆听中...'; break;
-        case 'thinking':  el.textContent = '思考中...'; break;
-        case 'speaking':  el.textContent = ''; break;
-      }
-    }
-
     function updateSubtitle(text) {
       const el = document.getElementById('subtitle');
       if (text && text.length > 0) {
@@ -655,7 +637,6 @@
           currentMode = msg.mode;
           isSpeaking = msg.isSpeaking || false;
           if (msg.emotion) currentEmotion = msg.emotion;
-          updateStatus();
           updateSubtitle(msg.speakingText);
 
           if (currentMode === 'speaking' && pendingTimeline) {

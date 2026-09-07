@@ -246,6 +246,8 @@ class RobotViewModel: ObservableObject {
                     self.selectedSid = (self.ttsNumSpeakers > 0) ? min(saved, self.ttsNumSpeakers - 1) : 0
                     // One-time ambient noise calibration for VAD
                     self.calibrateNoiseOnce()
+                    // Auto-start wake word detection by default
+                    self.startWakeWordDetection()
                 } else {
                     self.errorMessage = "模型加载失败，请检查模型文件"
                 }

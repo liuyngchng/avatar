@@ -27,19 +27,30 @@ enum ModelDownloadState: Equatable {
 
 private actor OperationQueue {
     private var lastTask: Task<Void, Never>?
+    private var pendingCount: Int = 0
 
-    func enqueue(_ operation: @escaping () async -> Void) {
+    func enqueue(_ operation: @escaping () async -> Void, onQueue: (@MainActor () -> Void)? = nil) {
+        if pendingCount > 0 {
+            // There is already a task running — surface "queued" to the UI.
+            Task { @MainActor in onQueue?() }
+        }
+        pendingCount += 1
         let prev = lastTask
         lastTask = Task {
             await prev?.value
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled else {
+                pendingCount -= 1
+                return
+            }
             await operation()
+            pendingCount -= 1
         }
     }
 
     func cancelAll() {
         lastTask?.cancel()
         lastTask = nil
+        pendingCount = 0
     }
 }
 
@@ -261,54 +272,49 @@ final class ModelManager: ObservableObject {
     func downloadAsrModel() {
         guard asrState != .completed(Date()) else { return }
         modelLog.info("downloadAsrModel enqueued")
-        asrState = .queued
         Task {
-            await queue.enqueue { [weak self] in
+            await queue.enqueue({ [weak self] in
                 await self?._downloadAsrModel()
-            }
+            }, onQueue: { [weak self] in self?.asrState = .queued })
         }
     }
 
     func downloadTtsModel() {
         guard ttsState != .completed(Date()) else { return }
         modelLog.info("downloadTtsModel enqueued")
-        ttsState = .queued
         Task {
-            await queue.enqueue { [weak self] in
+            await queue.enqueue({ [weak self] in
                 await self?._downloadTtsModel()
-            }
+            }, onQueue: { [weak self] in self?.ttsState = .queued })
         }
     }
 
     func downloadKwsModel() {
         guard kwsState != .completed(Date()) else { return }
         modelLog.info("downloadKwsModel enqueued")
-        kwsState = .queued
         Task {
-            await queue.enqueue { [weak self] in
+            await queue.enqueue({ [weak self] in
                 await self?._downloadKwsModel()
-            }
+            }, onQueue: { [weak self] in self?.kwsState = .queued })
         }
     }
 
     func downloadVocoderModel() {
         guard vocoderState != .completed(Date()) else { return }
         modelLog.info("downloadVocoderModel enqueued")
-        vocoderState = .queued
         Task {
-            await queue.enqueue { [weak self] in
+            await queue.enqueue({ [weak self] in
                 await self?._downloadVocoderModel()
-            }
+            }, onQueue: { [weak self] in self?.vocoderState = .queued })
         }
     }
 
     func importVocoderModel(from sourceURL: URL, cleanup: (() -> Void)? = nil) {
         modelLog.info("importVocoderModel enqueued: \(sourceURL.lastPathComponent)")
-        vocoderState = .queued
         Task {
-            await queue.enqueue { [weak self] in
+            await queue.enqueue({ [weak self] in
                 await self?._importVocoderModel(from: sourceURL, cleanup: cleanup)
-            }
+            }, onQueue: { [weak self] in self?.vocoderState = .queued })
         }
     }
 
@@ -316,31 +322,28 @@ final class ModelManager: ObservableObject {
 
     func importAsrModel(from sourceURL: URL, cleanup: (() -> Void)? = nil) {
         modelLog.info("importAsrModel enqueued: \(sourceURL.lastPathComponent)")
-        asrState = .queued
         Task {
-            await queue.enqueue { [weak self] in
+            await queue.enqueue({ [weak self] in
                 await self?._importAsrModel(from: sourceURL, cleanup: cleanup)
-            }
+            }, onQueue: { [weak self] in self?.asrState = .queued })
         }
     }
 
     func importTtsModel(from sourceURL: URL, cleanup: (() -> Void)? = nil) {
         modelLog.info("importTtsModel enqueued: \(sourceURL.lastPathComponent)")
-        ttsState = .queued
         Task {
-            await queue.enqueue { [weak self] in
+            await queue.enqueue({ [weak self] in
                 await self?._importTtsModel(from: sourceURL, cleanup: cleanup)
-            }
+            }, onQueue: { [weak self] in self?.ttsState = .queued })
         }
     }
 
     func importKwsModel(from sourceURL: URL, cleanup: (() -> Void)? = nil) {
         modelLog.info("importKwsModel enqueued: \(sourceURL.lastPathComponent)")
-        kwsState = .queued
         Task {
-            await queue.enqueue { [weak self] in
+            await queue.enqueue({ [weak self] in
                 await self?._importKwsModel(from: sourceURL, cleanup: cleanup)
-            }
+            }, onQueue: { [weak self] in self?.kwsState = .queued })
         }
     }
 
@@ -421,7 +424,9 @@ final class ModelManager: ObservableObject {
         defer { cleanup?() }
 
         do {
-            let data = try Data(contentsOf: sourceURL, options: [])
+            let data = try await Task.detached(priority: .userInitiated) {
+                try Data(contentsOf: sourceURL, options: [])
+            }.value
             try? fm.removeItem(at: destFile)
             try data.write(to: destFile)
             vocoderState = .completed(Date())
