@@ -25,16 +25,8 @@
     #canvas.visible { opacity: 1; }
     #canvas.fading { opacity: 0; }
 
-    /* Status text ("聆听中...", "思考中...") */
-    .status {
-      position: fixed; bottom: 40px; left: 0; right: 0;
-      z-index: 2;
-      text-align: center; color: rgba(255,255,255,0.7);
-      font-family: 'PingFang SC', 'Microsoft YaHei', sans-serif;
-      font-size: 16px; pointer-events: none;
-      transition: opacity 0.3s;
-    }
-    .status.hidden { opacity: 0; }
+    /* Status text is shown by the native Swift overlay (RobotMainScreen) —
+       no duplicate status element in the WebView. */
 
     /* Robot speaking subtitle */
     .subtitle {
@@ -55,7 +47,9 @@
          1px  1px 0 rgba(0,0,0,0.85),
          0 2px 6px rgba(0,0,0,0.6);
       transition: opacity 0.3s;
-      word-break: break-word;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
     .subtitle.hidden { opacity: 0; }
 
@@ -78,7 +72,9 @@
          1px  1px 0 rgba(0,0,0,0.85),
          0 2px 6px rgba(0,0,0,0.6);
       transition: opacity 0.3s;
-      word-break: break-word;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
     .user-subtitle.hidden { opacity: 0; }
 
@@ -115,7 +111,6 @@
     <div class="loading-text">加载中...</div>
   </div>
   <canvas id="canvas"></canvas>
-  <div class="status" id="status"></div>
   <div class="subtitle hidden" id="subtitle"></div>
   <div class="user-subtitle hidden" id="userSubtitle"></div>
 
@@ -338,7 +333,6 @@
       console.log('Window size:', window.innerWidth, 'x', window.innerHeight);
 
       buildEmotionMorphMap();
-      updateStatus();
 
       // Load FBX animations and initialize the mixer (if enabled).
       if (enableFBX) {
@@ -520,7 +514,6 @@
 
       window._placeholder = { group, headGroup, mouth, leftEye, rightEye };
       console.log('Placeholder avatar created');
-      updateStatus();
 
       // Show a hint in the subtitle so the user knows why the avatar is simplified.
       const subtitleEl = document.getElementById('subtitle');
@@ -775,21 +768,22 @@
       group.rotation.z = Math.sin(t * 0.7) * 0.01;
     }
 
-    // ─── Status UI ──────────────────────────────────────────
-    function updateStatus() {
-      const el = document.getElementById('status');
-      switch (currentMode) {
-        case 'idle':      el.textContent = ''; break;
-        case 'listening': el.textContent = '聆听中...'; break;
-        case 'thinking':  el.textContent = '思考中...'; break;
-        case 'speaking':  el.textContent = ''; break;
-      }
+    // ─── Subtitle UI ──────────────────────────────────────────
+    // Max display length per subtitle line, counted in Unicode code points
+    // (not bytes / UTF-16 units) so CJK chars and emoji are never split.
+    const MAX_SPEAK_CHARS = 18;   // 22px speaking subtitle
+    const MAX_USER_CHARS = 26;    // 15px user subtitle
+
+    function truncateByChars(text, maxChars) {
+      const chars = Array.from(text); // iterates by code point, not code unit
+      if (chars.length <= maxChars) return text;
+      return chars.slice(0, maxChars).join('') + '…';
     }
 
     function updateSubtitle(text) {
       const el = document.getElementById('subtitle');
       if (text && text.length > 0) {
-        el.textContent = text;
+        el.textContent = truncateByChars(text, MAX_SPEAK_CHARS);
         el.classList.remove('hidden');
       } else {
         el.classList.add('hidden');
@@ -799,7 +793,7 @@
     function updateUserSubtitle(text) {
       const el = document.getElementById('userSubtitle');
       if (text && text.length > 0) {
-        el.textContent = text;
+        el.textContent = truncateByChars(text, MAX_USER_CHARS);
         el.classList.remove('hidden');
       } else {
         el.classList.add('hidden');
@@ -827,19 +821,23 @@
           return;
         }
         if (msg.mode) {
+          const prevMode = currentMode;
           currentMode = msg.mode;
           isSpeaking = msg.isSpeaking || false;
           if (msg.emotion) currentEmotion = msg.emotion;
-          updateStatus();
           updateSubtitle(msg.speakingText);
           updateUserSubtitle(msg.userText || '');
 
-          // Stop idle FBX animations when entering conversation modes.
+          // Stop idle FBX animations when entering conversation modes, and
+          // only reset the idle countdown on an actual mode *transition*.
+          // Swift pushes a "idle" state every time blink/antic mutates
+          // RobotState (every 2–5s); resetting the timer unconditionally
+          // would keep the 10s idle timer from ever elapsing.
           if (currentMode !== 'idle') {
             stopIdleAnimations();
             idleAnimTimer = 0;
-          } else {
-            // Reset idle timer when returning to idle (fresh countdown).
+          } else if (prevMode !== 'idle') {
+            // Fresh countdown when returning to idle from another mode.
             idleAnimTimer = 0;
           }
 
