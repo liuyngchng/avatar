@@ -4,9 +4,10 @@
 //
 // HTTPS:
 //
-//	If cert.pem and key.pem exist in the working directory, the server
-//	automatically serves HTTPS. Otherwise, plain HTTP.
-//	Generate them with:  ./avatar-server -gen-cert
+//	The server always serves HTTPS. If cert.pem / key.pem don't exist
+//	on startup, a self-signed certificate is regenerated automatically so
+//	the server never falls back to plain HTTP.
+//	You can also (re)generate them manually with:  ./avatar-server -gen-cert
 package main
 
 import (
@@ -275,7 +276,12 @@ func main() {
 		}
 	}()
 
-	// ── Determine whether to use HTTPS ──────────────────────
+	// ── Always serve HTTPS ──────────────────────────────────
+	// The certificate is generated on first run (and never committed to
+	// git). If the cert/key are missing — deleted, or a new machine whose
+	// IP differs — regenerate them on startup so the server always starts
+	// in HTTPS mode. getUserMedia needs a secure context (HTTPS or
+	// localhost) to grant microphone access.
 	certFile := cfg.Server.CertFile
 	keyFile := cfg.Server.KeyFile
 	if certFile == "" {
@@ -285,31 +291,29 @@ func main() {
 		keyFile = defaultKeyFile
 	}
 
-	useTLS := fileExists(certFile) && fileExists(keyFile)
+	if !fileExists(certFile) || !fileExists(keyFile) {
+		ips := certgen.LocalIPs()
+		slog.Info("certificate_missing_regenerating")
+		for _, ip := range ips {
+			slog.Info("cert_san_ip", "ip", ip.String())
+		}
+		if err := certgen.Generate(certFile, keyFile, []string{"localhost"}, ips); err != nil {
+			slog.Error("certificate_generation_failed", "error", err)
+			os.Exit(1)
+		}
+		slog.Info("certificate_written_to", "path", certFile)
+		slog.Info("private_key_written_to", "path", keyFile)
+	}
 
-	if useTLS {
-		ips := certgen.LocalIPs()
-		slog.Info("listening_on_https_localhost", "addr", "localhost"+addr)
-		for _, ip := range ips {
-			slog.Info("listening_on_https_ip", "addr", ip.String()+addr)
-		}
-		slog.Info("open_https_in_browser", "url", "https://localhost"+addr)
-		if err := server.ListenAndServeTLS(certFile, keyFile); err != http.ErrServerClosed {
-			slog.Error("server_listen_tls_error", "error", err)
-			os.Exit(1)
-		}
-	} else {
-		ips := certgen.LocalIPs()
-		slog.Info("listening_on_http_localhost", "addr", "localhost"+addr)
-		for _, ip := range ips {
-			slog.Info("listening_on_http_ip", "addr", ip.String()+addr)
-		}
-		slog.Info("open_http_in_browser", "url", "http://localhost"+addr)
-		slog.Info("tip: run -gen-cert for https")
-		if err := server.ListenAndServe(); err != http.ErrServerClosed {
-			slog.Error("server_listen_error", "error", err)
-			os.Exit(1)
-		}
+	ips := certgen.LocalIPs()
+	slog.Info("listening_on_https_localhost", "addr", "localhost"+addr)
+	for _, ip := range ips {
+		slog.Info("listening_on_https_ip", "addr", ip.String()+addr)
+	}
+	slog.Info("open_https_in_browser", "url", "https://localhost"+addr)
+	if err := server.ListenAndServeTLS(certFile, keyFile); err != http.ErrServerClosed {
+		slog.Error("server_listen_tls_error", "error", err)
+		os.Exit(1)
 	}
 
 	slog.Info("avatar_web_stopped")

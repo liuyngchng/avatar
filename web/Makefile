@@ -25,13 +25,26 @@ SHERPA_LIBS     := libsherpa-onnx-c-api.so libonnxruntime.so libsherpa-onnx-cxx-
 # and falls back to the Go module cache on the build machine.
 export CGO_LDFLAGS = -Wl,-rpath,$$ORIGIN/lib
 
-# Default target (with garble obfuscation); auto-installs garble if missing
-build: $(GARBLE)
+# Default target (with garble obfuscation + JS obfuscation)
+build: obfuscate-js $(GARBLE)
 	$(GARBLE) -literals -tiny build -o avatar-server .
 	$(MAKE) copy-libs
 
-# Plain build (no obfuscation, for debugging)
+# ── JS obfuscation (our own code only, third-party libs untouched) ──
+# Uses javascript-obfuscator in light mode: string-array + rename, no
+# control-flow flattening so it won't hurt animation-loop performance.
+obfuscate-js:
+	@echo "Obfuscating app.js..."
+	npx --yes javascript-obfuscator web/js/app.js \
+	  --output web/js/app.min.js \
+	  --string-array true \
+	  --string-array-encoding base64 \
+	  --identifier-names-generator hexadecimal
+
+# Plain build (no obfuscation, for debugging) — copies app.js directly
+# so you can set breakpoints and read the source in devtools.
 build-dev:
+	cp web/js/app.js web/js/app.min.js
 	go build -o avatar-server .
 	$(MAKE) copy-libs
 
@@ -79,4 +92,4 @@ package: build
 
 # Clean
 clean:
-	rm -rf avatar-server lib $(DISTNAME) $(PKG)
+	rm -rf avatar-server lib $(DISTNAME) $(PKG) web/js/app.min.js

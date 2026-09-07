@@ -84,6 +84,7 @@ web/cert.pem
 web/key.pem
 web/lib/
 web/*.tar
+web/web/js/app.min.js
 
 # ── Secrets ───────────────────────────────────────────
 *.keystore

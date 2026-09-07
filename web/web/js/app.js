@@ -1,0 +1,1260 @@
+    import * as THREE from 'three';
+    import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+    import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
+    import { mixamoVRMRigMap } from './mixamoVRMRigMap.js';
+    import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm';
+
+    // ─── WebSocket ──────────────────────────────────────────
+    const wsUrl = (location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + location.host + '/ws';
+    let ws = null;
+    let wsReconnectTimer = null;
+
+    function connectWS() {
+      if (ws && ws.readyState === WebSocket.OPEN) return;
+      console.log('[WS] Connecting to', wsUrl);
+      ws = new WebSocket(wsUrl);
+
+      ws.onopen = () => {
+        console.log('[WS] Connected');
+        updateConnectionStatus(true);
+        if (wsReconnectTimer) { clearTimeout(wsReconnectTimer); wsReconnectTimer = null; }
+      };
+
+      ws.onmessage = (ev) => {
+        try {
+          const msg = JSON.parse(ev.data);
+          handleServerMessage(msg);
+        } catch (e) {
+          console.error('[WS] Bad message:', e);
+        }
+      };
+
+      ws.onclose = () => {
+        console.log('[WS] Disconnected');
+        updateConnectionStatus(false);
+        wsReconnectTimer = setTimeout(connectWS, 2000);
+      };
+
+      ws.onerror = (err) => {
+        console.error('[WS] Error:', err);
+      };
+    }
+
+    let wsConnected = false;
+    let avatarReady = false;
+
+    function updateConnectionStatus(connected) {
+      wsConnected = connected;
+      refreshConnectionUI();
+    }
+
+    function setAvatarReady() {
+      avatarReady = true;
+      refreshConnectionUI();
+    }
+
+    function refreshConnectionUI() {
+      const el = document.getElementById('connection');
+      el.classList.remove('connecting', 'connected');
+      if (wsConnected && avatarReady) {
+        el.classList.add('connected');
+      } else if (wsConnected) {
+        el.classList.add('connecting');
+      } else {
+        el.classList.add('connecting');
+      }
+    }
+
+    function sendWS(data) {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify(data));
+      }
+    }
+
+    // ─── Web Audio API: Microphone capture ──────────────────
+    let audioCtx = null;
+    let micStream = null;
+    let micNode = null;
+    let micProcessor = null;
+    const TARGET_SAMPLE_RATE = 16000;
+    const BUFFER_MS = 100; // send audio every 100ms
+
+    async function startMic() {
+      try {
+        micStream = await navigator.mediaDevices.getUserMedia({
+          audio: { sampleRate: TARGET_SAMPLE_RATE, channelCount: 1, echoCancellation: true, noiseSuppression: true }
+        });
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: TARGET_SAMPLE_RATE });
+        micNode = audioCtx.createMediaStreamSource(micStream);
+
+        // Use ScriptProcessorNode for simplicity (sends raw PCM).
+        // Buffer size: sampleRate * bufferMs / 1000 = 1600 samples per chunk.
+        const bufferSize = Math.floor(TARGET_SAMPLE_RATE * BUFFER_MS / 1000);
+        // Round to nearest power of 2 for ScriptProcessorNode compatibility.
+        const sizes = [256, 512, 1024, 2048, 4096, 8192, 16384];
+        let actualSize = bufferSize;
+        for (const s of sizes) { if (s >= bufferSize) { actualSize = s; break; } }
+
+        micProcessor = audioCtx.createScriptProcessor(actualSize, 1, 1);
+        micProcessor.onaudioprocess = (e) => {
+          if (ws && ws.readyState === WebSocket.OPEN) {
+            const input = e.inputBuffer.getChannelData(0);
+            // Convert Float32Array to regular array for JSON serialization.
+            const samples = Array.from(input);
+            sendWS({ type: 'audio', data: samples });
+          }
+        };
+
+        micNode.connect(micProcessor);
+        micProcessor.connect(audioCtx.destination); // Must connect to destination for ScriptProcessor to fire.
+
+        console.log('[Mic] Started, bufferSize=' + actualSize + ' samples, rate=' + audioCtx.sampleRate);
+        document.getElementById('micPrompt').classList.add('hidden');
+      } catch (err) {
+        console.error('[Mic] Permission denied or error:', err);
+        document.getElementById('micPrompt').classList.remove('hidden');
+      }
+    }
+
+    let micStarted = false;
+    document.getElementById('micAllowBtn').addEventListener('click', () => {
+      startMic().then(() => { micStarted = true; });
+    });
+
+    // Auto-request mic permission on load.
+    startMic().then(() => { micStarted = true; });
+
+    // ─── Web Audio API: Audio playback ──────────────────────
+    let playAudioCtx = null;
+
+    function ensurePlayAudioCtx() {
+      if (!playAudioCtx) {
+        playAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      }
+      if (playAudioCtx.state === 'suspended') {
+        playAudioCtx.resume();
+      }
+      return playAudioCtx;
+    }
+
+    function playAudioSamples(samples, sampleRate) {
+      const ctx = ensurePlayAudioCtx();
+      const buffer = ctx.createBuffer(1, samples.length, sampleRate);
+      const channelData = buffer.getChannelData(0);
+      for (let i = 0; i < samples.length; i++) {
+        channelData[i] = samples[i];
+      }
+      const source = ctx.createBufferSource();
+      source.buffer = buffer;
+      source.connect(ctx.destination);
+      source.start();
+      console.log('[Audio] Playing ' + samples.length + ' samples @ ' + sampleRate + 'Hz');
+    }
+
+    // ─── Globals ────────────────────────────────────────────
+    let vrm = null;
+    let clock = new THREE.Clock();
+    let currentMode = 'idle';
+    let currentEmotion = 'neutral';
+    let isSpeaking = false;
+
+    // ─── Emotion → upper-face morph mapping ────────────────────
+    // We drive the per-part eyebrow (BRW) and eye (EYE) morphs directly
+    // instead of the VRM preset expressions, because the presets
+    // (e.g. "happy" = Fcl_ALL_Joy) also move the mouth and fight with
+    // viseme lip-sync. Mouth stays 100% viseme-controlled.
+    const emotionMorphNames = {
+      happy:     ['Face_Blendshape.Fcl_BRW_Joy',      'Face_Blendshape.Fcl_EYE_Joy'],
+      angry:     ['Face_Blendshape.Fcl_BRW_Angry',    'Face_Blendshape.Fcl_EYE_Angry'],
+      sad:       ['Face_Blendshape.Fcl_BRW_Sorrow',   'Face_Blendshape.Fcl_EYE_Sorrow'],
+      surprised: ['Face_Blendshape.Fcl_BRW_Surprised','Face_Blendshape.Fcl_EYE_Surprised'],
+      relaxed:   ['Face_Blendshape.Fcl_BRW_Fun',      'Face_Blendshape.Fcl_EYE_Fun'],
+    };
+    let faceMesh = null;                       // first Face mesh (for morphTargetDictionary lookup)
+    let faceMeshes = [];                       // all Face mesh primitives (need morphs on all)
+    let emotionMorphMap = {};                  // emotion -> [morphIndex, ...]
+    let managedEmotionIndices = [];            // every index we touch, for clearing
+
+    // FBX animation toggle — read from URL query parameter.
+    // Defaults to true (enabled). Set enable_fbx=0 to disable.
+    const enableFBX = !(new URLSearchParams(window.location.search).get('enable_fbx') === '0');
+
+    // Viseme state (for smooth lerp)
+    // VRM1 uses: aa, ih, ou, ee, oh (not A/I/U/E/O)
+    let visemeTargets = { aa: 0, ih: 0, ou: 0, ee: 0, oh: 0 };
+    let visemeCurrent = { aa: 0, ih: 0, ou: 0, ee: 0, oh: 0 };
+    let visemeBlendSpeed = 8.0; // how fast visemes transition
+
+    // Pending viseme timeline
+    let pendingTimeline = null;
+
+    // Blink state (4-phase state machine: open → closing → closed → opening → open)
+    let blinkTimer = 0;
+    let blinkInterval = 3.0;    // seconds between blinks
+    let blinkValue = 0;
+    let blinkPhase = 'open';    // 'open' | 'closing' | 'closed' | 'opening'
+    let idleTime = 0;
+
+    const AVATAR_Y = -0.95;
+    const RIGHT_GAP_RATIO = 0.12; // 12% viewport-width gap from right edge
+    let currentAvatarX = 0;       // computed dynamically in fitCameraToWindow
+    const avatarBounds = { worldW: 1.1, worldH: 1.7, worldCenter: new THREE.Vector3(0, 0.85, 0) };
+
+    // Keyboard
+    const keys = { left: false, right: false, up: false, down: false, ctrl: false };
+
+    // Orbit state
+    let orbitActive = false;
+    let orbitTheta = 0;     // horizontal angle (radians), 0 = look from front
+    let orbitPhi = 0;       // vertical angle, positive = look from above
+    let orbitDist = 3.5;    // distance from camera to pivot
+    const orbitSpeed = 0.006; // radians per pixel of drag
+
+    // ─── FBX Animation System ────────────────────────────────
+    let mixer = null;              // THREE.AnimationMixer
+    let animationMap = new Map();  // name → THREE.AnimationAction
+    let currentAnimation = null;   // currently playing action name
+    const animCrossFadeDuration = 0.35; // seconds for cross-fade
+
+    // Idle animation system: after IDLE_ANIM_DELAY seconds of idle, randomly
+    // play FBX animations. When user interacts, stop animations and restore
+    // the default standing pose.
+    const IDLE_ANIM_DELAY = 10;
+    let idleAnimTimer = 0;
+    let idleAnimActive = false;
+    let idleAnimNextSwitch = 0;
+
+    const idleAnimPool = [
+      'Bored', 'CrossJumps', 'FightIdle', 'JumpingRope', 'Looking',
+      'LookingAround', 'MagicSpellCasting', 'OffensiveIdle',
+      'SearchingFilesHigh', 'StandingMagicAttack', 'TextingWhileStanding'
+    ];
+
+    const animConfig = {
+      idle:            'LookingAround',
+      listening:       'SearchingFilesHigh',
+      thinking:        'MagicSpellCasting',
+      speaking:        'TextingWhileStanding',
+      emotion_happy:   'JumpingRope',
+      emotion_angry:   'FightIdle',
+      emotion_sad:     'Bored',
+      emotion_surprised: 'OffensiveIdle',
+      emotion_relaxed: 'Looking',
+    };
+
+    // ─── Three.js Setup ─────────────────────────────────────
+    const canvas = document.getElementById('canvas');
+    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setClearColor(0x000000, 0); // fully transparent clear
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.toneMapping = THREE.NoToneMapping;
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(30, window.innerWidth / window.innerHeight, 0.1, 50);
+    camera.position.set(0, 0.9, 3.5);
+    camera.lookAt(0, 0.7, 0);
+
+    // ─── Lighting ───────────────────────────────────────────
+    scene.add(new THREE.AmbientLight('#ffffff', 0.8));
+
+    const keyLight = new THREE.DirectionalLight('#ffffff', 0.8);
+    keyLight.position.set(1.5, 2.5, 2);
+    keyLight.target.position.set(0, -0.5, 0);
+    keyLight.castShadow = true;
+    keyLight.shadow.mapSize.set(1024, 1024);
+    keyLight.shadow.camera.near = 0.1;
+    keyLight.shadow.camera.far = 20;
+    keyLight.shadow.camera.left = -3;
+    keyLight.shadow.camera.right = 3;
+    keyLight.shadow.camera.top = 3;
+    keyLight.shadow.camera.bottom = -3;
+    keyLight.shadow.bias = -0.0005;
+    scene.add(keyLight);
+    scene.add(keyLight.target);
+
+    const fillLight = new THREE.DirectionalLight('#d0e8ff', 0.4);
+    fillLight.position.set(-1, 0.3, -0.5);
+    scene.add(fillLight);
+
+    const rimLight = new THREE.DirectionalLight('#ffffff', 0.3);
+    rimLight.position.set(0.3, 1.5, -2.5);
+    scene.add(rimLight);
+
+    // ─── Ground: grid + shadow disc ─────────────────────────
+    const groundY = AVATAR_Y;
+
+    const shadowDisc = new THREE.Mesh(
+      new THREE.CircleGeometry(8, 48),
+      new THREE.ShadowMaterial({ opacity: 0.3 })
+    );
+    shadowDisc.rotation.x = -Math.PI / 2;
+    shadowDisc.position.y = groundY;
+    shadowDisc.receiveShadow = true;
+    scene.add(shadowDisc);
+
+    const gridHelper = new THREE.GridHelper(20, 40, 0x555555, 0x999999);
+    gridHelper.position.y = groundY;
+    gridHelper.material.opacity = 0.5;
+    gridHelper.material.transparent = true;
+    scene.add(gridHelper);
+
+    // ─── Load VRM ───────────────────────────────────────────
+    function updateLoadProgress(text, pct) {
+      const elt = document.getElementById('loading');
+      const textEl = elt.querySelector('.loading-text');
+      const fillEl = document.getElementById('progressFill');
+      const pctEl = document.getElementById('progressText');
+      if (textEl) textEl.textContent = text;
+      if (fillEl) fillEl.style.width = pct + '%';
+      if (pctEl) pctEl.textContent = pct > 0 ? pct + '%' : '';
+    }
+
+    async function loadVRM(url) {
+      const loader = new GLTFLoader();
+      loader.register((parser) => new VRMLoaderPlugin(parser));
+
+      updateLoadProgress('正在下载模型...', 0);
+
+      const gltf = await new Promise((resolve, reject) => {
+        loader.load(url, resolve,
+          (ev) => {
+            if (ev.total > 0) {
+              const pct = Math.round(ev.loaded / ev.total * 100);
+              updateLoadProgress('正在下载模型...', pct);
+            }
+          },
+          reject
+        );
+      });
+
+      updateLoadProgress('正在初始化...', 100);
+
+      vrm = gltf.userData.vrm;
+      VRMUtils.removeUnnecessaryVertices(gltf.scene);
+      VRMUtils.removeUnnecessaryJoints(gltf.scene);
+      VRMUtils.rotateVRM0(vrm);
+
+      scene.add(vrm.scene);
+      vrm.scene.position.set(0, AVATAR_Y, 0);
+
+      vrm.scene.traverse((obj) => {
+        if (obj.isMesh) { obj.castShadow = true; obj.receiveShadow = true; }
+      });
+
+      // Fix arms and fingers to natural standing pose.
+      restoreDefaultPose();
+
+      if (vrm.expressionManager) {
+        vrm.expressionManager.setValue('blink', 0);
+        vrm.expressionManager.setValue('blinkLeft', 0);
+        vrm.expressionManager.setValue('blinkRight', 0);
+      }
+
+      console.log('VRM loaded:', vrm.meta?.metaVersion);
+      console.log('Expressions:', Object.keys(vrm.expressionManager?.expressionMap || {}));
+
+      // Build the emotion → morphTargetInfluences map. We locate the Face
+      // mesh by name and resolve each morph name to its index so we can
+      // drive upper-face morphs directly (see emotionMorphNames above).
+      buildEmotionMorphMap();
+
+      // Load FBX animations and initialize the mixer (if enabled).
+      if (enableFBX) {
+        loadFBXAnimations().then(() => {
+          initAnimationMixer();
+        });
+      } else {
+        console.log('[FBX] FBX animation disabled by config (enable_fbx=0)');
+      }
+
+      setTimeout(fitWindowToAvatar, 100);
+
+      // Fade the avatar in once everything is ready.
+      setTimeout(() => {
+        canvas.classList.add('visible');
+        hideLoading();
+        setAvatarReady();
+        console.log('[INFO] 数字人淡入完成');
+      }, 300);
+    }
+
+    function restoreDefaultPose() {
+      if (!vrm?.humanoid) return;
+      const down = 77.4 * (Math.PI / 180);
+      const s = Math.sin(down / 2);
+      const c = Math.cos(down / 2);
+      const eS = Math.sin(4 * (Math.PI / 180));
+      const eC = Math.cos(4 * (Math.PI / 180));
+
+      const pose = {
+        leftUpperArm:  { rotation: [0, 0, -s, c] },
+        rightUpperArm: { rotation: [0, 0,  s, c] },
+        leftLowerArm:  { rotation: [0, 0,  eS, eC] },
+        rightLowerArm: { rotation: [0, 0, -eS, eC] },
+      };
+
+      const fingerBones = [
+        'leftThumbMetacarpal','leftThumbProximal','leftThumbIntermediate','leftThumbDistal',
+        'leftIndexProximal','leftIndexIntermediate','leftIndexDistal',
+        'leftMiddleProximal','leftMiddleIntermediate','leftMiddleDistal',
+        'leftRingProximal','leftRingIntermediate','leftRingDistal',
+        'leftLittleProximal','leftLittleIntermediate','leftLittleDistal',
+        'rightThumbMetacarpal','rightThumbProximal','rightThumbIntermediate','rightThumbDistal',
+        'rightIndexProximal','rightIndexIntermediate','rightIndexDistal',
+        'rightMiddleProximal','rightMiddleIntermediate','rightMiddleDistal',
+        'rightRingProximal','rightRingIntermediate','rightRingDistal',
+        'rightLittleProximal','rightLittleIntermediate','rightLittleDistal',
+      ];
+      const identity = [0, 0, 0, 1];
+      for (const name of fingerBones) {
+        pose[name] = { rotation: identity };
+      }
+
+      const fingerCurl = {
+        index:  { proximal: 0.15, intermediate: 0.25, distal: 0.15 },
+        middle: { proximal: 0.12, intermediate: 0.20, distal: 0.12 },
+        ring:   { proximal: 0.18, intermediate: 0.28, distal: 0.18 },
+        little: { proximal: 0.22, intermediate: 0.35, distal: 0.22 },
+      };
+      const thumbCurl = { meta: 0.10, prox: 0.15, inter: 0.10, dist: 0.08 };
+
+      const sides = ['left', 'right'];
+      for (const side of sides) {
+        const curlDir = side === 'left' ? -1 : 1;
+        for (const [finger, angles] of Object.entries(fingerCurl)) {
+          const cap = finger.charAt(0).toUpperCase() + finger.slice(1);
+          for (const [joint, angle] of Object.entries(angles)) {
+            const jointName = joint.charAt(0).toUpperCase() + joint.slice(1);
+            const boneName = side + cap + jointName;
+            const a = curlDir * angle;
+            const hs = Math.sin(a / 2);
+            const hc = Math.cos(a / 2);
+            pose[boneName] = { rotation: [0, 0, hs, hc] };
+          }
+        }
+        pose[side + 'ThumbMetacarpal']    = { rotation: [0, 0, Math.sin(curlDir * thumbCurl.meta / 2),  Math.cos(curlDir * thumbCurl.meta / 2)] };
+        pose[side + 'ThumbProximal']      = { rotation: [0, 0, Math.sin(curlDir * thumbCurl.prox / 2),  Math.cos(curlDir * thumbCurl.prox / 2)] };
+        pose[side + 'ThumbIntermediate']  = { rotation: [0, 0, Math.sin(curlDir * thumbCurl.inter / 2), Math.cos(curlDir * thumbCurl.inter / 2)] };
+        pose[side + 'ThumbDistal']        = { rotation: [0, 0, Math.sin(curlDir * thumbCurl.dist / 2),  Math.cos(curlDir * thumbCurl.dist / 2)] };
+      }
+
+      vrm.humanoid.setNormalizedPose(pose);
+    }
+
+    // ─── Try to load a local VRM model, fallback to a simple placeholder ──
+    async function initAvatar() {
+      try {
+        await loadVRM('/models/avatar.vrm');
+      } catch (err) {
+        console.error('VRM load failed:', err.message, err.stack);
+        console.warn('Falling back to placeholder avatar...');
+        createPlaceholderAvatar();
+      }
+    }
+
+    // ─── Placeholder avatar (simple geometric character) ────
+    function createPlaceholderAvatar() {
+      const group = new THREE.Group();
+
+      const bodyGeo = new THREE.CapsuleGeometry(0.22, 0.5, 8, 16);
+      const bodyMat = new THREE.MeshStandardMaterial({ color: '#4a6fa5', roughness: 0.3 });
+      const body = new THREE.Mesh(bodyGeo, bodyMat);
+      body.position.y = 0.75;
+      body.castShadow = true;
+      group.add(body);
+
+      const headGroup = new THREE.Group();
+      headGroup.position.y = 1.25;
+
+      const headGeo = new THREE.SphereGeometry(0.2, 32, 32);
+      const headMat = new THREE.MeshStandardMaterial({ color: '#f5e6d3', roughness: 0.4 });
+      const head = new THREE.Mesh(headGeo, headMat);
+      head.castShadow = true;
+      headGroup.add(head);
+
+      const eyeGeo = new THREE.SphereGeometry(0.045, 16, 16);
+      const eyeMat = new THREE.MeshStandardMaterial({ color: '#111111', roughness: 0.1 });
+      const leftEye = new THREE.Mesh(eyeGeo, eyeMat);
+      leftEye.position.set(-0.07, 0.04, -0.17);
+      headGroup.add(leftEye);
+      const rightEye = new THREE.Mesh(eyeGeo, eyeMat);
+      rightEye.position.set(0.07, 0.04, -0.17);
+      headGroup.add(rightEye);
+
+      const mouthGeo = new THREE.BoxGeometry(0.1, 0.02, 0.01);
+      const mouthMat = new THREE.MeshStandardMaterial({ color: '#cc4444', roughness: 0.3 });
+      const mouth = new THREE.Mesh(mouthGeo, mouthMat);
+      mouth.position.set(0, -0.06, -0.18);
+      mouth.name = 'mouth';
+      headGroup.add(mouth);
+
+      group.add(headGroup);
+      group.position.set(0, AVATAR_Y, 0);
+      scene.add(group);
+
+      window._placeholder = { group, headGroup, mouth, leftEye, rightEye };
+
+      console.log('Placeholder avatar created');
+
+      // Fade the placeholder avatar in and hide the loading overlay.
+      setTimeout(() => {
+        canvas.classList.add('visible');
+        hideLoading();
+        setAvatarReady();
+      }, 300);
+
+      setTimeout(fitWindowToAvatar, 100);
+    }
+
+    // ─── Animation Loop ─────────────────────────────────────
+    function animate() {
+      requestAnimationFrame(animate);
+      const dt = Math.min(clock.getDelta(), 0.1);
+      idleTime += dt;
+
+      updateOrbitCamera();
+
+      if (mixer) {
+        mixer.update(dt);
+      }
+
+      if (vrm) {
+        updateVRMBlink(dt);
+        updateVRMVisemes(dt);
+        updateVRMIdleMicro(dt);
+
+        if (currentMode === 'idle' && mixer && animationMap.size > 0) {
+          if (!idleAnimActive && !isSpeaking) {
+            idleAnimTimer += dt;
+            if (idleAnimTimer >= IDLE_ANIM_DELAY) {
+              startIdleAnimations();
+            }
+          }
+          if (idleAnimActive && idleAnimNextSwitch > 0 && idleTime >= idleAnimNextSwitch) {
+            playRandomIdleAnim();
+          }
+        }
+
+        // VRM needs to be updated each frame for expressions to apply.
+        // updateEmotionMorphs runs AFTER vrm.update() so the upper-face
+        // morphs are reapplied over the per-frame expression reset.
+        vrm.update(dt);
+        updateEmotionMorphs();
+      } else if (window._placeholder) {
+        updatePlaceholderBlink(dt);
+        updatePlaceholderMouth(dt);
+        updatePlaceholderIdle(dt);
+      }
+
+      renderer.render(scene, camera);
+    }
+
+    // ─── Orbit camera ──────────────────────────────────────
+    function updateOrbitCamera() {
+      const center = avatarBounds.worldCenter;
+      const sp = Math.sin(orbitPhi);
+      const cp = Math.cos(orbitPhi);
+      const st = Math.sin(orbitTheta);
+      const ct = Math.cos(orbitTheta);
+      camera.position.set(
+        center.x + orbitDist * cp * st,
+        center.y + orbitDist * sp,
+        center.z + orbitDist * cp * ct
+      );
+      camera.lookAt(center.x, center.y, center.z);
+    }
+
+    // ─── VRM: Blink (4-phase state machine) ──────────────────
+    function updateVRMBlink(dt) {
+      if (vrm.expressionManager && blinkValue > 0.001) {
+        vrm.expressionManager.setValue('blink', blinkValue);
+      }
+
+      if (blinkPhase === 'open') {
+        blinkTimer += dt;
+        if (blinkTimer > blinkInterval) {
+          blinkPhase = 'closing';
+          blinkTimer = 0;
+          blinkInterval = 2.5 + Math.random() * 4.0;
+        }
+        return;
+      }
+      if (blinkPhase === 'closing') {
+        blinkValue += dt * 12;
+        if (blinkValue >= 1.0) {
+          blinkValue = 1.0;
+          blinkPhase = 'closed';
+          blinkTimer = 0;
+        }
+        return;
+      }
+      if (blinkPhase === 'closed') {
+        blinkTimer += dt;
+        if (blinkTimer > 0.12) {
+          blinkPhase = 'opening';
+        }
+        return;
+      }
+      if (blinkPhase === 'opening') {
+        blinkValue -= dt * 12;
+        if (blinkValue <= 0) {
+          blinkValue = 0;
+          blinkPhase = 'open';
+          blinkTimer = 0;
+        }
+      }
+    }
+
+    // ─── VRM: Viseme (lip-sync) ─────────────────────────────
+    function updateVRMVisemes(dt) {
+      if (!vrm?.expressionManager) return;
+      const visemeNames = ['aa', 'ih', 'ou', 'ee', 'oh'];
+      const lerp = Math.min(visemeBlendSpeed * dt, 1.0);
+      for (const name of visemeNames) {
+        visemeCurrent[name] += (visemeTargets[name] - visemeCurrent[name]) * lerp;
+        vrm.expressionManager.setValue(name, visemeCurrent[name]);
+      }
+    }
+
+    // ─── VRM: Idle micro-movement ───────────────────────────
+    function updateVRMIdleMicro(dt) {
+      if (currentMode !== 'idle') return;
+      if (!vrm?.scene) return;
+      if (idleAnimActive) return;
+      const t = idleTime;
+      // Subtle breathing (layered on top of the fixed root height).
+      const breathe = Math.sin(t * 1.4) * 0.008;
+      vrm.scene.position.y = AVATAR_Y + breathe;
+      vrm.scene.position.x = currentAvatarX + Math.sin(t * 0.7) * 0.015;
+      vrm.scene.rotation.z = Math.sin(t * 0.7) * 0.015;
+      // Gentle body turn so the side profile is occasionally visible.
+      vrm.scene.rotation.y = Math.sin(t * 0.4) * 0.18;
+
+      // Keep the mouth slightly parted in idle so it's always visible.
+      visemeTargets['aa'] = 0.04 + Math.sin(t * 1.4) * 0.01;
+    }
+
+    // ─── Placeholder: Blink ─────────────────────────────────
+    let placeholderBlink = 0;
+    let placeholderBlinking = false;
+    let placeholderBlinkTimer = 0;
+
+    function updatePlaceholderBlink(dt) {
+      const { leftEye, rightEye } = window._placeholder;
+      placeholderBlinkTimer += dt;
+      const blinkInterval = 3.0;
+
+      if (!placeholderBlinking && placeholderBlinkTimer > blinkInterval) {
+        placeholderBlinking = true;
+        placeholderBlink = 0;
+      }
+      if (placeholderBlinking) {
+        placeholderBlink += dt * 10;
+        if (placeholderBlink >= 1.0) {
+          placeholderBlinkTimer += dt;
+          if (placeholderBlinkTimer > 0.15) {
+            placeholderBlink -= dt * 10;
+            if (placeholderBlink <= 0) {
+              placeholderBlink = 0;
+              placeholderBlinking = false;
+              placeholderBlinkTimer = 0;
+            }
+          }
+        }
+      }
+      const eyeScale = 1 - placeholderBlink * 0.9;
+      leftEye.scale.y = eyeScale;
+      rightEye.scale.y = eyeScale;
+    }
+
+    // ─── Placeholder: Mouth (speaking) ───────────────────────
+    let placeholderMouthTime = 0;
+    function updatePlaceholderMouth(dt) {
+      const { mouth } = window._placeholder;
+      if (!mouth) return;
+
+      if (isSpeaking) {
+        placeholderMouthTime += dt;
+        const openness = 0.5 + 0.5 * Math.sin(placeholderMouthTime * 12);
+        mouth.scale.y = 0.3 + openness * 8;
+        mouth.position.y = -0.06 - openness * 0.04;
+      } else {
+        mouth.scale.y = 0.3;
+        mouth.position.y = -0.06;
+      }
+    }
+
+    function updatePlaceholderIdle(dt) {
+      if (currentMode !== 'idle') return;
+      const { group } = window._placeholder;
+      if (!group) return;
+      const t = idleTime;
+      group.position.y = AVATAR_Y + Math.sin(t * 1.4) * 0.005;
+      group.position.x = currentAvatarX + Math.sin(t * 0.7) * 0.01;
+      group.rotation.z = Math.sin(t * 0.7) * 0.01;
+    }
+
+    // ─── Status UI ──────────────────────────────────────────
+    function updateStatus() {
+      const el = document.getElementById('status');
+
+      switch (currentMode) {
+        case 'idle':
+          el.textContent = '';
+          break;
+        case 'listening':
+          el.textContent = '聆听中...';
+          break;
+        case 'thinking':
+          el.textContent = '思考中...';
+          break;
+        case 'speaking':
+          el.textContent = '';
+          break;
+      }
+    }
+
+    function updateSubtitle(text) {
+      const el = document.getElementById('subtitle');
+      if (text && text.length > 0) {
+        el.textContent = text;
+        el.classList.remove('hidden');
+      } else {
+        el.classList.add('hidden');
+      }
+    }
+
+    function updateUserText(text) {
+      const el = document.getElementById('userText');
+      if (text && text.length > 0) {
+        el.textContent = '💬 ' + text;
+        el.classList.remove('hidden');
+      } else {
+        el.classList.add('hidden');
+      }
+    }
+
+    // ─── Handle server messages (WebSocket) ─────────────────
+    function handleServerMessage(msg) {
+      // State update: { mode, emotion, isSpeaking, speakingText, ... }
+      if (msg.mode) {
+        currentMode = msg.mode;
+        isSpeaking = msg.isSpeaking || false;
+        if (msg.emotion) currentEmotion = msg.emotion;
+        updateStatus();
+        updateSubtitle(msg.speakingText);
+        updateUserText(msg.lastUserText);
+
+        if (currentMode !== 'idle') {
+          stopIdleAnimations(); idleAnimTimer = 0;
+        } else {
+          idleAnimTimer = 0;
+        }
+        if (currentMode === 'speaking' && pendingTimeline) {
+          playVisemeTimeline(pendingTimeline);
+          pendingTimeline = null;
+        } else if (currentMode !== 'speaking') {
+          pendingTimeline = null;
+        }
+        applyModeToVRM();
+        return;
+      }
+
+      // Viseme timeline: { type: "viseme_timeline", timeline: [...] }
+      if (msg.type === 'viseme_timeline') {
+        if (currentMode === 'speaking') {
+          playVisemeTimeline(msg.timeline);
+        } else {
+          pendingTimeline = msg.timeline;
+        }
+        return;
+      }
+
+      // Single viseme: { type: "viseme", viseme: "...", weight: 0.5 }
+      if (msg.type === 'viseme') {
+        applyViseme(msg.viseme, msg.weight);
+        return;
+      }
+
+      // Audio packet: { samples: [...], sampleRate: 22050 }
+      if (msg.samples && msg.sampleRate) {
+        playAudioSamples(msg.samples, msg.sampleRate);
+        return;
+      }
+    }
+
+    // ─── Viseme timeline playback ───────────────────────────
+    let visemeTimers = [];
+    function playVisemeTimeline(timeline) {
+      if (!timeline || !timeline.length) return;
+
+      // Clear any previous pending timers.
+      clearVisemeTimers();
+
+      const start = performance.now();
+      for (const entry of timeline) {
+        const delay = Math.max(0, entry.startMs - (performance.now() - start));
+        const timer = setTimeout(() => {
+          if (entry.viseme === 'rest' || !entry.viseme) {
+            applyViseme('rest', 0);
+          } else {
+            applyViseme(entry.viseme, 1.0);
+          }
+        }, delay);
+        visemeTimers.push(timer);
+      }
+
+      // Reset mouth at the end of the timeline.
+      const lastStart = timeline.length > 0 ? timeline[timeline.length - 1].startMs : 0;
+      const resetTimer = setTimeout(() => {
+        applyViseme('rest', 0);
+      }, lastStart + 200);
+      visemeTimers.push(resetTimer);
+    }
+
+    // Clear all pending viseme timers. Called when a new timeline starts
+    // or when the page is about to be unloaded.
+    function clearVisemeTimers() {
+      for (const t of visemeTimers) clearTimeout(t);
+      visemeTimers = [];
+    }
+
+    function applyViseme(viseme, weight) {
+      if (!vrm?.expressionManager) return;
+      // VRM1 mouth visemes: aa, ih, ou, ee, oh
+      const mouthVisemes = ['aa', 'ih', 'ou', 'ee', 'oh'];
+
+      if (viseme === 'rest' || !viseme) {
+        // Reset all visemes (closed mouth).
+        for (const name of mouthVisemes) {
+          visemeTargets[name] = 0;
+        }
+        return;
+      }
+
+      // Set the target viseme to the given weight, others to 0.
+      for (const name of mouthVisemes) {
+        visemeTargets[name] = (name === viseme) ? weight : 0;
+      }
+    }
+
+    // ─── Apply mode/emotion/speaking state to VRM ──────────────
+    // Emotion no longer uses vrm.expressionManager presets (those move
+    // the mouth and clash with visemes). Instead updateEmotionMorphs()
+    // drives eyebrow/eye morphs directly every frame. This function only
+    // handles the non-face parts: resetting the mouth when not speaking.
+    function applyModeToVRM() {
+      if (!vrm?.expressionManager) return;
+
+      // Visemes are driven by real-time viseme messages from Go,
+      // not by the mode/emotion state. When not speaking, reset
+      // the mouth to closed.
+      if (!isSpeaking) {
+        applyViseme('rest', 0);
+      }
+
+      // Note: FBX animations are now managed by the idle animation system
+      // (startIdleAnimations / stopIdleAnimations), not by mode/emotion here.
+    }
+
+    // ─── Resolve emotion morph names to face-mesh indices ─────
+    function buildEmotionMorphMap() {
+      faceMesh = null;
+      faceMeshes = [];
+      emotionMorphMap = {};
+      managedEmotionIndices = [];
+
+      if (!vrm?.scene) return;
+
+      vrm.scene.traverse((obj) => {
+        // The Face mesh is split into 7 primitives, named "Face", "Face_1",
+        // ... by GLTFLoader. We must drive morphs on all of them.
+        if (obj.isMesh && typeof obj.name === 'string' && obj.name.startsWith('Face')) {
+          if (!faceMesh && obj.morphTargetDictionary) faceMesh = obj;
+          faceMeshes.push(obj);
+        }
+      });
+
+      if (!faceMesh || !faceMesh.morphTargetDictionary) {
+        console.warn('[emotion] Face mesh or morphTargetDictionary not found; emotion disabled');
+        return;
+      }
+
+      for (const [emotion, names] of Object.entries(emotionMorphNames)) {
+        const binds = [];
+        for (const name of names) {
+          const idx = faceMesh.morphTargetDictionary[name];
+          if (idx === undefined) continue;
+          binds.push(idx);
+          managedEmotionIndices.push(idx);
+        }
+        if (binds.length) emotionMorphMap[emotion] = binds;
+      }
+    }
+
+    // ─── Drive upper-face (brow/eye) morphs for current emotion ─
+    // Runs after vrm.update() every frame. vrm.update() resets all
+    // expression-driven morph influences; we re-apply ours on top, so
+    // emotion weights never bleed into the mouth visemes.
+    function updateEmotionMorphs() {
+      if (!faceMeshes.length) return;
+
+      const binds = emotionMorphMap[currentEmotion];
+
+      for (const mesh of faceMeshes) {
+        if (!mesh.morphTargetInfluences) continue;
+
+        // Clear all indices we manage.
+        for (const idx of managedEmotionIndices) {
+          mesh.morphTargetInfluences[idx] = 0;
+        }
+
+        // Apply the current emotion's upper-face morphs at full weight.
+        if (!binds) continue;
+        for (const idx of binds) {
+          mesh.morphTargetInfluences[idx] = 1.0;
+        }
+      }
+    }
+
+    // ─── Send events to server ──────────────────────────────
+    function sendEvent(type, data) {
+      sendWS({ type, data: data || {} });
+      console.log('sendEvent:', type, data);
+    }
+
+    // ─── Auto-fit window to avatar ──────────────────────────
+    function fitWindowToAvatar() {
+      const box = new THREE.Box3();
+      scene.traverse((obj) => {
+        // Skip the ground helpers — they're huge and would distort the bbox.
+        if (!obj.isMesh || obj === shadowDisc || obj === gridHelper) return;
+        box.expandByObject(obj);
+      });
+      if (box.isEmpty()) return;
+      const size = new THREE.Vector3();
+      box.getSize(size);
+      const center = new THREE.Vector3();
+      box.getCenter(center);
+      avatarBounds.worldW = size.x;
+      avatarBounds.worldH = size.y;
+      avatarBounds.worldCenter.copy(center);
+      fitCameraToWindow();
+    }
+
+    function fitCameraToWindow() {
+      if (!avatarBounds.worldH) return;
+      const margin = 1.33; // 1/0.75, avatar occupies 75% of window height
+      const fovRad = camera.fov * Math.PI / 180;
+      const distH = (avatarBounds.worldW * margin) / (2 * Math.tan(fovRad / 2) * camera.aspect);
+      const distV = (avatarBounds.worldH * margin) / (2 * Math.tan(fovRad / 2));
+      orbitDist = Math.max(distH, distV);
+
+      // Right-align the avatar: shift it in world space so its right edge
+      // sits a fixed gap away from the viewport's right edge. The gap
+      // leaves headroom so FBX animations (outstretched arms, jumps) stay
+      // on-screen instead of clipping at the right edge.
+      const halfW = orbitDist * Math.tan(fovRad / 2) * camera.aspect;
+      const gapWorld = RIGHT_GAP_RATIO * (2 * halfW);
+      currentAvatarX = halfW - gapWorld - avatarBounds.worldW / 2;
+      avatarBounds.worldCenter.x = currentAvatarX;
+
+      camera.near = Math.max(0.01, orbitDist * 0.1);
+      camera.updateProjectionMatrix();
+      updateOrbitCamera();
+      applyAvatarPosition();
+    }
+
+    // Reposition the avatar's scene root at the right-aligned X offset.
+    // Called after fitting (initial load + resize), not every frame, so it
+    // won't fight the per-frame idle micro-movement.
+    function applyAvatarPosition() {
+      if (vrm) {
+        vrm.scene.position.x = currentAvatarX;
+        vrm.scene.position.y = AVATAR_Y;
+        vrm.scene.position.z = 0;
+      } else if (window._placeholder) {
+        window._placeholder.group.position.x = currentAvatarX;
+        window._placeholder.group.position.y = AVATAR_Y;
+        window._placeholder.group.position.z = 0;
+      }
+    }
+
+    // Hide the "加载中..." overlay once the avatar is visible.
+    function hideLoading() {
+      const el = document.getElementById('loading');
+      if (el) el.classList.add('hidden');
+    }
+
+    // Gracefully fade the avatar canvas out (called by `fade_out` cmd).
+    function fadeOutAvatar() {
+      canvas.classList.add('fading');
+      console.log('[INFO] 数字人淡出中...');
+    }
+
+    // ─── FBX Animation Loading & Retargeting ─────────────────
+    let rawClipMap = new Map();
+
+    async function loadFBXAnimations() {
+      const animNames = [
+        'Bored', 'CrossJumps', 'FightIdle', 'JumpingRope', 'Looking',
+        'LookingAround', 'MagicSpellCasting', 'OffensiveIdle',
+        'SearchingFilesHigh', 'StandingMagicAttack', 'TextingWhileStanding'
+      ];
+      const fbxLoader = new FBXLoader();
+      const results = await Promise.allSettled(
+        animNames.map(name =>
+          fbxLoader.loadAsync(`/models/animations/${name}.fbx`)
+            .then(group => ({ name, group }))
+        )
+      );
+
+      for (const result of results) {
+        if (result.status !== 'fulfilled') {
+          console.warn('FBX load failed:', result.reason?.message);
+          continue;
+        }
+        const { name, group } = result.value;
+        const clips = group.animations;
+        if (!clips || clips.length === 0) {
+          console.warn(`FBX ${name}: no animation clips found`);
+          continue;
+        }
+        rawClipMap.set(name, { clip: clips[0], group });
+        console.log(`FBX loaded: ${name} (${clips[0].duration.toFixed(1)}s)`);
+      }
+      console.log(`FBX animations loaded: ${rawClipMap.size}/${animNames.length}`);
+    }
+
+    function retargetMixamoClip(rawClip, fbxGroup, vrm) {
+      const clip = rawClip;
+      const tracks = [];
+      const restRotationInverse = new THREE.Quaternion();
+      const parentRestWorldRotation = new THREE.Quaternion();
+      const _quatA = new THREE.Quaternion();
+      const motionHipsNode = fbxGroup.getObjectByName('mixamorigHips');
+      const motionHipsHeight = motionHipsNode ? motionHipsNode.position.y : 0;
+      const vrmHipsY = vrm.humanoid.normalizedRestPose.hips.position[1];
+      const hipsPositionScale = vrmHipsY / (motionHipsHeight || 1);
+
+      clip.tracks.forEach((track) => {
+        const trackSplitted = track.name.split('.');
+        const mixamoRigName = trackSplitted[0];
+        const vrmBoneName = mixamoVRMRigMap[mixamoRigName];
+        const vrmNodeName = vrm.humanoid?.getNormalizedBoneNode(vrmBoneName)?.name;
+        const mixamoRigNode = fbxGroup.getObjectByName(mixamoRigName);
+        if (vrmNodeName != null && mixamoRigNode != null) {
+          const propertyName = trackSplitted[1];
+          mixamoRigNode.getWorldQuaternion(restRotationInverse).invert();
+          mixamoRigNode.parent.getWorldQuaternion(parentRestWorldRotation);
+          if (track instanceof THREE.QuaternionKeyframeTrack) {
+            for (let i = 0; i < track.values.length; i += 4) {
+              const flatQuaternion = track.values.slice(i, i + 4);
+              _quatA.fromArray(flatQuaternion);
+              _quatA.premultiply(parentRestWorldRotation).multiply(restRotationInverse);
+              _quatA.toArray(flatQuaternion);
+              flatQuaternion.forEach((v, index) => {
+                track.values[index + i] = v;
+              });
+            }
+            tracks.push(
+              new THREE.QuaternionKeyframeTrack(
+                `${vrmNodeName}.${propertyName}`,
+                track.times,
+                track.values.map((v, i) => (
+                  vrm.meta?.metaVersion === '0' && i % 2 === 0 ? -v : v
+                )),
+              ),
+            );
+          } else if (track instanceof THREE.VectorKeyframeTrack) {
+            const value = track.values.map(
+              (v, i) => (vrm.meta?.metaVersion === '0' && i % 3 !== 1 ? -v : v) * hipsPositionScale
+            );
+            tracks.push(new THREE.VectorKeyframeTrack(`${vrmNodeName}.${propertyName}`, track.times, value));
+          }
+        }
+      });
+      return new THREE.AnimationClip('vrmAnimation', clip.duration, tracks);
+    }
+
+    function initAnimationMixer() {
+      if (!vrm?.scene) return;
+      if (rawClipMap.size === 0) return;
+      mixer = new THREE.AnimationMixer(vrm.scene);
+      for (const [name, { clip, group }] of rawClipMap) {
+        const retargetedClip = retargetMixamoClip(clip, group, vrm);
+        const action = mixer.clipAction(retargetedClip);
+        action.setLoop(THREE.LoopRepeat);
+        action.clampWhenFinished = false;
+        animationMap.set(name, action);
+      }
+      rawClipMap.clear();
+      console.log(`[FBX] AnimationMixer initialized with ${animationMap.size} actions`);
+      console.log(`[FBX] 空闲动画将在 ${IDLE_ANIM_DELAY}s 后开始随机播放`);
+    }
+
+    function startIdleAnimations() {
+      if (idleAnimActive) return;
+      if (!mixer || animationMap.size === 0) return;
+      idleAnimActive = true;
+      playRandomIdleAnim();
+    }
+
+    function stopIdleAnimations() {
+      if (!idleAnimActive) return;
+      idleAnimActive = false;
+      idleAnimNextSwitch = 0;
+      if (mixer && currentAnimation) {
+        const action = animationMap.get(currentAnimation);
+        if (action && action.isRunning()) {
+          action.fadeOut(animCrossFadeDuration);
+        }
+      }
+      currentAnimation = null;
+      setTimeout(() => {
+        if (!idleAnimActive) {
+          restoreDefaultPose();
+        }
+      }, animCrossFadeDuration * 1000 + 50);
+    }
+
+    function playRandomIdleAnim() {
+      if (!mixer || !idleAnimActive) return;
+      let pool = idleAnimPool;
+      if (currentAnimation && pool.length > 1) {
+        pool = pool.filter(n => n !== currentAnimation);
+      }
+      const animName = pool[Math.floor(Math.random() * pool.length)];
+      const action = animationMap.get(animName);
+      if (!action) return;
+      const prevAction = currentAnimation ? animationMap.get(currentAnimation) : null;
+      currentAnimation = animName;
+      if (prevAction && prevAction.isRunning()) {
+        action.reset().play();
+        action.crossFadeFrom(prevAction, animCrossFadeDuration, true);
+      } else {
+        action.reset().play();
+        action.setEffectiveWeight(1.0);
+      }
+      const duration = 4 + Math.random() * 4;
+      idleAnimNextSwitch = idleTime + duration;
+    }
+
+    // ─── Input Handling ─────────────────────────────────────
+    const raycaster = new THREE.Raycaster();
+    const _ndc = new THREE.Vector2();
+
+    function eventNDC(e) {
+      _ndc.x = (e.clientX / window.innerWidth) * 2 - 1;
+      _ndc.y = -(e.clientY / window.innerHeight) * 2 + 1;
+      return _ndc;
+    }
+
+    function hitAvatar(e) {
+      const avatarObj = vrm ? vrm.scene : (window._placeholder ? window._placeholder.group : null);
+      if (!avatarObj) return false;
+      raycaster.setFromCamera(eventNDC(e), camera);
+      return raycaster.intersectObject(avatarObj, true).length > 0;
+    }
+
+    let dragWindow = null;
+
+    document.addEventListener('mousedown', (e) => {
+      if (e.button !== 0) return;
+      if (keys.ctrl) return;
+      dragWindow = { startX: e.screenX, startY: e.screenY, lastX: e.screenX, lastY: e.screenY, moved: false };
+    });
+
+    document.addEventListener('mousemove', (e) => {
+      if (!dragWindow) {
+        canvas.style.cursor = keys.ctrl ? (hitAvatar(e) ? 'move' : 'default') : (hitAvatar(e) ? 'grab' : 'default');
+        return;
+      }
+      const dx = e.screenX - dragWindow.lastX;
+      const dy = e.screenY - dragWindow.lastY;
+      if (!dragWindow.moved && (Math.abs(e.screenX - dragWindow.startX) > 4 || Math.abs(e.screenY - dragWindow.startY) > 4)) {
+        dragWindow.moved = true;
+      }
+      if (dragWindow.moved) {
+        orbitTheta -= dx * orbitSpeed;
+        orbitPhi += dy * orbitSpeed;
+        orbitPhi = Math.max(-1.4, Math.min(1.4, orbitPhi));
+      }
+      dragWindow.lastX = e.screenX;
+      dragWindow.lastY = e.screenY;
+    });
+
+    document.addEventListener('mouseup', (e) => {
+      if (!dragWindow) return;
+      const wasDrag = dragWindow.moved;
+      dragWindow = null;
+      canvas.style.cursor = 'default';
+      if (!wasDrag) {
+        console.log('[INPUT] tap');
+        sendEvent('tap', {});
+      }
+    });
+
+    document.addEventListener('keydown', (e) => {
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+      if (e.key === ' ' || e.key === 'Enter') {
+        e.preventDefault();
+        sendEvent('tap', {});
+        return;
+      }
+      switch (e.key) {
+        case 'w': case 'W': case 'ArrowUp':    keys.up    = true; e.preventDefault(); break;
+        case 's': case 'S': case 'ArrowDown':  keys.down  = true; e.preventDefault(); break;
+        case 'a': case 'A': case 'ArrowLeft':  keys.left  = true; e.preventDefault(); break;
+        case 'd': case 'D': case 'ArrowRight': keys.right = true; e.preventDefault(); break;
+        case 'Control': keys.ctrl = true; break;
+      }
+    });
+
+    document.addEventListener('keyup', (e) => {
+      switch (e.key) {
+        case 'w': case 'W': case 'ArrowUp':    keys.up    = false; break;
+        case 's': case 'S': case 'ArrowDown':  keys.down  = false; break;
+        case 'a': case 'A': case 'ArrowLeft':  keys.left  = false; break;
+        case 'd': case 'D': case 'ArrowRight': keys.right = false; break;
+        case 'Control': keys.ctrl = false; break;
+      }
+    });
+
+    // ─── Fullscreen ─────────────────────────────────────────
+    const fullscreenBtn = document.getElementById('fullscreenBtn');
+    fullscreenBtn.addEventListener('click', () => {
+      if (!document.fullscreenElement) {
+        document.body.requestFullscreen().catch(err => console.warn('Fullscreen denied:', err));
+      } else {
+        document.exitFullscreen();
+      }
+    });
+    document.addEventListener('fullscreenchange', () => {
+      fullscreenBtn.textContent = document.fullscreenElement ? '⛶' : '⛶';
+    });
+
+    // ─── Resize Handler ─────────────────────────────────────
+    window.addEventListener('resize', () => {
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      camera.aspect = window.innerWidth / window.innerHeight;
+      fitCameraToWindow();
+    });
+
+    // ─── Start ──────────────────────────────────────────────
+    connectWS();
+    initAvatar().then(() => {
+      animate();
+    });
+
+    // Clean up viseme timers when the page is unloaded or hidden.
+    window.addEventListener('beforeunload', () => {
+      clearVisemeTimers();
+    });
+    window.addEventListener('pagehide', () => {
+      clearVisemeTimers();
+    });
