@@ -10,35 +10,44 @@
       width: 100%; height: 100%;
       overflow: hidden;
       background: #1A1A2E;
-      /* Prevent pull-to-refresh, overscroll, and selection */
       overscroll-behavior: none;
       -webkit-overflow-scrolling: touch;
       -webkit-user-select: none;
       user-select: none;
       -webkit-touch-callout: none;
     }
+    /* The canvas handles touch events — don't let the browser intercept */
     #canvas {
-      display: block;
-      /* The canvas itself handles touch events — don't let the browser intercept */
+      display: block; position: fixed; left: 0; top: 0; z-index: 1;
+      opacity: 0; transition: opacity 1s ease-out;
       touch-action: none;
-      opacity: 0;
-      transition: opacity 1s ease-out;
     }
     #canvas.visible { opacity: 1; }
     #canvas.fading { opacity: 0; }
 
-    /* Subtitle overlay */
+    /* Status text ("聆听中...", "思考中...") */
+    .status {
+      position: fixed; bottom: 40px; left: 0; right: 0;
+      z-index: 2;
+      text-align: center; color: rgba(255,255,255,0.7);
+      font-family: 'PingFang SC', 'Microsoft YaHei', sans-serif;
+      font-size: 16px; pointer-events: none;
+      transition: opacity 0.3s;
+    }
+    .status.hidden { opacity: 0; }
+
+    /* Robot speaking subtitle */
     .subtitle {
-      position: fixed; bottom: 80px; left: 0; right: 0;
+      position: fixed; bottom: 96px; left: 0; right: 0;
+      z-index: 2;
       text-align: center;
       color: #ffffff;
       font-family: 'PingFang SC', 'Microsoft YaHei', sans-serif;
-      font-size: 18px;
+      font-size: 22px;
       font-weight: 600;
       line-height: 1.6;
       pointer-events: none;
       padding: 0 24px;
-      max-width: 100%;
       text-shadow:
         -1px -1px 0 rgba(0,0,0,0.85),
          1px -1px 0 rgba(0,0,0,0.85),
@@ -49,6 +58,29 @@
       word-break: break-word;
     }
     .subtitle.hidden { opacity: 0; }
+
+    /* User utterance subtitle (ASR echo, shown while thinking) */
+    .user-subtitle {
+      position: fixed; bottom: 140px; left: 0; right: 0;
+      z-index: 2;
+      text-align: center;
+      color: rgba(255,255,255,0.78);
+      font-family: 'PingFang SC', 'Microsoft YaHei', sans-serif;
+      font-size: 15px;
+      font-weight: 500;
+      line-height: 1.5;
+      pointer-events: none;
+      padding: 0 24px;
+      text-shadow:
+        -1px -1px 0 rgba(0,0,0,0.85),
+         1px -1px 0 rgba(0,0,0,0.85),
+        -1px  1px 0 rgba(0,0,0,0.85),
+         1px  1px 0 rgba(0,0,0,0.85),
+         0 2px 6px rgba(0,0,0,0.6);
+      transition: opacity 0.3s;
+      word-break: break-word;
+    }
+    .user-subtitle.hidden { opacity: 0; }
 
     /* Loading overlay */
     .loading-overlay {
@@ -83,9 +115,9 @@
     <div class="loading-text">加载中...</div>
   </div>
   <canvas id="canvas"></canvas>
+  <div class="status" id="status"></div>
   <div class="subtitle hidden" id="subtitle"></div>
-
-  <!-- All JS loaded locally -->
+  <div class="user-subtitle hidden" id="userSubtitle"></div>
 
   <!-- Bridge buffer + console forwarding: defined synchronously -->
   <script>
@@ -93,7 +125,6 @@
   window.handleMessage = function(jsonStr) {
     window._pendingMessages.push(jsonStr);
   };
-  console.log('sync bridge script executed');
 
   // Forward console logs to Swift so we can see WebView errors in Xcode.
   (function() {
@@ -105,8 +136,7 @@
         try { return typeof a === 'object' ? JSON.stringify(a) : String(a); }
         catch(e) { return String(a); }
       }).join(' ');
-      // Use sendEvent — it posts through the bridge message handler
-      var ev = { type: 'log', level: level, text: level + ': ' + msg };
+      const ev = { type: 'log', level: level, text: level + ': ' + msg };
       if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.bridge) {
         window.webkit.messageHandlers.bridge.postMessage(JSON.stringify(ev));
       }
@@ -128,8 +158,10 @@
   <script type="module">
     import * as THREE from './js/three.module.js';
     import { GLTFLoader } from './js/addons/loaders/GLTFLoader.js';
+    import { FBXLoader } from './js/addons/loaders/FBXLoader.js';
+    import { mixamoVRMRigMap } from './js/mixamoVRMRigMap.js';
+    import { OrbitControls } from './js/addons/controls/OrbitControls.js';
     import { VRMLoaderPlugin, VRMUtils } from './js/three-vrm.module.js';
-    console.log('module imports OK, THREE=' + (THREE ? THREE.REVISION : 'undefined'));
 
     // ─── Globals ────────────────────────────────────────────
     let vrm = null;
@@ -138,7 +170,6 @@
     let currentEmotion = 'neutral';
     let isSpeaking = false;
 
-    // ─── Emotion → upper-face morph mapping ────────────────────
     const emotionMorphNames = {
       happy:     ['Face_Blendshape.Fcl_BRW_Joy',      'Face_Blendshape.Fcl_EYE_Joy'],
       angry:     ['Face_Blendshape.Fcl_BRW_Angry',    'Face_Blendshape.Fcl_EYE_Angry'],
@@ -151,15 +182,12 @@
     let emotionMorphMap = {};
     let managedEmotionIndices = [];
 
-    // Viseme state (smooth lerp)
     let visemeTargets = { aa: 0, ih: 0, ou: 0, ee: 0, oh: 0 };
     let visemeCurrent = { aa: 0, ih: 0, ou: 0, ee: 0, oh: 0 };
     let visemeBlendSpeed = 8.0;
 
-    // Pending viseme timeline
     let pendingTimeline = null;
 
-    // Blink state
     let blinkTimer = 0;
     let blinkInterval = 3.0;
     let blinkValue = 0;
@@ -170,11 +198,30 @@
 
     const avatarBounds = { worldW: 1.1, worldH: 1.7, worldCenter: new THREE.Vector3(0, 0.85, 0) };
 
-    // Orbit camera state
-    let orbitTheta = 0;
-    let orbitPhi = 0;
-    let orbitDist = 3.5;
-    const orbitSpeed = 0.006;
+    // ─── FBX Animation System ────────────────────────────────
+    let mixer = null;              // THREE.AnimationMixer
+    let animationMap = new Map();  // name → THREE.AnimationAction
+    let currentAnimation = null;   // currently playing action name
+    const animCrossFadeDuration = 0.35; // seconds for cross-fade
+
+    // Idle animation system: after IDLE_ANIM_DELAY seconds of idle, randomly
+    // play FBX animations. When the user interacts, stop and restore the
+    // default standing pose.
+    const IDLE_ANIM_DELAY = 10; // seconds before starting idle animations
+    let idleAnimTimer = 0;     // counts up when in idle mode with no animation
+    let idleAnimActive = false; // true when random idle animations are playing
+    let idleAnimNextSwitch = 0; // time when we should switch to the next random anim
+
+    // Idle animation pool — all 11 FBX animations for random idle playback.
+    const idleAnimPool = [
+      'Bored', 'CrossJumps', 'FightIdle', 'JumpingRope', 'Looking',
+      'LookingAround', 'MagicSpellCasting', 'OffensiveIdle',
+      'SearchingFilesHigh', 'StandingMagicAttack', 'TextingWhileStanding'
+    ];
+
+    // FBX animation toggle — read from URL query parameter.
+    // Defaults to true (enabled). Set enable_fbx=0 to disable.
+    const enableFBX = !(new URLSearchParams(window.location.search).get('enable_fbx') === '0');
 
     // ─── Three.js Setup ─────────────────────────────────────
     const canvas = document.getElementById('canvas');
@@ -183,19 +230,15 @@
 
     // iOS 14 is WebGL1-only; three r160 cannot render skinned meshes there,
     // so the VRM avatar is unavailable. Fall back to the built-in placeholder
-    // character. iOS 15+ (WebGL2) gets the real VRM avatar.
+    // character. iOS 15+ (WebGL2) gets the real VRM avatar + FBX animations.
     let webgl2Unsupported = false;
     if (!renderer.capabilities.isWebGL2) {
       webgl2Unsupported = true;
       console.error('[fallback] WebGL2 not supported (need iOS 15+); using placeholder avatar');
     }
-    // Mobile: use pixel ratio 1 for performance, 2 on high-end devices.
-    // iPhone 12 Mini has a high-res screen but A14 GPU handles pixel ratio 2 fine.
-    // Cap at 1.5 — the avatar is a moving target where sub-native resolution is
-    // visually negligible but saves significant GPU fill-rate (and battery).
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
     renderer.setSize(window.innerWidth, window.innerHeight);
-    renderer.setClearColor(0x1A1A2E, 1);
+    renderer.setClearColor(0x1A1A2E, 1.0);
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     renderer.toneMapping = THREE.NoToneMapping;
@@ -206,6 +249,19 @@
     const camera = new THREE.PerspectiveCamera(30, window.innerWidth / window.innerHeight, 0.1, 50);
     camera.position.set(0, 0.9, 3.5);
     camera.lookAt(0, 0.7, 0);
+
+    // ─── Orbit camera (touch: 1-finger rotate, 2-finger pinch zoom) ──────
+    const controls = new OrbitControls(camera, canvas);
+    controls.target.set(0, 0.5, 0); // refined by fitCameraToWindow()
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.08;
+    controls.enablePan = false; // keep the avatar centered
+    controls.rotateSpeed = 0.7;
+    controls.zoomSpeed = 0.6;
+    controls.minPolarAngle = 0.05;   // don't go under the floor
+    controls.maxPolarAngle = Math.PI * 0.6; // don't go top-down
+    controls.minDistance = 2.0;
+    controls.maxDistance = 14.0;
 
     // ─── Lighting ───────────────────────────────────────────
     scene.add(new THREE.AmbientLight('#ffffff', 0.8));
@@ -233,9 +289,8 @@
     rimLight.position.set(0.3, 1.5, -2.5);
     scene.add(rimLight);
 
-    // ─── Ground ─────────────────────────────────────────────
+    // ─── Ground shadow disc ─────────────────────────────────
     const groundY = AVATAR_Y;
-
     const shadowDisc = new THREE.Mesh(
       new THREE.CircleGeometry(8, 48),
       new THREE.ShadowMaterial({ opacity: 0.3 })
@@ -262,14 +317,15 @@
       VRMUtils.removeUnnecessaryJoints(gltf.scene);
       VRMUtils.rotateVRM0(vrm);
 
+      // Fix arms and fingers to natural standing pose (not T-pose).
+      restoreDefaultPose();
+
       scene.add(vrm.scene);
       vrm.scene.position.set(0, AVATAR_Y, 0);
 
       vrm.scene.traverse((obj) => {
         if (obj.isMesh) { obj.castShadow = true; obj.receiveShadow = true; }
       });
-
-      restoreDefaultPose();
 
       if (vrm.expressionManager) {
         vrm.expressionManager.setValue('blink', 0);
@@ -278,18 +334,35 @@
       }
 
       console.log('VRM loaded:', vrm.meta?.metaVersion);
+      console.log('Expressions:', Object.keys(vrm.expressionManager?.expressionMap || {}));
+      console.log('Window size:', window.innerWidth, 'x', window.innerHeight);
 
       buildEmotionMorphMap();
+      updateStatus();
 
-      setTimeout(fitWindowToAvatar, 100);
+      // Load FBX animations and initialize the mixer (if enabled).
+      if (enableFBX) {
+        loadFBXAnimations().then(() => {
+          initAnimationMixer();
+        });
+      } else {
+        console.log('[FBX] FBX animation disabled by config (enable_fbx=0)');
+      }
+
+      // Fit camera to the VRM model on mobile.
+      setTimeout(() => {
+        fitCameraToWindow();
+        console.log('[INFO] Camera fitted: dist=', camera.position.z.toFixed(1), 'fov=', camera.fov);
+      }, 100);
 
       setTimeout(() => {
         canvas.classList.add('visible');
         hideLoading();
-        console.log('[INFO] 数字人淡入完成');
+        console.log('[INFO] VRM model ready');
       }, 300);
     }
 
+    // Restore arms and fingers to the natural standing pose (not T-pose).
     function restoreDefaultPose() {
       if (!vrm?.humanoid) return;
       const down = 77.4 * (Math.PI / 180);
@@ -298,6 +371,7 @@
       const eS = Math.sin(4 * (Math.PI / 180));
       const eC = Math.cos(4 * (Math.PI / 180));
 
+      // Build the full normalized pose: arms + fingers + reset all other bones.
       const pose = {
         leftUpperArm:  { rotation: [0, 0, -s, c] },
         rightUpperArm: { rotation: [0, 0,  s, c] },
@@ -305,6 +379,7 @@
         rightLowerArm: { rotation: [0, 0, -eS, eC] },
       };
 
+      // Reset all finger bones to identity (T-pose), then add curl.
       const fingerBones = [
         'leftThumbMetacarpal','leftThumbProximal','leftThumbIntermediate','leftThumbDistal',
         'leftIndexProximal','leftIndexIntermediate','leftIndexDistal',
@@ -322,6 +397,7 @@
         pose[name] = { rotation: identity };
       }
 
+      // Apply finger curl as quaternion rotations around the local Z axis.
       const fingerCurl = {
         index:  { proximal: 0.15, intermediate: 0.25, distal: 0.15 },
         middle: { proximal: 0.12, intermediate: 0.20, distal: 0.12 },
@@ -346,6 +422,7 @@
           }
         }
 
+        // Thumb
         pose[side + 'ThumbMetacarpal']    = { rotation: [0, 0, Math.sin(curlDir * thumbCurl.meta / 2),  Math.cos(curlDir * thumbCurl.meta / 2)] };
         pose[side + 'ThumbProximal']      = { rotation: [0, 0, Math.sin(curlDir * thumbCurl.prox / 2),  Math.cos(curlDir * thumbCurl.prox / 2)] };
         pose[side + 'ThumbIntermediate']  = { rotation: [0, 0, Math.sin(curlDir * thumbCurl.inter / 2), Math.cos(curlDir * thumbCurl.inter / 2)] };
@@ -355,19 +432,57 @@
       vrm.humanoid.setNormalizedPose(pose);
     }
 
-    // ─── Init Avatar ────────────────────────────────────────
-    async function initAvatar() {
-      try {
-        await loadVRM('models/avatar.vrm');
-      } catch (err) {
-        console.error('VRM load failed:', err.message);
-        createPlaceholderAvatar();
+    function buildEmotionMorphMap() {
+      faceMesh = null;
+      faceMeshes = [];
+      emotionMorphMap = {};
+      managedEmotionIndices = [];
+
+      if (!vrm?.scene) return;
+
+      vrm.scene.traverse((obj) => {
+        if (obj.isMesh && typeof obj.name === 'string' && obj.name.startsWith('Face')) {
+          if (!faceMesh && obj.morphTargetDictionary) faceMesh = obj;
+          faceMeshes.push(obj);
+        }
+      });
+
+      if (!faceMesh || !faceMesh.morphTargetDictionary) {
+        console.warn('[emotion] Face mesh or morphTargetDictionary not found');
+        return;
+      }
+
+      for (const [emotion, names] of Object.entries(emotionMorphNames)) {
+        const binds = [];
+        for (const name of names) {
+          const idx = faceMesh.morphTargetDictionary[name];
+          if (idx === undefined) continue;
+          binds.push(idx);
+          managedEmotionIndices.push(idx);
+        }
+        if (binds.length) emotionMorphMap[emotion] = binds;
       }
     }
 
+    function updateEmotionMorphs() {
+      if (!faceMeshes.length) return;
+      const binds = emotionMorphMap[currentEmotion];
+
+      for (const mesh of faceMeshes) {
+        if (!mesh.morphTargetInfluences) continue;
+        for (const idx of managedEmotionIndices) {
+          mesh.morphTargetInfluences[idx] = 0;
+        }
+        if (!binds) continue;
+        for (const idx of binds) {
+          mesh.morphTargetInfluences[idx] = 1.0;
+        }
+      }
+    }
+
+    // ─── Placeholder avatar (fallback) ──────────────────────
     function createPlaceholderAvatar() {
       const group = new THREE.Group();
-
       const bodyGeo = new THREE.CapsuleGeometry(0.22, 0.5, 8, 16);
       const bodyMat = new THREE.MeshStandardMaterial({ color: '#4a6fa5', roughness: 0.3 });
       const body = new THREE.Mesh(bodyGeo, bodyMat);
@@ -377,30 +492,25 @@
 
       const headGroup = new THREE.Group();
       headGroup.position.y = 1.25;
-
       const headGeo = new THREE.SphereGeometry(0.2, 32, 32);
       const headMat = new THREE.MeshStandardMaterial({ color: '#f5e6d3', roughness: 0.4 });
       const head = new THREE.Mesh(headGeo, headMat);
       head.castShadow = true;
       headGroup.add(head);
 
-      // Face features sit on the +Z side of the head — the front. The
-      // default camera looks down -Z from +Z, so the face must point +Z.
-      // The head sphere surface at eye/mouth height is z ≈ +0.18~+0.19,
-      // so features are pushed past it to stay clearly visible.
-      const eyeGeo = new THREE.SphereGeometry(0.05, 16, 16);
+      const eyeGeo = new THREE.SphereGeometry(0.045, 16, 16);
       const eyeMat = new THREE.MeshStandardMaterial({ color: '#111111', roughness: 0.1 });
       const leftEye = new THREE.Mesh(eyeGeo, eyeMat);
-      leftEye.position.set(-0.075, 0.04, 0.16);
+      leftEye.position.set(-0.07, 0.04, -0.17);
       headGroup.add(leftEye);
       const rightEye = new THREE.Mesh(eyeGeo, eyeMat);
-      rightEye.position.set(0.075, 0.04, 0.16);
+      rightEye.position.set(0.07, 0.04, -0.17);
       headGroup.add(rightEye);
 
-      const mouthGeo = new THREE.BoxGeometry(0.12, 0.02, 0.03);
+      const mouthGeo = new THREE.BoxGeometry(0.1, 0.02, 0.01);
       const mouthMat = new THREE.MeshStandardMaterial({ color: '#cc4444', roughness: 0.3 });
       const mouth = new THREE.Mesh(mouthGeo, mouthMat);
-      mouth.position.set(0, -0.065, 0.185);
+      mouth.position.set(0, -0.06, -0.18);
       mouth.name = 'mouth';
       headGroup.add(mouth);
 
@@ -409,8 +519,8 @@
       scene.add(group);
 
       window._placeholder = { group, headGroup, mouth, leftEye, rightEye };
-
       console.log('Placeholder avatar created');
+      updateStatus();
 
       // Show a hint in the subtitle so the user knows why the avatar is simplified.
       const subtitleEl = document.getElementById('subtitle');
@@ -425,38 +535,68 @@
         canvas.classList.add('visible');
         hideLoading();
       }, 300);
+    }
 
-      setTimeout(fitWindowToAvatar, 100);
+    async function initAvatar() {
+      try {
+        await loadVRM('./models/avatar.vrm');
+      } catch (err) {
+        console.error('VRM load failed:', err.message);
+        console.warn('Falling back to placeholder avatar...');
+        createPlaceholderAvatar();
+      }
     }
 
     // ─── Animation Loop ─────────────────────────────────────
-    // Visibility-aware render loop: `requestAnimationFrame` is throttled or
-    // suspended by the browser when the page is not visible, but we still
-    // pause it explicitly (and reset the clock) so entering the background
-    // stops all GPU work and there is no huge `dt` spike on resume.
+    // Visibility-aware render loop: pauses when the page is hidden to save
+    // GPU/battery, and resets the clock on resume to avoid huge delta spikes.
     let animRunning = false;
     let animFrameId = 0;
     function animate() {
       animFrameId = requestAnimationFrame(animate);
 
-      const dt = Math.min(clock.getDelta(), 0.1);
-      idleTime += dt;
+      try {
+        const dt = Math.min(clock.getDelta(), 0.1);
+        idleTime += dt;
 
-      updateOrbitCamera();
+        // Update FBX animation mixer (retargeted skeleton animation).
+        if (mixer) {
+          mixer.update(dt);
+        }
 
-      if (vrm) {
-        updateVRMBlink(dt);
-        updateVRMVisemes(dt);
-        updateVRMIdleMicro(dt);
-        vrm.update(dt);
-        updateEmotionMorphs();
-      } else if (window._placeholder) {
-        updatePlaceholderBlink(dt);
-        updatePlaceholderMouth(dt);
-        updatePlaceholderIdle(dt);
+        if (vrm) {
+          updateVRMBlink(dt);
+          updateVRMVisemes(dt);
+          updateVRMIdleMicro(dt);
+          vrm.update(dt);
+          updateEmotionMorphs();
+
+          // Idle animation timer: start random FBX animations after a delay.
+          if (currentMode === 'idle' && mixer && animationMap.size > 0) {
+            if (!idleAnimActive && !isSpeaking) {
+              idleAnimTimer += dt;
+              if (idleAnimTimer >= IDLE_ANIM_DELAY) {
+                startIdleAnimations();
+              }
+            }
+            // Rotate to next random animation when the current one's time is up.
+            if (idleAnimActive && idleAnimNextSwitch > 0 && idleTime >= idleAnimNextSwitch) {
+              playRandomIdleAnim();
+            }
+          }
+        } else if (window._placeholder) {
+          updatePlaceholderBlink(dt);
+          updatePlaceholderMouth(dt);
+          updatePlaceholderIdle(dt);
+        }
+
+        controls.update(); // applies orbit damping
+        renderer.render(scene, camera);
+        frameCount++;
+      } catch (e) {
+        console.error('[ERROR] animate crashed:', e.message, e.stack);
+        frameCount = -1;
       }
-
-      renderer.render(scene, camera);
     }
 
     function stopAnimLoop() {
@@ -475,28 +615,31 @@
     document.addEventListener('visibilitychange', () => {
       if (document.hidden) {
         stopAnimLoop();
+        if (mixer) mixer.stopAllAction();
       } else {
         startAnimLoop();
       }
     });
 
-    // ─── Orbit camera ──────────────────────────────────────
-    function updateOrbitCamera() {
-      const center = avatarBounds.worldCenter;
-      const sp = Math.sin(orbitPhi);
-      const cp = Math.cos(orbitPhi);
-      const st = Math.sin(orbitTheta);
-      const ct = Math.cos(orbitTheta);
+    let frameCount = 0;
+    // Log first frame confirmation.
+    setTimeout(function() {
+      console.log('[INFO] Rendered frames: ' + frameCount +
+                  ', vrm=' + !!vrm +
+                  ', placeholder=' + !!window._placeholder +
+                  ', canvasOpacity=' + canvas.style.opacity +
+                  ', canvasVisible=' + canvas.classList.contains('visible'));
+    }, 1200);
 
-      camera.position.set(
-        center.x + orbitDist * cp * st,
-        center.y + orbitDist * sp,
-        center.z + orbitDist * cp * ct
-      );
-      camera.lookAt(center.x, center.y, center.z);
-    }
+    // Global error handlers.
+    window.addEventListener('error', function(e) {
+      console.error('[JS GLOBAL ERROR]', e.message, e.filename, e.lineno);
+    });
+    window.addEventListener('unhandledrejection', function(e) {
+      console.error('[JS UNHANDLED REJECTION]', e.reason);
+    });
 
-    // ─── VRM: Blink ────────────────────────────────────────
+    // ─── VRM Blink ─────────────────────────────────────────
     function updateVRMBlink(dt) {
       if (vrm.expressionManager && blinkValue > 0.001) {
         vrm.expressionManager.setValue('blink', blinkValue);
@@ -541,7 +684,7 @@
       }
     }
 
-    // ─── VRM: Viseme (lip-sync) ────────────────────────────
+    // ─── VRM Visemes (lip-sync) ─────────────────────────────
     function updateVRMVisemes(dt) {
       if (!vrm?.expressionManager) return;
 
@@ -554,10 +697,12 @@
       }
     }
 
-    // ─── VRM: Idle micro-movement ──────────────────────────
+    // ─── VRM Idle micro-movement ────────────────────────────
     function updateVRMIdleMicro(dt) {
       if (currentMode !== 'idle') return;
       if (!vrm?.scene) return;
+      // When FBX idle animation is playing, the animation drives body movement.
+      if (idleAnimActive) return;
 
       const t = idleTime;
       const breathe = Math.sin(t * 1.4) * 0.008;
@@ -569,18 +714,17 @@
       visemeTargets['aa'] = 0.04 + Math.sin(t * 1.4) * 0.01;
     }
 
-    // ─── Placeholder Animations ─────────────────────────────
+    // ─── Placeholder animations ─────────────────────────────
     let placeholderBlink = 0;
     let placeholderBlinking = false;
     let placeholderBlinkTimer = 0;
-    let placeholderMouthTime = 0;
 
     function updatePlaceholderBlink(dt) {
       const { leftEye, rightEye } = window._placeholder;
       placeholderBlinkTimer += dt;
-      const interval = 3.0;
+      const blinkInterval = 3.0;
 
-      if (!placeholderBlinking && placeholderBlinkTimer > interval) {
+      if (!placeholderBlinking && placeholderBlinkTimer > blinkInterval) {
         placeholderBlinking = true;
         placeholderBlink = 0;
       }
@@ -605,6 +749,7 @@
       rightEye.scale.y = eyeScale;
     }
 
+    let placeholderMouthTime = 0;
     function updatePlaceholderMouth(dt) {
       const { mouth } = window._placeholder;
       if (!mouth) return;
@@ -631,6 +776,16 @@
     }
 
     // ─── Status UI ──────────────────────────────────────────
+    function updateStatus() {
+      const el = document.getElementById('status');
+      switch (currentMode) {
+        case 'idle':      el.textContent = ''; break;
+        case 'listening': el.textContent = '聆听中...'; break;
+        case 'thinking':  el.textContent = '思考中...'; break;
+        case 'speaking':  el.textContent = ''; break;
+      }
+    }
+
     function updateSubtitle(text) {
       const el = document.getElementById('subtitle');
       if (text && text.length > 0) {
@@ -641,7 +796,17 @@
       }
     }
 
-    // ─── JS Bridge: Receive messages from Swift ──────────────
+    function updateUserSubtitle(text) {
+      const el = document.getElementById('userSubtitle');
+      if (text && text.length > 0) {
+        el.textContent = text;
+        el.classList.remove('hidden');
+      } else {
+        el.classList.add('hidden');
+      }
+    }
+
+    // ─── JS Bridge: Receive messages from Swift ─────────────
     window._realHandleMessage = function(jsonStr) {
       try {
         const msg = JSON.parse(jsonStr);
@@ -665,7 +830,18 @@
           currentMode = msg.mode;
           isSpeaking = msg.isSpeaking || false;
           if (msg.emotion) currentEmotion = msg.emotion;
+          updateStatus();
           updateSubtitle(msg.speakingText);
+          updateUserSubtitle(msg.userText || '');
+
+          // Stop idle FBX animations when entering conversation modes.
+          if (currentMode !== 'idle') {
+            stopIdleAnimations();
+            idleAnimTimer = 0;
+          } else {
+            // Reset idle timer when returning to idle (fresh countdown).
+            idleAnimTimer = 0;
+          }
 
           if (currentMode === 'speaking' && pendingTimeline) {
             playVisemeTimeline(pendingTimeline);
@@ -680,7 +856,7 @@
       }
     };
 
-    // ─── Viseme Timeline ────────────────────────────────────
+    // ─── Play viseme timeline ────────────────────────────────
     let visemeTimers = [];
     function playVisemeTimeline(timeline) {
       if (!timeline || !timeline.length) return;
@@ -709,7 +885,6 @@
 
     function applyViseme(viseme, weight) {
       if (!vrm?.expressionManager) return;
-
       const mouthVisemes = ['aa', 'ih', 'ou', 'ee', 'oh'];
 
       if (viseme === 'rest' || !viseme) {
@@ -736,56 +911,248 @@
       }
     }
 
-    // ─── Emotion Morphs ─────────────────────────────────────
-    function buildEmotionMorphMap() {
-      faceMesh = null;
-      faceMeshes = [];
-      emotionMorphMap = {};
-      managedEmotionIndices = [];
+    // ─── FBX Animation Loading & Retargeting ─────────────────
+    // Same approach as the desktop/Android version: Mixamo FBX → VRM skeleton
+    // via quaternion-space retargeting (mixamoVRMRigMap).
 
-      if (!vrm?.scene) return;
+    // Stores loaded but not-yet-retargeted clips (name → AnimationClip).
+    let rawClipMap = new Map();
 
-      vrm.scene.traverse((obj) => {
-        if (obj.isMesh && typeof obj.name === 'string' && obj.name.startsWith('Face')) {
-          if (!faceMesh && obj.morphTargetDictionary) faceMesh = obj;
-          faceMeshes.push(obj);
+    // Load all FBX animations from /models/animations/.
+    async function loadFBXAnimations() {
+      const animNames = [
+        'Bored', 'CrossJumps', 'FightIdle', 'JumpingRope', 'Looking',
+        'LookingAround', 'MagicSpellCasting', 'OffensiveIdle',
+        'SearchingFilesHigh', 'StandingMagicAttack', 'TextingWhileStanding'
+      ];
+
+      const fbxLoader = new FBXLoader();
+      const results = await Promise.allSettled(
+        animNames.map(name =>
+          fbxLoader.loadAsync(`./models/animations/${name}.fbx`)
+            .then(group => ({ name, group }))
+        )
+      );
+
+      for (const result of results) {
+        if (result.status !== 'fulfilled') {
+          console.warn('FBX load failed:', result.reason?.message);
+          continue;
+        }
+        const { name, group } = result.value;
+        const clips = group.animations;
+        if (!clips || clips.length === 0) {
+          console.warn(`FBX ${name}: no animation clips found`);
+          continue;
+        }
+
+        // Store the raw clip + its FBX group for retargeting.
+        rawClipMap.set(name, { clip: clips[0], group });
+        console.log(`FBX loaded: ${name} (${clips[0].duration.toFixed(1)}s)`);
+      }
+
+      console.log(`FBX animations loaded: ${rawClipMap.size}/${animNames.length}`);
+    }
+
+    // Retarget a single Mixamo AnimationClip to the VRM skeleton using the
+    // official three-vrm approach (quaternion space transform).
+    function retargetMixamoClip(rawClip, fbxGroup, vrm) {
+      const clip = rawClip;
+
+      const tracks = [];
+
+      const restRotationInverse = new THREE.Quaternion();
+      const parentRestWorldRotation = new THREE.Quaternion();
+      const _quatA = new THREE.Quaternion();
+
+      // Adjust position with reference to hips height.
+      const motionHipsNode = fbxGroup.getObjectByName('mixamorigHips');
+      const motionHipsHeight = motionHipsNode ? motionHipsNode.position.y : 0;
+      const vrmHipsY = vrm.humanoid.normalizedRestPose.hips.position[1];
+      const hipsPositionScale = vrmHipsY / (motionHipsHeight || 1);
+
+      clip.tracks.forEach((track) => {
+        const trackSplitted = track.name.split('.');
+        const mixamoRigName = trackSplitted[0];
+        const vrmBoneName = mixamoVRMRigMap[mixamoRigName];
+        const vrmNodeName = vrm.humanoid?.getNormalizedBoneNode(vrmBoneName)?.name;
+        const mixamoRigNode = fbxGroup.getObjectByName(mixamoRigName);
+
+        if (vrmNodeName != null && mixamoRigNode != null) {
+          const propertyName = trackSplitted[1];
+
+          // Store rest-pose world rotations.
+          mixamoRigNode.getWorldQuaternion(restRotationInverse).invert();
+          mixamoRigNode.parent.getWorldQuaternion(parentRestWorldRotation);
+
+          if (track instanceof THREE.QuaternionKeyframeTrack) {
+            for (let i = 0; i < track.values.length; i += 4) {
+              const flatQuaternion = track.values.slice(i, i + 4);
+              _quatA.fromArray(flatQuaternion);
+              _quatA.premultiply(parentRestWorldRotation).multiply(restRotationInverse);
+              _quatA.toArray(flatQuaternion);
+              flatQuaternion.forEach((v, index) => {
+                track.values[index + i] = v;
+              });
+            }
+
+            tracks.push(
+              new THREE.QuaternionKeyframeTrack(
+                `${vrmNodeName}.${propertyName}`,
+                track.times,
+                track.values.map((v, i) => (
+                  vrm.meta?.metaVersion === '0' && i % 2 === 0 ? -v : v
+                )),
+              ),
+            );
+          } else if (track instanceof THREE.VectorKeyframeTrack) {
+            const value = track.values.map(
+              (v, i) => (vrm.meta?.metaVersion === '0' && i % 3 !== 1 ? -v : v) * hipsPositionScale
+            );
+            tracks.push(new THREE.VectorKeyframeTrack(`${vrmNodeName}.${propertyName}`, track.times, value));
+          }
         }
       });
 
-      if (!faceMesh || !faceMesh.morphTargetDictionary) {
-        console.warn('[emotion] Face mesh or morphTargetDictionary not found; emotion disabled');
+      return new THREE.AnimationClip('vrmAnimation', clip.duration, tracks);
+    }
+
+    // Create the AnimationMixer and retarget all loaded clips.
+    function initAnimationMixer() {
+      if (!vrm?.scene) return;
+      if (rawClipMap.size === 0) return;
+
+      mixer = new THREE.AnimationMixer(vrm.scene);
+
+      for (const [name, { clip, group }] of rawClipMap) {
+        const retargetedClip = retargetMixamoClip(clip, group, vrm);
+        const action = mixer.clipAction(retargetedClip);
+        action.setLoop(THREE.LoopRepeat);
+        action.clampWhenFinished = false;
+        animationMap.set(name, action);
+      }
+
+      // Free raw clip data (no longer needed).
+      rawClipMap.clear();
+
+      console.log(`[FBX] AnimationMixer initialized with ${animationMap.size} actions`);
+      console.log(`[FBX] 空闲动画将在 ${IDLE_ANIM_DELAY}s 后开始随机播放`);
+    }
+
+    // ─── Idle Animation Control ─────────────────────────────
+    // Start playing random idle animations. Called when the idle timer expires.
+    function startIdleAnimations() {
+      if (idleAnimActive) return;
+      if (!mixer || animationMap.size === 0) return;
+      idleAnimActive = true;
+      playRandomIdleAnim();
+      console.log('[FBX] 空闲动画开始播放');
+    }
+
+    // Stop all animations and restore the default standing pose.
+    function stopIdleAnimations() {
+      if (!idleAnimActive) return;
+      idleAnimActive = false;
+      idleAnimNextSwitch = 0;
+
+      // Fade out all running actions, then restore the default pose.
+      if (mixer && currentAnimation) {
+        const action = animationMap.get(currentAnimation);
+        if (action && action.isRunning()) {
+          action.fadeOut(animCrossFadeDuration);
+        }
+      }
+      currentAnimation = null;
+
+      // Defer pose restore until after the fadeOut completes.
+      setTimeout(() => {
+        if (!idleAnimActive) {
+          restoreDefaultPose();
+        }
+      }, animCrossFadeDuration * 1000 + 50);
+
+      console.log('[FBX] 空闲动画停止, 恢复默认站姿');
+    }
+
+    // Pick and play a random animation from the idle pool.
+    function playRandomIdleAnim() {
+      if (!mixer || !idleAnimActive) return;
+
+      // Pick a random animation different from the current one.
+      let pool = idleAnimPool;
+      if (currentAnimation && pool.length > 1) {
+        pool = pool.filter(n => n !== currentAnimation);
+      }
+      const animName = pool[Math.floor(Math.random() * pool.length)];
+      const action = animationMap.get(animName);
+      if (!action) return;
+
+      const prevAction = currentAnimation ? animationMap.get(currentAnimation) : null;
+      currentAnimation = animName;
+
+      if (prevAction && prevAction.isRunning()) {
+        action.reset().play();
+        action.crossFadeFrom(prevAction, animCrossFadeDuration, true);
+      } else {
+        action.reset().play();
+        action.setEffectiveWeight(1.0);
+      }
+
+      // Schedule next switch: play for 4-8 seconds.
+      const duration = 4 + Math.random() * 4;
+      idleAnimNextSwitch = idleTime + duration;
+      console.log(`[FBX] 播放动画: ${animName} (${duration.toFixed(1)}s)`);
+    }
+
+    // ─── Fit camera to model bounding box ─────────────────────
+    function fitCameraToWindow() {
+      const box = new THREE.Box3();
+      scene.traverse(function(obj) {
+        if (!obj.isMesh || obj === shadowDisc || obj === gridHelper) return;
+        box.expandByObject(obj);
+      });
+      if (box.isEmpty()) {
+        console.log('[INFO] Camera: box is empty, using default');
         return;
       }
 
-      for (const [emotion, names] of Object.entries(emotionMorphNames)) {
-        const binds = [];
-        for (const name of names) {
-          const idx = faceMesh.morphTargetDictionary[name];
-          if (idx === undefined) continue;
-          binds.push(idx);
-          managedEmotionIndices.push(idx);
-        }
-        if (binds.length) emotionMorphMap[emotion] = binds;
-      }
-    }
+      const size = new THREE.Vector3();
+      box.getSize(size);
+      const center = new THREE.Vector3();
+      box.getCenter(center);
 
-    function updateEmotionMorphs() {
-      if (!faceMeshes.length) return;
+      avatarBounds.worldW = size.x;
+      avatarBounds.worldH = size.y;
+      avatarBounds.worldCenter.copy(center);
 
-      const binds = emotionMorphMap[currentEmotion];
+      console.log('[INFO] Model bounds: w=' + size.x.toFixed(2) + ' h=' + size.y.toFixed(2) +
+                  ' center=(' + center.x.toFixed(2) + ',' + center.y.toFixed(2) + ',' + center.z.toFixed(2) + ')');
 
-      for (const mesh of faceMeshes) {
-        if (!mesh.morphTargetInfluences) continue;
+      // Fit so model fills ~75% of window height.
+      const margin = 1.33;
+      const fovRad = camera.fov * Math.PI / 180;
+      const winH = window.innerHeight;
+      const winW = window.innerWidth;
+      const aspect = winW / Math.max(winH, 1);
 
-        for (const idx of managedEmotionIndices) {
-          mesh.morphTargetInfluences[idx] = 0;
-        }
+      const distH = (avatarBounds.worldW * margin) / (2 * Math.tan(fovRad / 2) * aspect);
+      const distV = (avatarBounds.worldH * margin) / (2 * Math.tan(fovRad / 2));
+      const dist = Math.max(distH, distV);
 
-        if (!binds) continue;
-        for (const idx of binds) {
-          mesh.morphTargetInfluences[idx] = 1.0;
-        }
-      }
+      camera.position.set(center.x, center.y, center.z + dist);
+      camera.lookAt(center.x, center.y, center.z);
+      camera.near = Math.max(0.01, dist * 0.1);
+      camera.updateProjectionMatrix();
+
+      // Sync the orbit controls to the fitted view.
+      controls.target.copy(center);
+      controls.minDistance = Math.max(1.5, dist * 0.35);
+      controls.maxDistance = dist * 2.4;
+      controls.update();
+
+      console.log('[INFO] Camera: dist=' + dist.toFixed(1) + ' pos=(' +
+                  camera.position.x.toFixed(1) + ',' + camera.position.y.toFixed(1) + ',' +
+                  camera.position.z.toFixed(1) + ') aspect=' + aspect.toFixed(2));
     }
 
     // ─── JS Bridge: Send events to Swift ────────────────────
@@ -798,50 +1165,8 @@
       console.log('sendEvent:', type, data);
     }
 
-    // ─── Auto-fit camera ────────────────────────────────────
-    function fitWindowToAvatar() {
-      // Works for both the VRM avatar and the placeholder character
-      // (whose front — eyes/mouth — faces +Z, toward the default camera).
-      const target = vrm?.scene ?? (window._placeholder ? window._placeholder.group : null);
-      if (!target) return;
-
-      const box = new THREE.Box3();
-      box.expandByObject(target);
-      if (box.isEmpty()) return;
-
-      const size = new THREE.Vector3();
-      box.getSize(size);
-      const center = new THREE.Vector3();
-      box.getCenter(center);
-
-      avatarBounds.worldW = size.x;
-      avatarBounds.worldH = size.y;
-      avatarBounds.worldCenter.copy(center);
-
-      console.log('[INFO] 角色包围盒: 宽=' + size.x.toFixed(2) + ' 高=' + size.y.toFixed(2));
-
-      fitCameraToWindow();
-    }
-
-    function fitCameraToWindow() {
-      if (!avatarBounds.worldH) return;
-
-      const margin = 1.33;
-      const fovRad = camera.fov * Math.PI / 180;
-
-      const distH = (avatarBounds.worldW * margin) / (2 * Math.tan(fovRad / 2) * camera.aspect);
-      const distV = (avatarBounds.worldH * margin) / (2 * Math.tan(fovRad / 2));
-      const dist = Math.max(distH, distV);
-
-      orbitDist = dist;
-      camera.near = Math.max(0.01, dist * 0.1);
-      camera.updateProjectionMatrix();
-      updateOrbitCamera();
-    }
-
     function fadeOutAvatar() {
       canvas.classList.add('fading');
-      console.log('[INFO] 数字人淡出中...');
     }
 
     function hideLoading() {
@@ -849,152 +1174,55 @@
       if (el) el.classList.add('hidden');
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  TOUCH HANDLING (mobile)
-    // ═══════════════════════════════════════════════════════════
-
-    let touchState = null; // null | { mode: 'orbit'|'pinch', ... }
+    // ─── Input: touch handling ────────────────────────────────
+    // Tap detection: touchstart + touchend with a small drag threshold.
+    // Long-press detection: 600ms hold without moving.
+    // OrbitControls handles rotation (1-finger) and pinch-zoom (2-finger).
+    let tapState = null;
     let longPressTimer = null;
-    let touchStartTime = 0;
-    let touchMoved = false;
 
     canvas.addEventListener('touchstart', (e) => {
-      e.preventDefault();
-
-      const touches = e.touches;
-
-      if (touches.length === 1) {
-        // Single finger: orbit or tap
-        const t = touches[0];
-        touchState = {
-          mode: 'orbit',
-          startX: t.clientX,
-          startY: t.clientY,
-          lastX: t.clientX,
-          lastY: t.clientY,
-          startTheta: orbitTheta,
-          startPhi: orbitPhi,
-        };
-        touchMoved = false;
-        touchStartTime = performance.now();
-
-        // Start long-press timer (600ms)
-        clearLongPress();
-        longPressTimer = setTimeout(() => {
-          if (!touchMoved && touchState?.mode === 'orbit') {
-            console.log('[INPUT] 长按 (long-press)');
-            sendEvent('long_press', {});
-          }
-        }, 600);
-      } else if (touches.length === 2) {
-        // Two fingers: pinch zoom
-        clearLongPress();
-        const t0 = touches[0];
-        const t1 = touches[1];
-        const dist = Math.hypot(t1.clientX - t0.clientX, t1.clientY - t0.clientY);
-        const midX = (t0.clientX + t1.clientX) / 2;
-        const midY = (t0.clientY + t1.clientY) / 2;
-
-        touchState = {
-          mode: 'pinch',
-          startDist: dist,
-          lastDist: dist,
-          startOrbitDist: orbitDist,
-          midX: midX,
-          midY: midY,
-          // Also track centroid for orbit during pinch
-          lastMidX: midX,
-          lastMidY: midY,
-          startTheta: orbitTheta,
-          startPhi: orbitPhi,
-        };
-      }
+      if (e.touches.length !== 1) { tapState = null; clearLongPress(); return; }
+      tapState = {
+        startX: e.touches[0].screenX,
+        startY: e.touches[0].screenY,
+        moved: false,
+      };
+      // Start long-press timer (600ms)
+      clearLongPress();
+      longPressTimer = setTimeout(() => {
+        if (tapState && !tapState.moved) {
+          console.log('[INPUT] 长按 (long-press)');
+          sendEvent('long_press', {});
+          tapState = null;
+        }
+      }, 600);
     }, { passive: false });
 
     canvas.addEventListener('touchmove', (e) => {
-      e.preventDefault();
-      if (!touchState) return;
-
-      const touches = e.touches;
-
-      if (touchState.mode === 'orbit' && touches.length === 1) {
-        const t = touches[0];
-        const dx = t.clientX - touchState.lastX;
-        const dy = t.clientY - touchState.lastY;
-
-        if (Math.abs(dx) > 2 || Math.abs(dy) > 2) {
-          touchMoved = true;
-          clearLongPress();
-        }
-
-        orbitTheta -= dx * orbitSpeed;
-        orbitPhi += dy * orbitSpeed;
-        orbitPhi = Math.max(-1.4, Math.min(1.4, orbitPhi));
-
-        touchState.lastX = t.clientX;
-        touchState.lastY = t.clientY;
-      } else if (touchState.mode === 'pinch' && touches.length === 2) {
-        const t0 = touches[0];
-        const t1 = touches[1];
-        const dist = Math.hypot(t1.clientX - t0.clientX, t1.clientY - t0.clientY);
-        const midX = (t0.clientX + t1.clientX) / 2;
-        const midY = (t0.clientY + t1.clientY) / 2;
-
-        // Pinch zoom
-        const scale = touchState.startDist / Math.max(dist, 1);
-        orbitDist = touchState.startOrbitDist * scale;
-        orbitDist = Math.max(1.5, Math.min(8.0, orbitDist));
-
-        // Pan during pinch (orbit)
-        const pdx = midX - touchState.lastMidX;
-        const pdy = midY - touchState.lastMidY;
-        orbitTheta -= pdx * orbitSpeed;
-        orbitPhi += pdy * orbitSpeed;
-        orbitPhi = Math.max(-1.4, Math.min(1.4, orbitPhi));
-
-        touchState.lastDist = dist;
-        touchState.lastMidX = midX;
-        touchState.lastMidY = midY;
+      if (!tapState || e.touches.length !== 1) { clearLongPress(); tapState = null; return; }
+      if (!tapState.moved &&
+          (Math.abs(e.touches[0].screenX - tapState.startX) > 8 ||
+           Math.abs(e.touches[0].screenY - tapState.startY) > 8)) {
+        tapState.moved = true;
+        clearLongPress();
       }
     }, { passive: false });
 
     canvas.addEventListener('touchend', (e) => {
-      e.preventDefault();
       clearLongPress();
-
-      if (!touchState) return;
-
-      // If no remaining touches, gesture ended
-      if (e.touches.length === 0) {
-        if (touchState.mode === 'orbit' && !touchMoved) {
-          // Tap detected
-          const elapsed = performance.now() - touchStartTime;
-          if (elapsed < 500) {
-            console.log('[INPUT] 触摸点击 (tap)');
-            sendEvent('tap', {});
-          }
-        }
-        touchState = null;
-      } else if (e.touches.length === 1 && touchState.mode === 'pinch') {
-        // Pinch ended, one finger remains → transition to orbit
-        const t = e.touches[0];
-        touchState = {
-          mode: 'orbit',
-          startX: t.clientX,
-          startY: t.clientY,
-          lastX: t.clientX,
-          lastY: t.clientY,
-          startTheta: orbitTheta,
-          startPhi: orbitPhi,
-        };
-        touchMoved = false;
-        touchStartTime = performance.now();
+      if (!tapState) return;
+      const wasDrag = tapState.moved;
+      tapState = null;
+      if (!wasDrag) {
+        console.log('[INPUT] 触摸点击 (tap)');
+        sendEvent('tap', {});
       }
     });
 
-    canvas.addEventListener('touchcancel', (e) => {
+    canvas.addEventListener('touchcancel', () => {
       clearLongPress();
-      touchState = null;
+      tapState = null;
     });
 
     function clearLongPress() {
@@ -1008,6 +1236,7 @@
     window.addEventListener('resize', () => {
       renderer.setSize(window.innerWidth, window.innerHeight);
       camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
       fitCameraToWindow();
       if (vrm) {
         vrm.scene.position.set(0, AVATAR_Y, 0);
@@ -1026,6 +1255,15 @@
       });
     }
 
+    // Fallback: force-start the render loop even if initAvatar never resolves.
+    setTimeout(() => {
+      if (frameCount === 0 && !vrm && !window._placeholder) {
+        console.error('[FALLBACK] initAvatar never completed, forcing placeholder');
+        createPlaceholderAvatar();
+        startAnimLoop();
+      }
+    }, 8000);
+
     // ─── Bridge: swap in the real handler and flush pending messages ───
     const pending = window._pendingMessages || [];
     window.handleMessage = function(jsonStr) {
@@ -1039,7 +1277,6 @@
       window._pendingMessages = [];
     }
 
-    // Clean up
     window.addEventListener('beforeunload', () => {
       clearVisemeTimers();
     });

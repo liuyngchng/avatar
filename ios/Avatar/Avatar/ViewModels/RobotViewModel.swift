@@ -1070,6 +1070,11 @@ class RobotViewModel: ObservableObject {
         if let speakingText = state.speakingText, !speakingText.isEmpty {
             dict["speakingText"] = speakingText
         }
+        // Echo the recognized utterance back as a subtitle while the robot
+        // is thinking — the user sees what was heard before the reply starts.
+        if let userText = state.lastUserText, !userText.isEmpty, state.mode == .thinking {
+            dict["userText"] = userText
+        }
         if let data = try? JSONSerialization.data(withJSONObject: dict),
            let json = String(data: data, encoding: .utf8) {
             VRMBridge.shared.send(json)
