@@ -61,7 +61,7 @@ func main() {
 		}
 		slog.Info("certificate_written_to", "path", defaultCertFile)
 		slog.Info("private_key_written_to", "path", defaultKeyFile)
-		slog.Info("restart_without_gen_cert_to_use_https")
+		slog.Info("restart without -gen-cert to use https")
 		return
 	}
 
@@ -305,7 +305,7 @@ func main() {
 			slog.Info("listening_on_http_ip", "addr", ip.String()+addr)
 		}
 		slog.Info("open_http_in_browser", "url", "http://localhost"+addr)
-		slog.Info("tip_run_gen_cert_for_https")
+		slog.Info("tip: run -gen-cert for https")
 		if err := server.ListenAndServe(); err != http.ErrServerClosed {
 			slog.Error("server_listen_error", "error", err)
 			os.Exit(1)

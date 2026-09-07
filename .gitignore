@@ -82,6 +82,8 @@ web/avatar-web.exe
 web/cfg.yml
 web/cert.pem
 web/key.pem
+web/lib/
+web/*.tar
 
 # ── Secrets ───────────────────────────────────────────
 *.keystore
