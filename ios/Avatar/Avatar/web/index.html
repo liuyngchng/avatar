@@ -191,8 +191,9 @@
     }
     // Mobile: use pixel ratio 1 for performance, 2 on high-end devices.
     // iPhone 12 Mini has a high-res screen but A14 GPU handles pixel ratio 2 fine.
-    // We cap at 2 and let the frame rate adapt instead.
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    // Cap at 1.5 — the avatar is a moving target where sub-native resolution is
+    // visually negligible but saves significant GPU fill-rate (and battery).
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.setClearColor(0x1A1A2E, 1);
     renderer.shadowMap.enabled = true;
@@ -429,8 +430,14 @@
     }
 
     // ─── Animation Loop ─────────────────────────────────────
+    // Visibility-aware render loop: `requestAnimationFrame` is throttled or
+    // suspended by the browser when the page is not visible, but we still
+    // pause it explicitly (and reset the clock) so entering the background
+    // stops all GPU work and there is no huge `dt` spike on resume.
+    let animRunning = false;
+    let animFrameId = 0;
     function animate() {
-      requestAnimationFrame(animate);
+      animFrameId = requestAnimationFrame(animate);
 
       const dt = Math.min(clock.getDelta(), 0.1);
       idleTime += dt;
@@ -451,6 +458,27 @@
 
       renderer.render(scene, camera);
     }
+
+    function stopAnimLoop() {
+      if (animFrameId) cancelAnimationFrame(animFrameId);
+      animFrameId = 0;
+      animRunning = false;
+    }
+
+    function startAnimLoop() {
+      if (animRunning) return;
+      animRunning = true;
+      clock.getDelta(); // reset delta so resume doesn't jump
+      animate();
+    }
+
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) {
+        stopAnimLoop();
+      } else {
+        startAnimLoop();
+      }
+    });
 
     // ─── Orbit camera ──────────────────────────────────────
     function updateOrbitCamera() {
@@ -991,10 +1019,10 @@
     // ─── Start ──────────────────────────────────────────────
     if (webgl2Unsupported) {
       createPlaceholderAvatar();
-      animate();
+      startAnimLoop();
     } else {
       initAvatar().then(() => {
-        animate();
+        startAnimLoop();
       });
     }
 

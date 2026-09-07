@@ -133,7 +133,7 @@
     // ─── Three.js Setup ─────────────────────────────────────
     const canvas = document.getElementById('canvas');
     const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false });
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.setClearColor(0x1A1A2E, 1.0);
     renderer.shadowMap.enabled = true;
@@ -438,8 +438,12 @@
     }
 
     // ─── Animation Loop ─────────────────────────────────────
+    // Visibility-aware render loop: pauses when the page is hidden to save
+    // GPU/battery, and resets the clock on resume to avoid huge delta spikes.
+    let animRunning = false;
+    let animFrameId = 0;
     function animate() {
-      requestAnimationFrame(animate);
+      animFrameId = requestAnimationFrame(animate);
 
       try {
         const dt = Math.min(clock.getDelta(), 0.1);
@@ -484,6 +488,28 @@
         frameCount = -1;
       }
     }
+
+    function stopAnimLoop() {
+      if (animFrameId) cancelAnimationFrame(animFrameId);
+      animFrameId = 0;
+      animRunning = false;
+    }
+
+    function startAnimLoop() {
+      if (animRunning) return;
+      animRunning = true;
+      clock.getDelta(); // reset delta so resume doesn't jump
+      animate();
+    }
+
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) {
+        stopAnimLoop();
+        if (mixer) mixer.stopAllAction();
+      } else {
+        startAnimLoop();
+      }
+    });
 
     let frameCount = 0;
     // Log first frame confirmation.
@@ -1069,7 +1095,7 @@
 
     // ─── Start ──────────────────────────────────────────────
     initAvatar().then(() => {
-      animate();
+      startAnimLoop();
     });
 
     // Fallback: force-start the render loop even if initAvatar never resolves.
@@ -1077,7 +1103,7 @@
       if (frameCount === 0 && !vrm && !window._placeholder) {
         console.error('[FALLBACK] initAvatar never completed, forcing placeholder');
         createPlaceholderAvatar();
-        animate();
+        startAnimLoop();
       }
     }, 8000);
 
