@@ -14,6 +14,9 @@ import AVFoundation
 @MainActor
 class RobotViewModel: ObservableObject {
     @Published var robotState = RobotState()
+    /// User preference: whether KWS should run whenever the robot is idle.
+    /// Runtime mic hand-offs (wake flow, interruptions) don't change this —
+    /// only the ear toggle does.
     @Published var wakeWordEnabled: Bool = false
     @Published var kwsReady: Bool = false
     @Published var enginesReady: Bool = false
@@ -66,13 +69,15 @@ class RobotViewModel: ObservableObject {
     private var anticTask: Task<Void, Never>?
     private var wakeEventCancellable: AnyCancellable?
     private var resumeCancellable: AnyCancellable?
-    private var wakeRunningCancellable: AnyCancellable?
 
     // VAD
     private var latestRms: Float = 0
     private var vadTask: Task<Void, Never>?
     private var calibratedNoiseThreshold: Float = 0.012  // calibrated once at startup
     private var speechChunkCount = 0  // non-silent buffer count during current recording
+    /// Monotonic id of the current recording session. Tasks capture it at
+    /// creation time and bail out when it no longer matches.
+    private var voiceSessionId = 0
 
     // Pause/resume tracking
     private var isRobotRunning = false
@@ -94,13 +99,6 @@ class RobotViewModel: ObservableObject {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] state in
                 self?.pushStateToWebView(state)
-            }
-
-        // Observe wake word state
-        wakeRunningCancellable = wakeWordManager.$isRunning
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] running in
-                self?.wakeWordEnabled = running
             }
 
         // Observe wake word events
@@ -228,8 +226,15 @@ class RobotViewModel: ObservableObject {
         Task.detached(priority: .userInitiated) { [weak self] in
             guard let self = self else { return }
 
-            let asrReady = await MainActor.run { self.asrEngine.initialize() }
-            let ttsReady = await MainActor.run { self.ttsEngine.initialize() }
+            // Load models off the main thread — ONNX session creation and
+            // the TTS warm-up synthesis can take seconds and would freeze
+            // the UI if run on the main actor. The awaits only grab the
+            // engine references (lazy init); initialize() itself runs on
+            // this detached thread.
+            let asr = await self.asrEngine
+            let tts = await self.ttsEngine
+            let asrReady = asr.initialize()
+            let ttsReady = tts.initialize()
 
             await MainActor.run {
                 self.enginesReady = asrReady && ttsReady
@@ -315,9 +320,7 @@ class RobotViewModel: ObservableObject {
 
         // 4. Wake word
         wakeWordEngine.stop()
-        if wakeWordEnabled {
-            wakeWordManager.setRunning(false)
-        }
+        wakeWordManager.setRunning(false)
     }
 
     // MARK: - Interaction (Tap-to-Talk)
@@ -338,6 +341,7 @@ class RobotViewModel: ObservableObject {
         // completes (see finishSpeaking).
         if wakeWordEnabled {
             wakeWordEngine.stop()
+            wakeWordManager.setRunning(false)
             resumeKwsAfterVoiceFlow = true
         }
 
@@ -345,6 +349,11 @@ class RobotViewModel: ObservableObject {
             stopListening()
         } else if case .speaking = robotState.mode {
             stopSpeaking()
+        } else if case .thinking = robotState.mode {
+            // ASR/LLM pipeline is in flight — starting a second recording
+            // here would race the running session (stale VAD timers, double
+            // processRecording). Ignore taps until the flow settles.
+            os_log(.info, "RobotVM: tap ignored — still thinking")
         } else {
             startListening()
         }
@@ -398,6 +407,8 @@ class RobotViewModel: ObservableObject {
 
         latestRms = 0
         speechChunkCount = 0
+        voiceSessionId += 1
+        let sessionId = voiceSessionId
         var silentChunks = 0
         var warmupBuffers = 12                      // skip first ~12 buffers (~960ms) to avoid TTS tail/echo
         let maxSilentChunks = 25                   // ~2 seconds at ~80ms/chunk
@@ -437,7 +448,9 @@ class RobotViewModel: ObservableObject {
         // VAD auto-stop timer (polls for silence trigger OR max duration)
         vadTask = Task { @MainActor [weak self] in
             while !Task.isCancelled {
-                guard let self = self, case .listening = self.robotState.mode else { break }
+                guard let self = self,
+                      self.voiceSessionId == sessionId,
+                      case .listening = self.robotState.mode else { break }
                 try? await Task.sleep(nanoseconds: 100_000_000)
 
                 // VAD silence triggered the stop
@@ -470,13 +483,25 @@ class RobotViewModel: ObservableObject {
         robotState.mode = .thinking
         robotState.emotion = .curious
 
+        // Only this recording session may drive the pipeline below; if a
+        // newer session started meanwhile, this one bails out.
+        let sessionId = voiceSessionId
+
         recognitionTask?.cancel()
         recognitionTask = Task.detached(priority: .userInitiated) { [weak self] in
             guard let self = self else { return }
 
-            let text = await MainActor.run { self.asrEngine.inputFinished() }
+            // Decode runs on the ASR engine's work queue, off the main thread.
+            let asr = await self.asrEngine
+            let text = asr.inputFinished()
 
-            await MainActor.run {
+            guard !Task.isCancelled else { return }
+            guard await self.isCurrentSession(sessionId) else { return }
+
+            // The validation closure returns false for rejected utterances
+            // (blank/noise/echo) — each rejection path schedules its own
+            // follow-up, so only a true result may reach the LLM.
+            let accepted: Bool = await MainActor.run {
                 // Minimum-speech gate: if the utterance is too short
                 // (< ~500ms of actual speech energy), treat it as
                 // echo/reverb rather than real user input.  This stops
@@ -497,7 +522,7 @@ class RobotViewModel: ObservableObject {
                     } else {
                         self.speakText("嗯？还在吗？")
                     }
-                    return
+                    return false
                 }
 
                 guard !text.isEmpty else {
@@ -517,15 +542,15 @@ class RobotViewModel: ObservableObject {
                             self.speakText("嗯？还在吗？")
                         }
                     } else {
-                        self.robotState.mode = .idle
+                        // Count the false trigger now, but leave KWS stopped:
+                        // finishSpeaking() resumes it after the prompt audio
+                        // finishes, so the robot never listens to its own TTS.
                         if self.wakeWordTriggered {
                             self.wakeWordManager.notifyFalseTrigger()
-                            self.wakeWordTriggered = false
-                            self.wakeWordManager.notifyVoiceFlowDone()
                         }
                         self.speakText("没听清，请再说一遍")
                     }
-                    return
+                    return false
                 }
 
                 // Filler/interjection filter: "嗯", "啊" etc. are
@@ -548,7 +573,7 @@ class RobotViewModel: ObservableObject {
                             self.wakeWordManager.notifyVoiceFlowDone()
                         }
                     }
-                    return
+                    return false
                 }
 
                 self.robotState.lastUserText = text
@@ -570,7 +595,7 @@ class RobotViewModel: ObservableObject {
                             os_log(.info, "RobotVM: suspicious short text — silently re-listening")
                             self.startListening()
                         }
-                        return
+                        return false
                     }
                 }
                 self.suspiciousEchoCount = 0   // reset echo counter on valid input
@@ -578,7 +603,12 @@ class RobotViewModel: ObservableObject {
                 if self.wakeWordTriggered {
                     self.wakeWordManager.notifyProductiveWake()
                 }
+                return true
             }
+
+            // If the utterance was rejected (blank/noise/echo), the handler
+            // above already scheduled its own follow-up — don't call the LLM.
+            guard accepted else { return }
 
             // Get response — retry once on LLM failure before falling back
             let hasConfig = await MainActor.run { self.configRepo.hasConfig }
@@ -587,18 +617,31 @@ class RobotViewModel: ObservableObject {
                 do {
                     reply = try await self.chatWithLLM(text)
                 } catch {
+                    // Cancelled (pause / interruption / newer session) — bail
+                    // out silently instead of speaking a fallback reply.
+                    if Task.isCancelled || error is CancellationError
+                        || (error as? URLError)?.code == .cancelled {
+                        return
+                    }
                     os_log(.error, "RobotVM: LLM attempt 1 failed: %{public}@, retrying...",
                            error.localizedDescription)
-                    // One retry after a short delay
+                    // One retry after a short delay. The user message is
+                    // already in the LLM context — don't append it again.
                     try? await Task.sleep(nanoseconds: 1_000_000_000)
+                    guard !Task.isCancelled else { return }
                     do {
-                        reply = try await self.chatWithLLM(text)
+                        reply = try await self.chatWithLLM(text, appendUser: false)
                     } catch {
+                        if Task.isCancelled || error is CancellationError
+                            || (error as? URLError)?.code == .cancelled {
+                            return
+                        }
                         os_log(.error, "RobotVM: LLM attempt 2 failed, falling back to behavior engine")
                         let (fallback, emotion) = await MainActor.run { self.behaviorEngine.respond(text) }
                         await MainActor.run {
                             self.robotState.responseText = fallback
                             self.robotState.emotion = emotion
+                            self.chatSession.appendAssistantReply(fallback)
                             self.speakText(fallback)
                         }
                         return
@@ -618,6 +661,7 @@ class RobotViewModel: ObservableObject {
                 await MainActor.run {
                     self.robotState.responseText = response
                     self.robotState.emotion = emotion
+                    self.chatSession.appendAssistantReply(response)
                     self.speakText(response)
                 }
             }
@@ -626,21 +670,31 @@ class RobotViewModel: ObservableObject {
 
     // MARK: - LLM
 
-    private func chatWithLLM(_ text: String) async throws -> String {
-        let streamPublisher = chatSession.sendStream(text)
+    private func chatWithLLM(_ text: String, appendUser: Bool = true) async throws -> String {
+        let streamPublisher = appendUser
+            ? chatSession.sendStream(text)
+            : chatSession.sendStreamNoAppend(text)
 
-        return try await withCheckedThrowingContinuation { continuation in
+        return try await withUnsafeThrowingContinuation { (continuation: UnsafeContinuation<String, Error>) in
             var fullReply = ""
+            let box = LLMContinuationBox(continuation)
 
             streamingCancellable?.cancel()
             streamingCancellable = streamPublisher
                 .flatMap { $0 }
+                .handleEvents(receiveCancel: {
+                    // Cancelled by pause/interruption or a newer request —
+                    // resume the awaiting task so it can exit instead of
+                    // leaking while parked on the continuation.
+                    box.resume(.failure(CancellationError()))
+                })
                 .sink(
                     receiveCompletion: { completion in
-                        if case .failure(let error) = completion {
-                            continuation.resume(throwing: error)
-                        } else {
-                            continuation.resume(returning: fullReply)
+                        switch completion {
+                        case .failure(let error):
+                            box.resume(.failure(error))
+                        case .finished:
+                            box.resume(.success(fullReply))
                         }
                     },
                     receiveValue: { token in
@@ -678,12 +732,17 @@ class RobotViewModel: ObservableObject {
 
         // Synthesize each sentence into a separate chunk.
         let chunks: [[Float]] = await Task.detached(priority: .userInitiated) {
+            // Grab the engine + speaker id with a single hop, then run all
+            // synthesis on this detached thread (sherpa-onnx generation
+            // blocks and would freeze the UI on the main actor).
+            let tts = await self.ttsEngine
+            let sid = await self.selectedSid
             var results: [[Float]] = []
             for sentence in sentences {
                 if Task.isCancelled { break }
                 let normalized = TextNormalizer.normalize(sentence)
                 guard normalized.isNotBlank else { continue }
-                if let pcm = await self.ttsEngine.synthesize(text: normalized, sid: self.selectedSid) {
+                if let pcm = tts.synthesize(text: normalized, sid: sid) {
                     results.append(pcm)
                 }
             }
@@ -709,12 +768,18 @@ class RobotViewModel: ObservableObject {
             }
         }
 
+        // If this task was cancelled while audio was playing (a newer
+        // speakText or a stopSpeaking), bail out — finishing here would
+        // clobber the newer speech's state.
+        guard !Task.isCancelled else { return }
+
         // Let the audio hardware drain its output buffer before tearing
         // down the engine.  Without this delay the last ~50–100 ms of
         // audio can be cut off mid-waveform, producing a pop / crackle.
         try? await Task.sleep(nanoseconds: 150_000_000)  // 150ms
 
         self.audioPlayer.stop()
+        guard !Task.isCancelled else { return }
         self.finishSpeaking(prevMode: prevMode)
     }
 
@@ -814,12 +879,14 @@ class RobotViewModel: ObservableObject {
         )
 
         wakeWordManager.setRunning(true)
+        wakeWordEnabled = true
         os_log(.info, "RobotVM: wake word detection started")
     }
 
     private func stopWakeWordDetection() {
         wakeWordEngine.stop()
         wakeWordManager.setRunning(false)
+        wakeWordEnabled = false
         // Restore default audio session to avoid sound routing to earpiece
         AudioSessionManager.configure()
     }
@@ -843,6 +910,7 @@ class RobotViewModel: ObservableObject {
             await MainActor.run { self.wakeWordEngine.stop() }
             await MainActor.run { [weak self] in
                 guard let self = self else { return }
+                self.wakeWordManager.setRunning(false)
                 guard self.enginesReady else {
                     self.errorMessage = "模型未就绪，请在模型管理界面下载模型"
                     self.onResumeKws()
@@ -867,8 +935,10 @@ class RobotViewModel: ObservableObject {
         isInConversation = true
         os_log(.info, "RobotVM: multi-turn conversation started")
 
-        // TTS "哎，我在呢" then auto-listen
-        Task { @MainActor [weak self] in
+        // TTS "哎，我在呢" then auto-listen. Stored in speakingTask so
+        // stopSpeaking()/speakText() can cancel it — a tap during the
+        // greeting must not re-open the mic afterwards.
+        speakingTask = Task { @MainActor [weak self] in
             guard let self = self else { return }
             self.robotState.mode = .speaking
             self.robotState.isSpeaking = true
@@ -876,8 +946,10 @@ class RobotViewModel: ObservableObject {
             AudioSessionManager.configure()
 
             if let pcm = await Task.detached(priority: .userInitiated, operation: {
-                await self.ttsEngine.synthesize(text: "哎，我在呢", speed: 1.0, sid: self.selectedSid)
-            }).value {
+                let tts = await self.ttsEngine
+                let sid = await self.selectedSid
+                return tts.synthesize(text: "哎，我在呢", speed: 1.0, sid: sid)
+            }).value, !Task.isCancelled {
                 // Generate viseme timeline for the greeting.
                 let audioDurationMs = Int(Double(pcm.count) / Double(self.ttsEngine.sampleRate) * 1000)
                 if let timeline = VisemeGenerator.generateTimeline(text: "哎，我在呢", audioDurationMs: audioDurationMs) {
@@ -896,6 +968,10 @@ class RobotViewModel: ObservableObject {
             } else {
                 os_log(.error, "RobotVM: wake-word greeting TTS synthesis failed — skipping voice prompt")
             }
+
+            // Cancelled (e.g. user tapped during the greeting) or the
+            // conversation already ended — don't open the mic.
+            guard !Task.isCancelled, self.isMultiTurn else { return }
 
             self.robotState.isSpeaking = false
             self.robotState.speakingText = nil
@@ -941,6 +1017,9 @@ class RobotViewModel: ObservableObject {
         suspiciousEchoCount = 0
         isInConversation = false
         wakeWordTriggered = false
+        // Without this, ending on a blank leaves the robot stuck in
+        // .thinking forever (processRecording sets it before validating).
+        robotState.mode = .idle
         wakeWordManager.notifyVoiceFlowDone()
     }
 
@@ -1026,6 +1105,12 @@ class RobotViewModel: ObservableObject {
         ttsEngine.speakerName(for: sid)
     }
 
+    /// True when `id` is still the active recording session. Main-actor
+    /// hop for pipeline tasks running off the main thread.
+    private func isCurrentSession(_ id: Int) -> Bool {
+        voiceSessionId == id
+    }
+
     private static func rms(_ samples: [Float]) -> Float {
         var sum: Float = 0
         for s in samples {
@@ -1089,6 +1174,27 @@ class RobotViewModel: ObservableObject {
         vadTask?.cancel()
         wakeEventCancellable?.cancel()
         resumeCancellable?.cancel()
-        wakeRunningCancellable?.cancel()
+    }
+}
+
+/// Thread-safe single-shot continuation for `chatWithLLM` — the sink's
+/// completion and a receiveCancel may race to resume it.
+private final class LLMContinuationBox {
+    private let lock = NSLock()
+    private var continuation: UnsafeContinuation<String, Error>?
+
+    init(_ continuation: UnsafeContinuation<String, Error>) {
+        self.continuation = continuation
+    }
+
+    func resume(_ result: Result<String, Error>) {
+        lock.lock()
+        guard let continuation = continuation else {
+            lock.unlock()
+            return
+        }
+        self.continuation = nil
+        lock.unlock()
+        continuation.resume(with: result)
     }
 }

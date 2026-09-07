@@ -57,9 +57,23 @@ class ChatSession: ObservableObject {
 
     /// Send message with streaming (iOS 14+)
     func sendStream(_ text: String) -> AnyPublisher<AnyPublisher<String, Error>, Error> {
-        let userMsg = ChatMessage(role: .user, content: text)
-        appendToScreen(userMsg)
-        contextBuffer.append(userMsg)
+        sendStreamInternal(text, appendUser: true)
+    }
+
+    /// Streaming send without appending the user message — used for LLM
+    /// retries so the message doesn't end up twice in the context.
+    func sendStreamNoAppend(_ text: String) -> AnyPublisher<AnyPublisher<String, Error>, Error> {
+        sendStreamInternal(text, appendUser: false)
+    }
+
+    private func sendStreamInternal(
+        _ text: String, appendUser: Bool
+    ) -> AnyPublisher<AnyPublisher<String, Error>, Error> {
+        if appendUser {
+            let userMsg = ChatMessage(role: .user, content: text)
+            appendToScreen(userMsg)
+            contextBuffer.append(userMsg)
+        }
 
         let streamPublisher = llmClient.chatStreamPublisher(messages: contextMessages)
         return Just(streamPublisher)

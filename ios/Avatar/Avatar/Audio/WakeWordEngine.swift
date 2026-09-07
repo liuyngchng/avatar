@@ -243,6 +243,15 @@ class WakeWordEngine {
         DispatchQueue.main.sync { [weak self] in
             guard let self = self else { return }
 
+            // stop() may have torn the engine down while this block was
+            // queued behind it on the main thread. Bail out without touching
+            // the engine — otherwise the tap would be re-installed after
+            // teardown and break the next start().
+            os_unfair_lock_lock(&self.stateLock)
+            let shouldStart = self.isRunning
+            os_unfair_lock_unlock(&self.stateLock)
+            guard shouldStart else { return }
+
             inputNode.installTap(onBus: 0, bufferSize: Config.bufferSize, format: inputFormat) {
                 [weak self] buffer, _ in
                 guard let self = self else { return }

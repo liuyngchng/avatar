@@ -20,6 +20,12 @@ class SherpaAsrEngine {
     private var isInitialized = false
     private var pendingText = ""
 
+    /// Serializes sample intake and decoding. acceptWaveform() is called on
+    /// the main actor (audio tap → Combine) while inputFinished() runs in a
+    /// detached task — the queue keeps them off each other and moves the
+    /// (potentially seconds-long) decode off the main thread.
+    private let workQueue = DispatchQueue(label: "com.avatar.sherpa-asr")
+
     init(documentsDir: URL) {
         self.modelDir = documentsDir
             .appendingPathComponent("models/asr")
@@ -85,9 +91,11 @@ class SherpaAsrEngine {
     }
 
     func acceptWaveform(_ samples: [Float]) {
-        guard isInitialized else { return }
-        sampleBuffer.append(contentsOf: samples)
-        // Offline recognizer accumulates samples; decode happens at inputFinished
+        workQueue.async { [weak self] in
+            guard let self = self, self.isInitialized else { return }
+            self.sampleBuffer.append(contentsOf: samples)
+            // Offline recognizer accumulates samples; decode happens at inputFinished
+        }
     }
 
     func getPendingText() -> String {
@@ -96,37 +104,39 @@ class SherpaAsrEngine {
     }
 
     func inputFinished() -> String {
-        guard isInitialized, !sampleBuffer.isEmpty, let recognizer = recognizer else {
+        workQueue.sync {
+            guard isInitialized, !sampleBuffer.isEmpty, let recognizer = recognizer else {
+                sampleBuffer = []
+                return ""
+            }
+
+            os_log(.info, "ASR: decoding %d samples", sampleBuffer.count)
+
+            let stream = SherpaOnnxCreateOfflineStream(recognizer)
+            guard let stream = stream else {
+                os_log(.error, "ASR: failed to create offline stream")
+                sampleBuffer = []
+                return ""
+            }
+
+            sampleBuffer.withUnsafeBufferPointer { ptr in
+                SherpaOnnxAcceptWaveformOffline(
+                    stream, 16000, ptr.baseAddress, Int32(sampleBuffer.count)
+                )
+            }
+
+            SherpaOnnxDecodeOfflineStream(recognizer, stream)
+
+            let result = SherpaOnnxGetOfflineStreamResult(stream)
+            let text = result?.pointee.text.map { String(cString: $0) } ?? ""
+
+            SherpaOnnxDestroyOfflineRecognizerResult(result)
+            SherpaOnnxDestroyOfflineStream(stream)
+
             sampleBuffer = []
-            return ""
+            os_log(.info, "ASR: result='%@'", text)
+            return text
         }
-
-        os_log(.info, "ASR: decoding %d samples", sampleBuffer.count)
-
-        let stream = SherpaOnnxCreateOfflineStream(recognizer)
-        guard let stream = stream else {
-            os_log(.error, "ASR: failed to create offline stream")
-            sampleBuffer = []
-            return ""
-        }
-
-        sampleBuffer.withUnsafeBufferPointer { ptr in
-            SherpaOnnxAcceptWaveformOffline(
-                stream, 16000, ptr.baseAddress, Int32(sampleBuffer.count)
-            )
-        }
-
-        SherpaOnnxDecodeOfflineStream(recognizer, stream)
-
-        let result = SherpaOnnxGetOfflineStreamResult(stream)
-        let text = result?.pointee.text.map { String(cString: $0) } ?? ""
-
-        SherpaOnnxDestroyOfflineRecognizerResult(result)
-        SherpaOnnxDestroyOfflineStream(stream)
-
-        sampleBuffer = []
-        os_log(.info, "ASR: result='%@'", text)
-        return text
     }
 
     func destroy() {
