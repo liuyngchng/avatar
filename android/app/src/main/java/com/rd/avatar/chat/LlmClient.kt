@@ -26,6 +26,25 @@ class LlmClient(private val configRepository: ConfigRepository) {
             java.text.SimpleDateFormat("yyyy年M月d日 EEEE", java.util.Locale.CHINESE)
         }
 
+        /**
+         * Parse the [emotion:...] tag from the beginning of the LLM response text.
+         * Returns the emotion (e.g. "happy") and the cleaned text without the tag.
+         * If no tag is found, returns "neutral" and the original text.
+         * Valid emotions are the 5 VRM expressions + neutral:
+         *   neutral, happy, angry, sad, surprised, relaxed
+         */
+        fun parseEmotion(text: String): Pair<String, String> {
+            val trimmed = text.trimStart()
+            val prefix = "[emotion:"
+            if (!trimmed.startsWith(prefix)) return "neutral" to text
+            val endIdx = trimmed.indexOf(']')
+            if (endIdx < 0) return "neutral" to text
+            val raw = trimmed.substring(prefix.length, endIdx)
+            val clean = trimmed.substring(endIdx + 1).trimStart()
+            val valid = setOf("neutral", "happy", "angry", "sad", "surprised", "relaxed")
+            return if (raw in valid) raw to clean else "neutral" to clean
+        }
+
         private fun buildSystemPrompt(enableSearch: Boolean): String {
             val now = dateFormat.get()!!.format(java.util.Date())
             val base = "你是一个语音助手，名字叫「小然」。用口语化的中文回复，自然友好、直接明了。" +

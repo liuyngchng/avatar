@@ -64,6 +64,7 @@ class ConfigHttpServer(
     fun stop() {
         try { serverSocket?.close() } catch (_: Exception) {}
         serverSocket = null
+        executor.shutdown()
         Log.i(TAG, "HTTP config server stopped")
     }
 
@@ -125,7 +126,6 @@ class ConfigHttpServer(
         val cfg = repository.getConfig()
         val apiUrl = cfg?.apiUrl ?: ConfigRepository.DEFAULT_API_URL
         val model = cfg?.model ?: ConfigRepository.DEFAULT_MODEL
-        val apiKey = cfg?.apiKey ?: ""
         val enableSearch = cfg?.enableSearch ?: true
 
         val html = """
@@ -145,6 +145,10 @@ class ConfigHttpServer(
                 #result { margin-top: 16px; font-weight: 600; }
                 .ok { color: #2e7d32; }
                 .err { color: #c62828; }
+                .pwd-wrap { position: relative; }
+                .pwd-wrap input { padding-right: 40px; }
+                .pwd-toggle { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); background: none; border: none; cursor: pointer; font-size: 18px; padding: 4px; margin: 0; color: #888; }
+                .pwd-toggle:hover { color: #333; }
               </style>
             </head>
             <body>
@@ -158,7 +162,10 @@ class ConfigHttpServer(
                 <input type="text" name="model" value="${escapeHtml(model)}">
 
                 <label>API Key</label>
-                <input type="password" name="apiKey" value="${escapeHtml(apiKey)}" placeholder="sk-...">
+                <div class="pwd-wrap">
+                  <input type="password" name="apiKey" id="apiKey" placeholder="sk-...">
+                  <button type="button" class="pwd-toggle" id="pwdToggle" title="显示/隐藏密钥">&#x1f441;</button>
+                </div>
                 <div class="hint">密钥将加密存储在设备本地</div>
 
                 <label style="font-weight: normal;">
@@ -177,6 +184,16 @@ class ConfigHttpServer(
                   const el = document.getElementById('result');
                   if (res.ok) { el.className = 'ok'; el.textContent = '已保存'; }
                   else { el.className = 'err'; el.textContent = text; }
+                });
+                document.getElementById('pwdToggle').addEventListener('click', function() {
+                  const input = document.getElementById('apiKey');
+                  if (input.type === 'password') {
+                    input.type = 'text';
+                    this.textContent = '\u{1f441}‍\u{1f5e8}';
+                  } else {
+                    input.type = 'password';
+                    this.textContent = '\u{1f441}';
+                  }
                 });
               </script>
             </body>

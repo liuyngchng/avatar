@@ -792,6 +792,8 @@
           } else {
             // Reset idle timer when returning to idle (fresh 5s countdown).
             idleAnimTimer = 0;
+            idleTime = 0;
+            idleAnimNextSwitch = 0;
           }
 
           if (currentMode === 'speaking' && pendingTimeline) {

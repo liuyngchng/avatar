@@ -286,10 +286,12 @@ private fun RobotMode.toVrmMode(): String = when (this) {
 private fun Emotion.toVrmEmotion(): String = when (this) {
     Emotion.NEUTRAL    -> "neutral"
     Emotion.HAPPY      -> "happy"
-    Emotion.CURIOUS    -> "neutral"
+    Emotion.CURIOUS    -> "happy"     // aligned with iOS: curious → happy
     Emotion.SURPRISED  -> "surprised"
     Emotion.SHY        -> "relaxed"
     Emotion.SLEEPY     -> "relaxed"
     Emotion.SAD        -> "sad"
     Emotion.GOOFY      -> "happy"
+    Emotion.ANGRY      -> "angry"
+    Emotion.RELAXED    -> "relaxed"
 }

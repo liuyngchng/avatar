@@ -371,7 +371,7 @@ class RobotViewModel: ObservableObject {
         os_log(.info, "RobotVM: starting one-time noise calibration")
         AudioSessionManager.configure()
 
-        let baseSilenceThreshold: Float = 0.012
+        let baseSilenceThreshold: Float = 0.022  // aligned with Android VAD
         let calibrationChunks = 20   // ~1.6s at ~80ms/chunk
         var noiseFloor = Float.greatestFiniteMagnitude
         var chunkCount = 0
@@ -391,13 +391,22 @@ class RobotViewModel: ObservableObject {
                 }
             }
 
-        // Keep a reference so it doesn't get cancelled before calibration completes
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [cancellable] in
+        // Keep a reference so it doesn't get cancelled before calibration completes.
+        // Also stop the recorder on timeout, so the mic doesn't leak if calibration
+        // fails to receive enough audio chunks.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self, cancellable] in
             _ = cancellable  // retain until timeout
+            self?.audioRecorder.stop()
         }
     }
 
     private func startListening() {
+        // Cancel any previous recording before starting a new one — avoids
+        // leaking AVAudioEngine taps when startListening() is called twice.
+        recordingCancellable?.cancel()
+        recordingCancellable = nil
+        audioRecorder.stop()
+
         AudioSessionManager.configure()
 
         os_log(.info, "RobotVM: start listening")
@@ -411,7 +420,7 @@ class RobotViewModel: ObservableObject {
         let sessionId = voiceSessionId
         var silentChunks = 0
         var warmupBuffers = 12                      // skip first ~12 buffers (~960ms) to avoid TTS tail/echo
-        let maxSilentChunks = 25                   // ~2 seconds at ~80ms/chunk
+        let maxSilentChunks = 12                   // ~1s at ~80ms/chunk (aligned with Android)
         let maxRecordSeconds: TimeInterval = 10
         let startTime = Date()
         let effectiveThreshold = calibratedNoiseThreshold

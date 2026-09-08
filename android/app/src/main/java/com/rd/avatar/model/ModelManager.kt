@@ -2,7 +2,6 @@ package com.rd.avatar.model
 
 import android.content.Context
 import android.net.Uri
-import android.os.Build
 import android.util.Log
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -12,7 +11,6 @@ import java.io.File
 import java.io.FileOutputStream
 import java.io.InputStream
 import java.util.concurrent.TimeUnit
-import java.util.zip.ZipInputStream
 
 object ModelManager {
     private const val TAG = "RobotCompanion"
@@ -107,48 +105,6 @@ object ModelManager {
     fun getNativeLibPath(context: Context): String? {
         val f = File(libDir(context), NATIVE_LIB)
         return if (f.exists()) f.absolutePath else null
-    }
-
-    fun extractAar(context: Context, uri: Uri, onProgress: (Float) -> Unit): Result<Unit> {
-        return try {
-            val abi = Build.SUPPORTED_ABIS[0] // e.g. "arm64-v8a"
-            val targetEntry = "jni/$abi/$NATIVE_LIB"
-            Log.i(TAG, "Extracting AAR for ABI=$abi, looking for $targetEntry")
-
-            val totalSize = getSize(context, uri)
-            var bytesRead = 0L
-
-            context.contentResolver.openInputStream(uri)?.use outer@{ input ->
-                ZipInputStream(input).use { zis ->
-                    var entry = zis.nextEntry
-                    while (entry != null) {
-                        if (entry.name == targetEntry) {
-                            val destDir = libDir(context)
-                            destDir.mkdirs()
-                            val destFile = File(destDir, NATIVE_LIB)
-                            FileOutputStream(destFile).use { fos ->
-                                val buf = ByteArray(8192)
-                                var len: Int
-                                while (zis.read(buf).also { len = it } != -1) {
-                                    fos.write(buf, 0, len)
-                                    bytesRead += len
-                                    if (totalSize > 0) onProgress(bytesRead.toFloat() / totalSize)
-                                }
-                            }
-                            Log.i(TAG, "AAR: extracted $NATIVE_LIB to ${destFile.absolutePath}")
-                            return@outer Result.success(Unit)
-                        }
-                        zis.closeEntry()
-                        entry = zis.nextEntry
-                    }
-                }
-            } ?: return Result.failure(Exception("无法打开文件"))
-
-            Result.failure(Exception("AAR 中未找到 $targetEntry，请确认文件正确"))
-        } catch (e: Exception) {
-            Log.e(TAG, "AAR extraction failed", e)
-            Result.failure(e)
-        }
     }
 
     fun extractTar(
@@ -339,6 +295,12 @@ object ModelManager {
                         }
 
                         val destFile = File(destDir, name)
+                        // Prevent Zip Slip: ensure the resolved path is still under destDir.
+                        if (!destFile.canonicalPath.startsWith(destDir.canonicalPath + File.separator)) {
+                            Log.w(TAG, "Tar: skipping entry with path traversal: $name")
+                            entry = tar.nextEntry
+                            continue
+                        }
                         destFile.parentFile?.mkdirs()
                         FileOutputStream(destFile).use { fos ->
                             val buf = ByteArray(8192)

@@ -34,7 +34,11 @@ enum class Emotion(val intensity: Float) {
     SAD(0.3f),
 
     /** Goofy / silly mood — for random antics */
-    GOOFY(0.9f)
+    GOOFY(0.9f),
+
+    /** VRM-supported emotions (for LLM [emotion:] tag parsing). */
+    ANGRY(0.7f),
+    RELAXED(0.4f)
 }
 
 /**

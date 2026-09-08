@@ -21,11 +21,12 @@ enum AudioSessionManager {
     static var onInterruptionEnded: (() -> Void)?
 
     private static var isObserving = false
+    private static var observerToken: NSObjectProtocol?
 
     static func startObservingInterruptions() {
         guard !isObserving else { return }
         isObserving = true
-        NotificationCenter.default.addObserver(
+        observerToken = NotificationCenter.default.addObserver(
             forName: AVAudioSession.interruptionNotification,
             object: nil,
             queue: .main
@@ -47,6 +48,17 @@ enum AudioSessionManager {
             @unknown default:
                 break
             }
+        }
+    }
+
+    /// Remove the interruption observer. Call this to avoid a dangling
+    /// NotificationCenter token retaining stale closure references.
+    static func stopObservingInterruptions() {
+        guard isObserving else { return }
+        isObserving = false
+        if let token = observerToken {
+            NotificationCenter.default.removeObserver(token)
+            observerToken = nil
         }
     }
 

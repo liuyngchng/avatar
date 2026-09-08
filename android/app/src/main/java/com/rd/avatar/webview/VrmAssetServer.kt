@@ -52,6 +52,7 @@ class VrmAssetServer(private val context: Context) {
     fun stop() {
         try { serverSocket?.close() } catch (_: Exception) {}
         serverSocket = null
+        executor.shutdown()
         Log.i(TAG, "VRM asset server stopped")
     }
 

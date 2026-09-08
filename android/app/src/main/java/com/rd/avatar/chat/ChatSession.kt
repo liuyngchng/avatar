@@ -18,13 +18,23 @@ class ChatSession(
 
     /**
      * Full LLM context buffer — preserved across screen clears.
-     * Grows unboundedly; only the last [maxHistory] messages are sent to the LLM.
+     * Trimmed to [maxHistory] × 2 to bound memory; only the last
+     * [maxHistory] messages are sent to the LLM.
      */
     private val contextBuffer = mutableListOf<ChatMessage>()
 
     /** LLM context window: last [maxHistory] messages from the full context buffer. */
     private val contextMessages: List<ChatMessage>
         get() = contextBuffer.takeLast(maxHistory)
+
+    /** Trim the context buffer so it never grows unboundedly. */
+    private fun trimContextBuffer() {
+        val limit = maxHistory * 2
+        if (contextBuffer.size > limit) {
+            val excess = contextBuffer.size - limit
+            repeat(excess) { contextBuffer.removeAt(0) }
+        }
+    }
 
     /** Append a message to the on-screen list, trimming to [maxScreenMessages]. */
     private fun appendToScreen(msg: ChatMessage) {
@@ -35,6 +45,7 @@ class ChatSession(
         val userMsg = ChatMessage(role = ChatMessage.Role.USER, content = text)
         appendToScreen(userMsg)
         contextBuffer.add(userMsg)
+        trimContextBuffer()
 
         val result = llmClient.chat(contextMessages)
 
@@ -55,6 +66,7 @@ class ChatSession(
         val userMsg = ChatMessage(role = ChatMessage.Role.USER, content = text)
         appendToScreen(userMsg)
         contextBuffer.add(userMsg)
+        trimContextBuffer()
 
         return try {
             val flow = llmClient.chatStream(contextMessages)
@@ -71,6 +83,7 @@ class ChatSession(
         val assistantMsg = ChatMessage(role = ChatMessage.Role.ASSISTANT, content = text)
         appendToScreen(assistantMsg)
         contextBuffer.add(assistantMsg)
+        trimContextBuffer()
     }
 
     /** Full clear — both screen and LLM context (user-initiated). */

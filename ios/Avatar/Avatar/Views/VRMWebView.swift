@@ -48,11 +48,18 @@ final class VRMBridge {
     private func sendImmediate(_ jsonString: String) {
         guard let webView = webView else { return }
         DispatchQueue.main.async {
+            // Escape for safe embedding in a single-quoted JS string literal.
+            // Handles backslash, single quote, and the control characters that
+            // would otherwise break the literal (newline, carriage return, tab,
+            // and the Unicode line separators U+2028/U+2029).
             let escaped = jsonString
                 .replacingOccurrences(of: "\\", with: "\\\\")
                 .replacingOccurrences(of: "'", with: "\\'")
+                .replacingOccurrences(of: "\r", with: "\\r")
                 .replacingOccurrences(of: "\n", with: "\\n")
-                .replacingOccurrences(of: "\r", with: "")
+                .replacingOccurrences(of: "\t", with: "\\t")
+                .replacingOccurrences(of: "\u{2028}", with: "\\u2028")
+                .replacingOccurrences(of: "\u{2029}", with: "\\u2029")
             let js = "handleMessage('\(escaped)')"
             webView.evaluateJavaScript(js) { _, error in
                 if let error = error as? NSError {

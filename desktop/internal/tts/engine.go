@@ -301,6 +301,7 @@ func (e *Engine) ensureConnectedLocked() error {
 	slog.Info("tts_online_session_created", "id", sid)
 
 	// Send session.update (commit mode).
+	conn.SetWriteDeadline(time.Now().Add(15 * time.Second))
 	updateEvent := map[string]interface{}{
 		"event_id": fmt.Sprintf("event_%d", time.Now().UnixNano()),
 		"type":     "session.update",
@@ -319,6 +320,7 @@ func (e *Engine) ensureConnectedLocked() error {
 	slog.Info("tts_online_sent_session_update", "voice", e.onlineVoice, "format", e.onlineFormat, "rate", e.onlineSampleRate)
 
 	// Wait for session.updated.
+	conn.SetReadDeadline(time.Now().Add(15 * time.Second))
 	_, msg, err = conn.ReadMessage()
 	if err != nil {
 		conn.Close()

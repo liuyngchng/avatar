@@ -250,14 +250,28 @@ class MainActivity : ComponentActivity() {
                 // text spoken so far (progressive, not the whole reply at once).
                 val spokenText = StringBuilder()
                 var spoken = false
+                var emotionParsed = false
                 try {
                     for (chunk in queue) {
                         spokenText.append(chunk.text)
                         if (!spoken) {
                             spoken = true
-                            robotState = robotState.copy(
-                                mode = RobotMode.SPEAKING, emotion = Emotion.HAPPY, isSpeaking = true
-                            )
+                            // Parse [emotion:xxx] from the accumulated text (first response chunk).
+                            if (!emotionParsed) {
+                                emotionParsed = true
+                                val (emotionStr, _) = LlmClient.parseEmotion(spokenText.toString())
+                                val emotion = when (emotionStr) {
+                                    "happy" -> Emotion.HAPPY
+                                    "angry" -> Emotion.ANGRY
+                                    "sad" -> Emotion.SAD
+                                    "surprised" -> Emotion.SURPRISED
+                                    "relaxed" -> Emotion.RELAXED
+                                    else -> Emotion.NEUTRAL
+                                }
+                                robotState = robotState.copy(
+                                    mode = RobotMode.SPEAKING, emotion = emotion, isSpeaking = true
+                                )
+                            }
                         }
                         robotState = robotState.copy(responseText = spokenText.toString())
                         val durationMs = (chunk.pcm.size.toLong() * 1000 / sr).toInt()
@@ -635,8 +649,9 @@ class MainActivity : ComponentActivity() {
         currentSpeakJob?.cancel()
 
         // Release native Sherpa-onnx engines (ASR + TTS).
-        asrEngine.destroy()
-        ttsEngine.destroy()
+        // Only destroy if initialized — onDestroy may run before lazy init completes.
+        if (::asrEngine.isInitialized) asrEngine.destroy()
+        if (::ttsEngine.isInitialized) ttsEngine.destroy()
 
         // Stop the HTTP config server if it was started.
         if (configHttpServer.isRunning) {

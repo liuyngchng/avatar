@@ -73,7 +73,7 @@ func New(modelDir string, wakeWord string) (*Engine, error) {
 		KeywordsScore:     6.0,
 		KeywordsThreshold: 0.05,
 		KeywordsBuf:       wakeWord,
-		KeywordsBufSize:   len(wakeWord),
+		KeywordsBufSize:   len([]rune(wakeWord)), // character count, not byte count
 	}
 
 	spotter := sherpa.NewKeywordSpotter(config)

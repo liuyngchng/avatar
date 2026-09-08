@@ -56,13 +56,18 @@ type StateMachine struct {
 	done     chan struct{} // closed by Stop() to signal shutdown
 	stopOnce sync.Once     // ensures Stop() is idempotent
 	wg       sync.WaitGroup // tracks Run() and pipeline() goroutines
+
+	// suppressUntil is a timestamp (in nanoseconds since boot) before which
+	// mic audio is dropped. Set by sayGreeting to prevent the greeting's
+	// own echo from reaching the ASR/VAD. Mirrors Android's suppressRecordUntil.
+	suppressUntil int64
 }
 
 // DefaultNoSpeechTimeout is used when Config.NoSpeechTimeout is zero or
 // not provided. After this much silence (no RMS above silenceThreshold),
 // the multi-turn conversation is closed and the user must wake the avatar
 // again to talk.
-const DefaultNoSpeechTimeout = 5 * time.Second
+const DefaultNoSpeechTimeout = 30 * time.Second
 
 // Config tunes conversation-level timing on the state machine. Zero or
 // negative values fall back to the package-level defaults.
@@ -271,6 +276,12 @@ func (sm *StateMachine) sayGreeting() {
 		}
 	}
 
+	// Suppress mic audio while the greeting plays (+250ms tail) so its echo
+	// never reaches the ASR or VAD. Mirrors Android's suppressRecordUntil.
+	sm.mu.Lock()
+	sm.suppressUntil = time.Now().UnixNano() + int64(audioDurMs)*int64(time.Millisecond) + 250*int64(time.Millisecond)
+	sm.mu.Unlock()
+
 	if err := sm.audioPlayer.PlaySync(result.Samples); err != nil {
 		slog.Warn("fsm_greeting_playback_error", "error", err)
 	}
@@ -424,9 +435,9 @@ func (sm *StateMachine) collectSpeech() []float32 {
 	}
 
 	const (
-		silenceThreshold = 0.02 // RMS below this is treated as silence; raise if ambient noise trips VAD
-		silenceHangover  = 15   // 15 × 100ms = 1.5s of trailing silence after speech
-		maxDuration      = 15 * time.Second
+		silenceThreshold = 0.022 // RMS below this is treated as silence; aligned with Android
+		silenceHangover  = 12    // 12 × 100ms = ~1s of trailing silence after speech (aligned with Android)
+		maxDuration      = 10 * time.Second // aligned with Android
 		minSpeechBuffers = 5
 	)
 
@@ -452,6 +463,16 @@ func (sm *StateMachine) collectSpeech() []float32 {
 		case samples, ok := <-asrBuf:
 			if !ok {
 				return finish("buffer closed")
+			}
+
+			// Drop mic audio while the wake greeting is playing, so its
+			// echo never reaches the ASR or VAD. Mirrors Android's
+			// suppressRecordUntil and iOS's warmup buffers.
+			sm.mu.Lock()
+			suppress := sm.suppressUntil
+			sm.mu.Unlock()
+			if time.Now().UnixNano() < suppress {
+				continue
 			}
 
 			allSamples = append(allSamples, samples...)
@@ -511,6 +532,7 @@ func (sm *StateMachine) callLLM(userText string) string {
 
 	var fullText strings.Builder
 	done := false
+	var streamErr error
 
 	for !done {
 		select {
@@ -522,13 +544,19 @@ func (sm *StateMachine) callLLM(userText string) string {
 			}
 		case err := <-errCh:
 			if err != nil {
+				streamErr = err
 				slog.Warn("llm_chat_error", "error", err)
-				return ""
+				// Don't return immediately — continue consuming chunkCh
+				// until it closes, so we get the partial response.
 			}
 		case <-sm.done:
 			slog.Info("llm_cancelled_by_shutdown")
 			return ""
 		}
+	}
+
+	if streamErr != nil {
+		return ""
 	}
 
 	response := fullText.String()

@@ -236,6 +236,7 @@ func (e *Engine) decodeOnline(samples []float32) (*Result, error) {
 	audioSent := false
 	done := make(chan struct{})
 	var readErr error
+	var audioWg sync.WaitGroup
 
 	go func() {
 		defer close(done)
@@ -267,7 +268,9 @@ func (e *Engine) decodeOnline(samples []float32) (*Result, error) {
 				taskStarted = true
 				if !audioSent {
 					audioSent = true
+					audioWg.Add(1)
 					go func() {
+						defer audioWg.Done()
 						if err := e.sendAudio(conn, samples, e.onlineSampleRate); err != nil {
 							slog.Warn("asr_online_send_audio_error", "error", err)
 						}
@@ -317,6 +320,7 @@ func (e *Engine) decodeOnline(samples []float32) (*Result, error) {
 	}()
 
 	<-done
+	audioWg.Wait() // wait for sendAudio goroutine to finish
 
 	if readErr != nil {
 		e.mu.Lock()

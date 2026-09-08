@@ -86,10 +86,10 @@ func (c *Config) IsFBXEnabled() bool {
 // NoSpeechTimeout returns how long the multi-turn conversation waits for the
 // user to start speaking after wake-up or after the previous turn ends before
 // automatically closing the dialogue (so the user must re-wake to talk again).
-// Defaults to 5 seconds when the config key is not set or is non-positive.
+// Defaults to 30 seconds when the config key is not set or is non-positive.
 func (c *Config) NoSpeechTimeout() time.Duration {
 	if c.NoSpeechTimeoutSec == nil || *c.NoSpeechTimeoutSec <= 0 {
-		return 5 * time.Second
+		return 30 * time.Second
 	}
 	return time.Duration(*c.NoSpeechTimeoutSec) * time.Second
 }

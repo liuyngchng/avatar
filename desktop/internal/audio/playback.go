@@ -80,7 +80,7 @@ func waitDone(player *oto.Player) error {
 		if err := player.Err(); err != nil {
 			return err
 		}
-		time.Sleep(10 * time.Millisecond)
+		time.Sleep(50 * time.Millisecond)
 	}
 	return player.Err()
 }

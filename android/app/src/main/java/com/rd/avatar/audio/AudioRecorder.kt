@@ -32,6 +32,7 @@ class AudioRecorder(private val context: Context) {
 
     private var audioRecord: AudioRecord? = null
     private val isRecording = AtomicBoolean(false)
+    private val lock = Any()
     private val bufferSize: Int = AudioRecord.getMinBufferSize(SAMPLE_RATE, CHANNEL_CONFIG, AUDIO_FORMAT)
         .let { it * BUFFER_SIZE_FACTOR }
 
@@ -39,6 +40,12 @@ class AudioRecorder(private val context: Context) {
     fun startRecording(): Flow<FloatArray> = flow {
         if (!isPermissionGranted(context)) {
             throw SecurityException("RECORD_AUDIO permission not granted")
+        }
+
+        // Stop any existing recording before starting a new one — prevents
+        // concurrent AudioRecord instances (e.g. calibration + user tap).
+        synchronized(lock) {
+            stopRecording()
         }
 
         audioRecord = AudioRecord(
