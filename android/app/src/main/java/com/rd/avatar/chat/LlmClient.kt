@@ -45,13 +45,21 @@ class LlmClient(private val configRepository: ConfigRepository) {
             return if (raw in valid) raw to clean else "neutral" to clean
         }
 
-        private fun buildSystemPrompt(enableSearch: Boolean): String {
+        /**
+         * Short date/time hint prepended to the first user message of a
+         * conversation, so the model knows the current time without making the
+         * (static) system prompt uncacheable.
+         */
+        fun dateHint(): String {
             val now = dateFormat.get()!!.format(java.util.Date())
+            return "（当前日期：$now，仅当需要判断时间时参考）"
+        }
+
+        private fun buildSystemPrompt(enableSearch: Boolean): String {
             val base = "你是一个语音助手，名字叫「小然」。用口语化的中文回复，自然友好、直接明了。" +
                 "闲聊或简单问题控制在1-3句话（80字以内）；" +
                 "知识类问题可以适当展开解释，但保持简洁，不超过150字。" +
                 "围绕用户的问题回答，不要偏离话题。" +
-                "当前日期是$now（仅当需要判断时间时参考，不要主动报日期）。" +
                 "这是一个多轮对话，记住之前聊过的话题，保持一致的语气。"
             return if (enableSearch) {
                 base + "你已启用联网搜索，获取到的实时信息会直接提供给你。" +

@@ -26,10 +26,11 @@ type Config struct {
 
 // LLMConfig holds the LLM API connection parameters.
 type LLMConfig struct {
-	BaseURL string `yaml:"base_url"`
-	APIKey  string `yaml:"api_key"`
-	Model   string `yaml:"model"`
-	Name    string `yaml:"name"` // character name, defaults to "小然"
+	BaseURL             string `yaml:"base_url"`
+	APIKey              string `yaml:"api_key"`
+	Model               string `yaml:"model"`
+	Name                string `yaml:"name"` // character name, defaults to "小然"
+	InsecureSkipVerify  *bool  `yaml:"insecure_skip_verify"`  // nil defaults to true (skip) for intranet
 }
 
 // ASRConfig holds speech recognition configuration.

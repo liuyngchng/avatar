@@ -342,3 +342,51 @@ var (
 	reEnglish       = regexp.MustCompile(`[a-zA-Z]+`)
 	reWhitespace    = regexp.MustCompile(`\s+`)
 )
+
+// sentencePunct is the set of runes that terminate a Chinese/English sentence.
+var sentencePunct = map[rune]bool{
+	'。': true, '！': true, '？': true,
+	'!': true, '?': true, '\n': true,
+}
+
+// SplitSentences splits text into sentences on Chinese/English punctuation.
+func SplitSentences(text string) []string {
+	var result []string
+	var current strings.Builder
+	for _, ch := range text {
+		current.WriteRune(ch)
+		if sentencePunct[ch] {
+			s := strings.TrimSpace(current.String())
+			if s != "" {
+				result = append(result, s)
+			}
+			current.Reset()
+		}
+	}
+	remaining := strings.TrimSpace(current.String())
+	if remaining != "" {
+		result = append(result, remaining)
+	}
+	if len(result) == 0 {
+		result = append(result, text)
+	}
+	return result
+}
+
+// ExtractCompleteSentences splits accumulated streamed text into complete
+// sentences plus a trailing remainder.
+func ExtractCompleteSentences(text string) (complete []string, remainder string) {
+	runes := []rune(text)
+	lastBoundary := -1
+	for i, ch := range runes {
+		if sentencePunct[ch] {
+			lastBoundary = i
+		}
+	}
+	if lastBoundary < 0 {
+		return nil, text
+	}
+	left := string(runes[:lastBoundary+1])
+	right := string(runes[lastBoundary+1:])
+	return SplitSentences(left), right
+}

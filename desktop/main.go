@@ -153,11 +153,12 @@ func main() {
 		llmAPIKey = cfg.APIKey
 	}
 	llmClient := llm.New(llm.Config{
-		BaseURL:   cfg.LLM.BaseURL,
-		APIKey:    llmAPIKey,
-		Model:     cfg.LLM.Model,
-		Name:      cfg.LLM.Name,
-		ProxyFunc: config.ProxyFunc(cfg.Proxy, cfg.ProxyDisabled),
+		BaseURL:            cfg.LLM.BaseURL,
+		APIKey:             llmAPIKey,
+		Model:              cfg.LLM.Model,
+		Name:               cfg.LLM.Name,
+		InsecureSkipVerify: cfg.LLM.InsecureSkipVerify,
+		ProxyFunc:          config.ProxyFunc(cfg.Proxy, cfg.ProxyDisabled),
 	})
 	if llmClient.IsConfigured() {
 		slog.Info("LLM client configured (streaming enabled)")

@@ -1288,10 +1288,6 @@ final class StickFigureDrawer {
                 p.addQuadCurve(to: CGPoint(x: x1, y: browY),
                               controlPoint: CGPoint(x: eyeCx, y: browY - arch * 1.0))
             }
-        case .neutral:
-            p.move(to: CGPoint(x: x0, y: browY - arch * 0.2))
-            p.addQuadCurve(to: CGPoint(x: x1, y: browY - arch * 0.2),
-                          controlPoint: CGPoint(x: eyeCx, y: browY - arch * 0.8))
         case .angry, .relaxed:
             // Use neutral-style brows for desktop-compatible emotions
             break

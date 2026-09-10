@@ -37,15 +37,10 @@ class LlmClient {
     private var streamingSession: URLSession?
 
     private func systemPrompt(enableSearch: Bool) -> String {
-        let df = DateFormatter()
-        df.locale = Locale(identifier: "zh_CN")
-        df.dateFormat = "yyyy年M月d日 EEEE"
-        let now = df.string(from: Date())
         let base = "你是一个语音助手，名字叫「小然」。用口语化的中文回复，自然友好、直接明了。" +
             "闲聊或简单问题控制在1-3句话（80字以内）；" +
             "知识类问题可以适当展开解释，但保持简洁，不超过150字。" +
             "围绕用户的问题回答，不要偏离话题。" +
-            "当前日期是\(now)（仅当需要判断时间时参考，不要主动报日期）。" +
             "这是一个多轮对话，记住之前聊过的话题，保持一致的语气。" +
             "训练数据中有的知识可以直接回答；确实不知道的事情，诚实说明即可。" +
             "回复时尽量用中文表达，数字、英文和专有名词要转成中文习惯说法（比如「苹果手机」而不是 iPhone），避免出现英文字母。" +
@@ -59,6 +54,16 @@ class LlmClient {
         } else {
             return base
         }
+    }
+
+    /// Short date/time hint prepended to the first user message of a
+    /// conversation, so the model knows the current time without making the
+    /// (static) system prompt uncacheable.
+    static func dateHint() -> String {
+        let df = DateFormatter()
+        df.locale = Locale(identifier: "zh_CN")
+        df.dateFormat = "yyyy年M月d日 HH:mm"
+        return "（当前日期：\(df.string(from: Date()))，仅当需要判断时间时参考）"
     }
 
     /// Parse the [emotion:xxx] tag from the beginning of the LLM response.

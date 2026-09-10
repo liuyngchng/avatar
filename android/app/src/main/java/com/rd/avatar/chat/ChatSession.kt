@@ -63,7 +63,15 @@ class ChatSession(
     }
 
     suspend fun sendStream(text: String): Result<Flow<String>> {
-        val userMsg = ChatMessage(role = ChatMessage.Role.USER, content = text)
+        // Prepend a date hint to the first user message of the conversation
+        // so the model knows the current time without invalidating the static
+        // system-prompt cache.
+        val content = if (contextBuffer.isEmpty()) {
+            LlmClient.dateHint() + " " + text
+        } else {
+            text
+        }
+        val userMsg = ChatMessage(role = ChatMessage.Role.USER, content = content)
         appendToScreen(userMsg)
         contextBuffer.add(userMsg)
         trimContextBuffer()

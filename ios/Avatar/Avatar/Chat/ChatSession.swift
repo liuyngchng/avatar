@@ -70,15 +70,26 @@ class ChatSession: ObservableObject {
         _ text: String, appendUser: Bool
     ) -> AnyPublisher<AnyPublisher<String, Error>, Error> {
         if appendUser {
-            let userMsg = ChatMessage(role: .user, content: text)
-            appendToScreen(userMsg)
-            contextBuffer.append(userMsg)
+            appendUserMessage(text)
         }
 
         let streamPublisher = llmClient.chatStreamPublisher(messages: contextMessages)
         return Just(streamPublisher)
             .setFailureType(to: Error.self)
             .eraseToAnyPublisher()
+    }
+
+    /// Append a user message to the context buffer (with a date hint on the
+    /// first message) WITHOUT sending a request. Used by the retry flow so
+    /// the user's utterance is persisted before any LLM call is attempted —
+    /// a subsequent retry (appendUser: false) then still has full context.
+    func appendUserMessage(_ text: String) {
+        let content = contextBuffer.isEmpty
+            ? LlmClient.dateHint() + " " + text
+            : text
+        let userMsg = ChatMessage(role: .user, content: content)
+        appendToScreen(userMsg)
+        contextBuffer.append(userMsg)
     }
 
     /// Save assistant reply to history (called after streaming completes)

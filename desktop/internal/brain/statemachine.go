@@ -167,7 +167,9 @@ func (sm *StateMachine) Run() {
 				select {
 				case asrBuf <- samples:
 				default:
-					// Buffer full, drop oldest.
+					// Buffer full, drop frame — log so quality regressions
+					// under load are visible instead of silently degrading ASR.
+					slog.Debug("asr_buffer_full_dropping_frame", "samples", len(samples))
 				}
 			} else {
 				// Idle: feed KWS for wake word detection.
@@ -247,6 +249,13 @@ func (sm *StateMachine) handleEvent(ev Event) {
 		go func() {
 			if ev.Type == "wake_detected" {
 				sm.sayGreeting()
+			} else {
+				// Tap-to-talk has no greeting to suppress its own echo, but
+				// the previous turn's TTS tail may still be reverberating.
+				// Drop the first ~200ms of mic audio so it never reaches ASR.
+				sm.mu.Lock()
+				sm.suppressUntil = time.Now().UnixNano() + 200*int64(time.Millisecond)
+				sm.mu.Unlock()
 			}
 			sm.pipeline()
 		}()
@@ -364,63 +373,23 @@ func (sm *StateMachine) pipeline() {
 		sm.state.LastUserText = userText
 		sm.mu.Unlock()
 
-		// Call LLM.
+		// ── Phase 2+3: THINKING → SPEAKING (streamed) ─────────
+		// Stream the LLM response and synthesize + play sentence-by-sentence
+		// (pipelined), so the first sentence starts playing before the full
+		// reply has finished generating — matching Android's producer/consumer
+		// pipeline.
 		slog.Info("llm_request_start", "user", userText)
 		llmStart := time.Now()
-		llmText := sm.callLLM(userText)
-		slog.Info("llm_request_done", "duration", time.Since(llmStart).Round(time.Millisecond), "chars", len(llmText))
-		if llmText == "" {
-			llmText = "你好，我是企业数字人，请问有什么可以帮你的？"
+		reply, _, spoke := sm.streamReply(userText)
+		slog.Info("llm_request_done", "duration", time.Since(llmStart).Round(time.Millisecond), "chars", len(reply))
+
+		if !spoke {
+			// LLM not configured, failed, or produced nothing usable —
+			// fall back to a canned reply.
+			sm.speakFallback()
 		}
 
-		emotionStr, cleanText := llm.ParseEmotion(llmText)
-		emotion := EmotionFromString(emotionStr)
-
-		sm.setState(ModeThinking, emotion, cleanText)
-		sm.emit()
-
-		// ── Phase 3: SPEAKING — TTS synthesis + playback ─────────
-		slog.Info("tts_synthesis_start", "text", cleanText)
-		ttsStart := time.Now()
-		result, err := sm.ttsEngine.Synthesize(cleanText, 1.0)
-		if err != nil {
-			slog.Warn("tts_synthesis_failed", "error", err)
-			sm.setState(ModeIdle, EmotionNeutral, "")
-			sm.emit()
-			return
-		}
-
-		audioDurMs := int(float64(len(result.Samples)) / float64(result.SampleRate) * 1000)
-		slog.Info("tts_synthesis_done", "duration", time.Since(ttsStart).Round(time.Millisecond), "audio_ms", audioDurMs, "samples", len(result.Samples))
-		timeline := GenerateVisemeTimeline(cleanText, audioDurMs)
-		if timeline != nil {
-			slog.Info("viseme_timeline", "entries", len(timeline.Timeline), "audio_ms", audioDurMs)
-			select {
-			case sm.outbound <- timeline:
-			default:
-			}
-		}
-
-		sm.mu.Lock()
-		sm.state.Mode = ModeSpeaking
-		sm.state.IsSpeaking = true
-		sm.state.SpeakingText = cleanText
-		sm.mu.Unlock()
-		sm.emit()
-
-		if err := sm.audioPlayer.PlaySync(result.Samples); err != nil {
-			slog.Warn("tts_playback_error", "error", err)
-		}
 		slog.Info("tts_playback_done", "turn", turn)
-
-		sm.mu.Lock()
-		sm.state.IsSpeaking = false
-		sm.state.SpeakingText = ""
-		sm.mu.Unlock()
-
-		// Loop back to listening for the next turn.
-		// collectSpeech() will timeout (no speech) and exit the loop
-		// if the user stays silent.
 	}
 }
 
@@ -509,61 +478,166 @@ func (sm *StateMachine) collectSpeech() []float32 {
 	}
 }
 
-// callLLM sends the user text to the LLM and returns the full response.
-func (sm *StateMachine) callLLM(userText string) string {
+// SpeechChunk is one synthesized sentence of a reply, paired with its
+// display text. Used for the streaming TTS pipeline.
+type SpeechChunk struct {
+	Samples    []float32
+	Text       string
+	SampleRate int
+}
+
+// streamReply streams the LLM response and synthesizes + plays sentence by
+// sentence as soon as each complete sentence arrives (pipelined), matching
+// Android's producer/consumer pipeline. Returns the full reply text and
+// whether at least one sentence was spoken.
+func (sm *StateMachine) streamReply(userText string) (fullReply string, emotion Emotion, spoke bool) {
 	if sm.llmClient == nil || !sm.llmClient.IsConfigured() {
 		slog.Warn("llm_not_configured_using_fallback")
-		return ""
+		return "", EmotionNeutral, false
 	}
 
 	sm.mu.Lock()
-	sm.conversation = append(sm.conversation, llm.Message{
-		Role: "user", Content: userText,
-	})
-	// Keep at most 10 complete rounds (20 messages). Drop oldest
-	// user+assistant pair when the limit is exceeded so the history
-	// always starts with a "user" message.
-	if len(sm.conversation) > 20 {
-		sm.conversation = sm.conversation[2:]
+	content := userText
+	if len(sm.conversation) == 0 {
+		content = llm.DateHint() + " " + userText
 	}
+	sm.conversation = append(sm.conversation, llm.Message{
+		Role: "user", Content: content,
+	})
 	sm.mu.Unlock()
 
 	chunkCh, errCh := sm.llmClient.ChatStream(sm.conversation, llm.DefaultParams())
 
-	var fullText strings.Builder
-	done := false
-	var streamErr error
+	// Channel for synthesized sentences: producer → consumer.
+	speechCh := make(chan SpeechChunk, 3)
+	producerDone := make(chan struct{})
+	var accText strings.Builder
 
-	for !done {
-		select {
-		case chunk, ok := <-chunkCh:
-			if !ok {
-				done = true
-			} else {
-				fullText.WriteString(chunk)
+	// Producer goroutine: stream LLM tokens → extract complete sentences →
+	// synthesize each sentence while the previous one is playing.
+	go func() {
+		defer close(producerDone)
+		defer close(speechCh)
+
+		var acc string
+		for {
+			select {
+			case chunk, ok := <-chunkCh:
+				if !ok {
+					// Stream finished — flush remainder.
+					last := strings.TrimSpace(acc)
+					if last != "" {
+						normalized := tts.Normalize(last)
+						if normalized != "" {
+							ttsStart := time.Now()
+							result, err := sm.ttsEngine.Synthesize(normalized, 1.0)
+							if err == nil && len(result.Samples) > 0 {
+								slog.Info("tts_flush_sentence", "text", last, "duration", time.Since(ttsStart).Round(time.Millisecond))
+								speechCh <- SpeechChunk{
+									Samples:    result.Samples,
+									Text:       last,
+									SampleRate: result.SampleRate,
+								}
+							}
+						}
+					}
+					return
+				}
+				accText.WriteString(chunk)
+				acc += chunk
+
+				complete, rest := tts.ExtractCompleteSentences(acc)
+				if len(complete) == 0 {
+					continue
+				}
+				acc = rest
+				for _, sentence := range complete {
+					normalized := tts.Normalize(sentence)
+					if normalized == "" {
+						continue
+					}
+					ttsStart := time.Now()
+					result, err := sm.ttsEngine.Synthesize(normalized, 1.0)
+					if err != nil {
+						slog.Warn("tts_synthesis_failed", "error", err, "sentence", sentence)
+						continue
+					}
+					slog.Info("tts_sentence_synthesized", "text", sentence, "duration", time.Since(ttsStart).Round(time.Millisecond))
+					speechCh <- SpeechChunk{
+						Samples:    result.Samples,
+						Text:       sentence,
+						SampleRate: result.SampleRate,
+					}
+				}
+			case err := <-errCh:
+				if err != nil {
+					slog.Warn("llm_chat_error", "error", err)
+					return
+				}
+			case <-sm.done:
+				return
 			}
-		case err := <-errCh:
-			if err != nil {
-				streamErr = err
-				slog.Warn("llm_chat_error", "error", err)
-				// Don't return immediately — continue consuming chunkCh
-				// until it closes, so we get the partial response.
-			}
-		case <-sm.done:
-			slog.Info("llm_cancelled_by_shutdown")
-			return ""
 		}
+	}()
+
+	var spokenText strings.Builder
+	emotionParsed := false
+	spoke = false
+	sr := sm.ttsEngine.SampleRate()
+
+	// Consumer: play sentences in order; the subtitle shows the text spoken
+	// so far (progressive, not the whole reply at once).
+	for chunk := range speechCh {
+		if !spoke {
+			spoke = true
+			// Parse [emotion:xxx] from the first response chunk.
+			if !emotionParsed {
+				emotionParsed = true
+				emotionStr, _ := llm.ParseEmotion(chunk.Text)
+				emotion = EmotionFromString(emotionStr)
+			}
+			sm.mu.Lock()
+			sm.state.Mode = ModeSpeaking
+			sm.state.Emotion = emotion
+			sm.state.IsSpeaking = true
+			sm.mu.Unlock()
+			sm.emit()
+		}
+		spokenText.WriteString(chunk.Text)
+		sm.mu.Lock()
+		sm.state.SpeakingText = spokenText.String()
+		sm.mu.Unlock()
+		sm.emit()
+
+		audioDurMs := int(float64(len(chunk.Samples)) / float64(sr) * 1000)
+		timeline := GenerateVisemeTimeline(chunk.Text, audioDurMs)
+		if timeline != nil {
+			select {
+			case sm.outbound <- timeline:
+			default:
+			}
+		}
+
+		slog.Info("tts_playback_start", "sentence", chunk.Text)
+		if playErr := sm.audioPlayer.PlaySync(chunk.Samples); playErr != nil {
+			slog.Warn("tts_playback_error", "error", playErr)
+		}
+		slog.Info("tts_playback_done_chunk")
 	}
 
-	if streamErr != nil {
-		return ""
-	}
+	// Wait for producer to finish, then get the final accumulated text.
+	<-producerDone
+	fullReply = accText.String()
 
-	response := fullText.String()
-	slog.Info("llm_response", "chars", len(response), "preview", truncate(response, 100))
+	// Persist the full reply to conversation history.
+	sm.mu.Lock()
+	sm.state.IsSpeaking = false
+	sm.state.SpeakingText = ""
+	sm.mu.Unlock()
+	sm.emit()
 
-	if response != "" {
-		_, cleanText := llm.ParseEmotion(response)
+	if fullReply != "" {
+		_, cleanText := llm.ParseEmotion(fullReply)
 		sm.mu.Lock()
 		sm.conversation = append(sm.conversation, llm.Message{
 			Role: "assistant", Content: cleanText,
@@ -574,7 +648,35 @@ func (sm *StateMachine) callLLM(userText string) string {
 		sm.mu.Unlock()
 	}
 
-	return response
+	return fullReply, emotion, spoke
+}
+
+// speakFallback synthesizes and plays a hardcoded fallback reply.
+func (sm *StateMachine) speakFallback() {
+	fallback := "你好，我是企业数字人，请问有什么可以帮你的？"
+	slog.Info("speaking_fallback", "text", fallback)
+
+	result, err := sm.ttsEngine.Synthesize(fallback, 1.0)
+	if err != nil {
+		slog.Warn("tts_fallback_failed", "error", err)
+		sm.setState(ModeIdle, EmotionNeutral, "")
+		sm.emit()
+		return
+	}
+
+	sm.mu.Lock()
+	sm.state.Mode = ModeSpeaking
+	sm.state.IsSpeaking = true
+	sm.state.SpeakingText = fallback
+	sm.mu.Unlock()
+	sm.emit()
+
+	sm.audioPlayer.PlaySync(result.Samples)
+
+	sm.mu.Lock()
+	sm.state.IsSpeaking = false
+	sm.state.SpeakingText = ""
+	sm.mu.Unlock()
 }
 
 func computeRMS(samples []float32) float64 {

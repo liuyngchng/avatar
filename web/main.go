@@ -198,11 +198,12 @@ func main() {
 	slog.Info("llm_config_model", "model", llmModel)
 
 	llmClient := llm.New(llm.Config{
-		BaseURL:   llmBaseURL,
-		APIKey:    llmAPIKey,
-		Model:     llmModel,
-		Name:      cfg.LLM.Name,
-		ProxyFunc: config.ProxyFunc(cfg.Proxy, cfg.ProxyDisabled),
+		BaseURL:            llmBaseURL,
+		APIKey:             llmAPIKey,
+		Model:              llmModel,
+		Name:               cfg.LLM.Name,
+		InsecureSkipVerify: cfg.LLM.InsecureSkipVerify,
+		ProxyFunc:          config.ProxyFunc(cfg.Proxy, cfg.ProxyDisabled),
 	})
 
 	if llmClient.IsConfigured() {

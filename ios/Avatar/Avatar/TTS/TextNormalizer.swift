@@ -118,13 +118,15 @@ enum TextNormalizer {
 
     // MARK: - Sentence Splitting
 
+    private static let sentencePunct: Set<Character> = ["。", "！", "？", "!", "?", "\n"]
+
     static func splitSentences(_ text: String) -> [String] {
         var result: [String] = []
         var current = ""
 
         for ch in text {
             current.append(ch)
-            if ch == "。" || ch == "！" || ch == "？" || ch == "!" || ch == "?" || ch == "\n" {
+            if sentencePunct.contains(ch) {
                 let sentence = current.trimmingCharacters(in: .whitespaces)
                 if sentence.isNotBlank {
                     result.append(sentence)
@@ -143,6 +145,24 @@ enum TextNormalizer {
         }
 
         return result
+    }
+
+    /// Split accumulated streamed text into complete sentences plus a trailing
+    /// remainder (text after the last sentence-ending punctuation, which may
+    /// still be growing). Used for incremental TTS during LLM streaming.
+    static func extractCompleteSentences(_ text: String) -> (complete: [String], remainder: String) {
+        var lastBoundary = -1
+        for (i, ch) in text.enumerated() {
+            if sentencePunct.contains(ch) {
+                lastBoundary = i
+            }
+        }
+        if lastBoundary < 0 {
+            return ([], text)
+        }
+        let left = String(text[text.startIndex...text.index(text.startIndex, offsetBy: lastBoundary)])
+        let right = String(text[text.index(text.startIndex, offsetBy: lastBoundary + 1)...])
+        return (splitSentences(left), right)
     }
 
     // MARK: - Pre-compiled Regexes (created once, reused on every normalize call)

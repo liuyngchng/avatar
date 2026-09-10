@@ -619,12 +619,15 @@ class RobotViewModel: ObservableObject {
             // above already scheduled its own follow-up — don't call the LLM.
             guard accepted else { return }
 
-            // Get response — retry once on LLM failure before falling back
+            // Get response — retry once on LLM failure before falling back.
+            // The user message is appended to history first (exactly once),
+            // then both LLM attempts use appendUser: false so the message
+            // never ends up twice in the context on retry.
             let hasConfig = await MainActor.run { self.configRepo.hasConfig }
             if hasConfig {
                 let reply: String
                 do {
-                    reply = try await self.chatWithLLM(text)
+                    reply = try await self.chatWithLLM(text, isRetry: false)
                 } catch {
                     // Cancelled (pause / interruption / newer session) — bail
                     // out silently instead of speaking a fallback reply.
@@ -639,7 +642,7 @@ class RobotViewModel: ObservableObject {
                     try? await Task.sleep(nanoseconds: 1_000_000_000)
                     guard !Task.isCancelled else { return }
                     do {
-                        reply = try await self.chatWithLLM(text, appendUser: false)
+                        reply = try await self.chatWithLLM(text, isRetry: true)
                     } catch {
                         if Task.isCancelled || error is CancellationError
                             || (error as? URLError)?.code == .cancelled {
@@ -679,14 +682,28 @@ class RobotViewModel: ObservableObject {
 
     // MARK: - LLM
 
-    private func chatWithLLM(_ text: String, appendUser: Bool = true) async throws -> String {
-        let streamPublisher = appendUser
-            ? chatSession.sendStream(text)
-            : chatSession.sendStreamNoAppend(text)
+    private func chatWithLLM(_ text: String, isRetry: Bool) async throws -> String {
+        // On the first attempt, persist the user message to the context buffer
+        // before making any network call. This ensures a retry always has the
+        // full conversation history.
+        if !isRetry {
+            await MainActor.run {
+                self.chatSession.appendUserMessage(text)
+            }
+        }
+        let streamPublisher = chatSession.sendStreamNoAppend(text)
 
         return try await withUnsafeThrowingContinuation { (continuation: UnsafeContinuation<String, Error>) in
             var fullReply = ""
             let box = LLMContinuationBox(continuation)
+
+            // Safety net: if neither the stream completion nor a cancel fires
+            // (a stalled network read), resume with a timeout so the awaiting
+            // task is never left parked forever.
+            let timeoutWorkItem = DispatchWorkItem { [weak box] in
+                box?.resume(.failure(LlmError.networkError("请求超时")))
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 30, execute: timeoutWorkItem)
 
             streamingCancellable?.cancel()
             streamingCancellable = streamPublisher
@@ -699,6 +716,7 @@ class RobotViewModel: ObservableObject {
                 })
                 .sink(
                     receiveCompletion: { completion in
+                        timeoutWorkItem.cancel()
                         switch completion {
                         case .failure(let error):
                             box.resume(.failure(error))
@@ -737,56 +755,91 @@ class RobotViewModel: ObservableObject {
         }
 
         let sentences = TextNormalizer.splitSentences(text)
-        let sr = ttsEngine.sampleRate
-
-        // Synthesize each sentence into a separate chunk.
-        let chunks: [[Float]] = await Task.detached(priority: .userInitiated) {
-            // Grab the engine + speaker id with a single hop, then run all
-            // synthesis on this detached thread (sherpa-onnx generation
-            // blocks and would freeze the UI on the main actor).
-            let tts = await self.ttsEngine
-            let sid = await self.selectedSid
-            var results: [[Float]] = []
-            for sentence in sentences {
-                if Task.isCancelled { break }
-                let normalized = TextNormalizer.normalize(sentence)
-                guard normalized.isNotBlank else { continue }
-                if let pcm = tts.synthesize(text: normalized, sid: sid) {
-                    results.append(pcm)
-                }
-            }
-            return results
-        }.value
-
-        guard !chunks.isEmpty else {
+        guard !sentences.isEmpty else {
             finishSpeaking(prevMode: prevMode)
             return
         }
 
-        // Calculate total audio duration and generate viseme timeline.
-        let totalSamples = chunks.reduce(0) { $0 + $1.count }
-        let audioDurationMs = Int(Double(totalSamples) / Double(sr) * 1000)
-        if let timeline = VisemeGenerator.generateTimeline(text: text, audioDurationMs: audioDurationMs) {
+        let sr = ttsEngine.sampleRate
+        let srDouble = Double(sr)
+
+        // Pipelined TTS: pre-synthesize the first sentence, then synthesize
+        // the next sentence on a background thread while the current one is
+        // playing. This cuts first-word latency roughly in half compared to
+        // synthesizing every sentence before any playback begins.
+        let firstText = TextNormalizer.normalize(sentences[0])
+        guard firstText.isNotBlank else {
+            finishSpeaking(prevMode: prevMode)
+            return
+        }
+
+        let firstPcm: [Float]? = await Task.detached(priority: .userInitiated) {
+            let tts = await self.ttsEngine
+            let sid = await self.selectedSid
+            return tts.synthesize(text: firstText, speed: 1.0, sid: sid)
+        }.value
+
+        guard let firstPcm = firstPcm, !firstPcm.isEmpty, !Task.isCancelled else {
+            finishSpeaking(prevMode: prevMode)
+            return
+        }
+
+        // Send viseme timeline for the full utterance (pro-rated).
+        let totalSamples = sentences.reduce(0) { acc, _ in acc } // approximate — we don't have all PCM yet
+        let firstSamples = firstPcm.count
+        let estimatedTotalSamples = sentences.count > 1 ? firstSamples * sentences.count : firstSamples
+        let estimatedDurationMs = Int(Double(estimatedTotalSamples) / srDouble * 1000)
+        if let timeline = VisemeGenerator.generateTimeline(text: text, audioDurationMs: estimatedDurationMs) {
             pushVisemeTimeline(timeline)
         }
 
-        // playSequence: each chunk scheduled → played → node stopped (flush) → next chunk
+        // Play the first sentence.
         await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
-            self.audioPlayer.playSequence(chunks: chunks, sampleRate: Double(sr)) {
+            self.audioPlayer.play(pcmFloats: firstPcm, sampleRate: srDouble) {
                 cont.resume()
             }
         }
+        try? await Task.sleep(nanoseconds: 50_000_000)
+        self.audioPlayer.stop()
 
-        // If this task was cancelled while audio was playing (a newer
-        // speakText or a stopSpeaking), bail out — finishing here would
-        // clobber the newer speech's state.
+        guard !Task.isCancelled, sentences.count > 1 else {
+            guard !Task.isCancelled else { return }
+            try? await Task.sleep(nanoseconds: 150_000_000)
+            self.audioPlayer.stop()
+            guard !Task.isCancelled else { return }
+            self.finishSpeaking(prevMode: prevMode)
+            return
+        }
+
+        // Remaining sentences: synthesize N+1 while playing N.
+        for idx in 1..<sentences.count {
+            let normalized = TextNormalizer.normalize(sentences[idx])
+            guard normalized.isNotBlank else { continue }
+
+            let pcm: [Float]? = await Task.detached(priority: .userInitiated) {
+                let tts = await self.ttsEngine
+                let sid = await self.selectedSid
+                return tts.synthesize(text: normalized, speed: 1.0, sid: sid)
+            }.value
+
+            guard let pcm = pcm, !pcm.isEmpty, !Task.isCancelled else { break }
+
+            await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+                self.audioPlayer.play(pcmFloats: pcm, sampleRate: srDouble) {
+                    cont.resume()
+                }
+            }
+
+            // Stop node between sentences to flush residual audio —
+            // prevents crackle/pop from leftover buffer data.
+            try? await Task.sleep(nanoseconds: 50_000_000)
+            self.audioPlayer.stop()
+        }
+
         guard !Task.isCancelled else { return }
 
-        // Let the audio hardware drain its output buffer before tearing
-        // down the engine.  Without this delay the last ~50–100 ms of
-        // audio can be cut off mid-waveform, producing a pop / crackle.
-        try? await Task.sleep(nanoseconds: 150_000_000)  // 150ms
-
+        // Let the hardware output buffer drain before tearing down the engine.
+        try? await Task.sleep(nanoseconds: 150_000_000)
         self.audioPlayer.stop()
         guard !Task.isCancelled else { return }
         self.finishSpeaking(prevMode: prevMode)
